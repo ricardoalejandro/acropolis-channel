@@ -1,0 +1,23 @@
+services:
+  web:
+    build:
+      context: .
+    image: acropolis-channel:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    networks:
+      default: {}
+      publication:
+        aliases:
+          - acropolis-channel-web
+
+networks:
+  publication:
+    external: true
+    name: ${TRAEFIK_NETWORK:?Configure TRAEFIK_NETWORK en el archivo .env del VPS}

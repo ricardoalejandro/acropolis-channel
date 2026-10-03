@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#152b47" />
+    <meta
+      name="description"
+      content="Acropolis Channel está en desarrollo. Estamos preparando una nueva experiencia."
+    />
+    <title>Acropolis Channel — Próximamente</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        color: #152b47;
+        background: #f5f7fa;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100svh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .container {
+        width: min(100% - 3rem, 1120px);
+        margin-inline: auto;
+      }
+
+      header {
+        padding-block: 2rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        font-size: 1rem;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 2.75rem;
+        height: 2.75rem;
+        border-radius: 0.8rem;
+        color: #ffffff;
+        background: #152b47;
+        font-size: 0.85rem;
+        letter-spacing: 0.02em;
+      }
+
+      main {
+        display: flex;
+        align-items: center;
+        flex: 1;
+        padding-block: 3rem 5rem;
+      }
+
+      .intro {
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+        padding: clamp(2rem, 6vw, 5rem);
+        border: 1px solid #dce3ed;
+        border-radius: 1.5rem;
+        background: #ffffff;
+      }
+
+      .intro::after {
+        position: absolute;
+        right: -8rem;
+        bottom: -15rem;
+        width: 34rem;
+        height: 34rem;
+        border: 1px solid #e3eaf3;
+        border-radius: 50%;
+        box-shadow: 0 0 0 4rem #f8fafd, 0 0 0 4.0625rem #eaf0f6;
+        content: "";
+        pointer-events: none;
+      }
+
+      .content {
+        position: relative;
+        z-index: 1;
+        max-width: 47rem;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0 0 2rem;
+        padding: 0.5rem 0.8rem;
+        border-radius: 100px;
+        color: #2a4768;
+        background: #edf3fa;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+
+      .status::before {
+        width: 0.4rem;
+        height: 0.4rem;
+        border-radius: 50%;
+        background: #356da8;
+        content: "";
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 14ch;
+        font-size: clamp(2.5rem, 5.5vw, 4.75rem);
+        font-weight: 650;
+        line-height: 1.08;
+        letter-spacing: -0.045em;
+        text-wrap: balance;
+      }
+
+      .description {
+        max-width: 37rem;
+        margin: 1.75rem 0 0;
+        color: #4b5e74;
+        font-size: clamp(1rem, 1.7vw, 1.15rem);
+        line-height: 1.7;
+      }
+
+      .note {
+        margin: 2.75rem 0 0;
+        padding-left: 1rem;
+        border-left: 2px solid #afc5df;
+        color: #4b5e74;
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-block: 0 2rem;
+        color: #53677e;
+        font-size: 0.8rem;
+        line-height: 1.5;
+      }
+
+      footer p {
+        margin: 0;
+      }
+
+      @media (max-width: 600px) {
+        .container {
+          width: calc(100% - 2rem);
+        }
+
+        header {
+          padding-block: 1.5rem;
+        }
+
+        main {
+          padding-block: 1rem 2.5rem;
+        }
+
+        .intro {
+          padding: 2rem 1.5rem 2.5rem;
+          border-radius: 1rem;
+        }
+
+        .intro::after {
+          right: -21rem;
+          bottom: -21rem;
+        }
+
+        footer {
+          flex-direction: column;
+          gap: 0.35rem;
+          padding-bottom: 1.5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="container">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">AC</span>
+        <span>Acropolis Channel</span>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="intro" aria-labelledby="welcome-title">
+        <div class="content">
+          <p class="status">Próximamente</p>
+          <h1 id="welcome-title">Estamos preparando una nueva experiencia.</h1>
+          <p class="description">
+            Acropolis Channel está en desarrollo. Este es el primer paso de una
+            aplicación que irá creciendo.
+          </p>
+          <p class="note">Gracias por acompañarnos desde el comienzo.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container">
+      <p>Acropolis Channel</p>
+      <p>Una nueva etapa, paso a paso.</p>
+    </footer>
+  </body>
+</html>

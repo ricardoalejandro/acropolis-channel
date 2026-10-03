@@ -4,3 +4,6 @@
 
 # Información y configuración local del VPS; nunca publicar en Git.
 /.local/
+
+node_modules/
+/work/

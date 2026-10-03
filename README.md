@@ -2,7 +2,11 @@
 
 Repositorio: [ricardoalejandro/acropolis-channel](https://github.com/ricardoalejandro/acropolis-channel).
 
-El repositorio contiene la automatización inicial de despliegue. Todavía no incluye una aplicación, un Dockerfile ni un archivo Compose.
+Aplicación inicial de Acropolis Channel con una página de presentación, un servidor Node.js sin dependencias y despliegue con Docker Compose.
+
+## Desarrollo local
+
+Con Node.js 22 o superior, ejecutar `npm start` y abrir `http://localhost:3000`. La página se encuentra en `public/index.html` y el servidor en `server.mjs`. El endpoint `/health` permite comprobar manualmente si la aplicación responde.
 
 ## Despliegue con GitHub Actions
 
@@ -29,6 +33,8 @@ Para futuras modificaciones de Actions, consultar ese archivo local y configurar
 
 ## Preparación de la aplicación
 
-Añadir la aplicación, su `Dockerfile` y un archivo `compose.yml` en la raíz; configurar las variables de ejecución en el servidor y preparar su publicación siguiendo la documentación local. Comprobar el primer despliegue antes de activar la automatización.
+El `Dockerfile` ejecuta la aplicación como un usuario sin privilegios. `compose.yml` conecta el servicio web a la red externa de publicación existente, sin exponer un puerto del servidor directamente. Definir `TRAEFIK_NETWORK` en el archivo `.env` del servidor con el nombre de esa red. Configurar el routing y HTTPS siguiendo la documentación local del VPS, comprobar el primer despliegue y activar después la automatización.
+
+La carpeta `.local/` también está excluida del contexto de construcción mediante `.dockerignore`, junto con los archivos `.env`, para mantener los datos privados fuera de las imágenes.
 
 Mantener el workflow y el script dedicados al despliegue. Preservar los datos, volúmenes y configuraciones existentes al modificar el proceso.
