@@ -1,0 +1,6 @@
+interface:
+  display_name: "Acropolis VPS Deploy"
+  short_description: "Despliega Acropolis Channel directamente en el VPS"
+  default_prompt: "Usa $acropolis-vps-deploy para desplegar y comprobar Acropolis Channel en el VPS con su dominio configurado."
+policy:
+  allow_implicit_invocation: true
