@@ -115,6 +115,7 @@ JSON
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 static_checks() {
   while IFS= read -r -d '' file; do bash -n "$file" || return $?; done < <(find scripts infra -type f -name '*.sh' -print0)
@@ -355,7 +356,11 @@ SELECT row_to_json(c)::text FROM catalog."Contents" c ORDER BY "Id";
 SELECT row_to_json(a)::text FROM catalog."Audit" a ORDER BY "Id";
 SQL
 }
-catalog_before="$(catalog_digest)"
+capture_catalog_digest() {
+  catalog_before="$(catalog_digest)" || return 1
+  [[ "$catalog_before" =~ ^[0-9a-f]{64}$ ]]
+}
+run_step catalog_source_digest capture_catalog_digest
 run_step catalog_public_boundaries compose run --rm --no-deps node 'node /qa-tools/catalog-state.mjs'
 run_step keyring_backup compose run --rm --no-deps pki backup-keyring
 run_step private_ca_backup compose run --rm --no-deps pki backup-caddy
@@ -382,6 +387,9 @@ SELECT CASE WHEN
   AND has_schema_privilege('acropolis_app', 'catalog', 'USAGE')
   AND NOT has_schema_privilege('acropolis_app', 'catalog', 'CREATE')
   AND has_table_privilege('acropolis_app', 'catalog."Contents"', 'SELECT')
+  AND has_table_privilege('acropolis_app', 'catalog."Contents"', 'INSERT')
+  AND has_table_privilege('acropolis_app', 'catalog."Contents"', 'UPDATE')
+  AND NOT has_table_privilege('acropolis_app', 'catalog."Contents"', 'DELETE')
   AND has_table_privilege('acropolis_app', 'catalog."__EFMigrationsHistory"', 'SELECT')
   AND NOT has_table_privilege('acropolis_app', 'catalog."__EFMigrationsHistory"', 'INSERT')
   AND NOT has_table_privilege('acropolis_app', 'catalog."Audit"', 'UPDATE')

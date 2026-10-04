@@ -45,7 +45,17 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
   const title = 'Una idea editorial QA ' + testInfo.project.name;
   const origin = process.env['BASE_URL'];
   if (!origin) throw new Error('Isolated QA origin is required.');
-  const publicContext = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: false });
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('Catalog layout requires a fixed QA viewport.');
+  const publicContext = await browser.newContext({
+    baseURL: origin,
+    ignoreHTTPSErrors: false,
+    viewport,
+    isMobile: testInfo.project.use.isMobile ?? false,
+    hasTouch: testInfo.project.use.hasTouch ?? false,
+    deviceScaleFactor: testInfo.project.use.deviceScaleFactor ?? 1,
+    ...(testInfo.project.use.userAgent ? { userAgent: testInfo.project.use.userAgent } : {}),
+  });
   try {
     const user = await loginQa(page.request, editor, password);
     expect(user.permissions).toContain('Content.Manage');
@@ -88,6 +98,21 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     await publicPage.goto('/content/' + slug);
     await expect(publicPage.getByRole('heading', { level: 1 })).toHaveText(title);
     await expect(publicPage.getByText(synopsis, { exact: true })).toBeVisible();
+    expect(publicPage.viewportSize()).toEqual(viewport);
+    const cover = publicPage.locator('.catalog-detail-cover');
+    await expect(cover).toBeVisible();
+    await expect
+      .poll(() => cover.evaluate((image) => (image as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+    await expect
+      .poll(async () => {
+        const box = await cover.boundingBox();
+        return box ? box.width / box.height : 0;
+      })
+      .toBeCloseTo(viewport.width <= 760 ? 16 / 10 : 16 / 7.8, 2);
+    expect(
+      await publicPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
     expect(await publicPage.evaluate(() => 'catalogInjected' in window)).toBe(false);
     await expect(publicPage.locator('video, audio, iframe')).toHaveCount(0);
     expect((await new AxeBuilder({ page: publicPage }).analyze()).violations).toEqual([]);

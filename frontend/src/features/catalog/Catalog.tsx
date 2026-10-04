@@ -121,8 +121,8 @@ export function LatestContent() {
           <div className="catalog-empty">
             <h3>Pronto, nuevas ideas.</h3>
             <p>
-              Aún no hay contenidos publicados. Mientras tanto, conoce nuestra propuesta y crea tu
-              cuenta.
+              Aún no hay contenidos publicados. Mientras tanto, conoce nuestra propuesta de
+              filosofía, cultura y voluntariado.
             </p>
           </div>
         )}
