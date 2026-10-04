@@ -133,7 +133,7 @@ PY_STATIC
 run_step static_checks static_checks
 [[ -s tests/deploy/test_deploy.py ]] || { echo 'Missing deployment orchestration test suite.' >&2; exit 1; }
 run_step deployment_orchestration env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s tests/deploy -v
-run_step mail_operations env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 infra/mail/tests/test_mail_ops.py
+run_step mail_operations env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s infra/mail/tests -p 'test_*.py' -v
 run_step compose_validation compose config --quiet
 run_step build_candidate docker build --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_IMAGE" .
 image_id="$(docker image inspect --format '{{.Id}}' "$QA_IMAGE")"

@@ -29,6 +29,10 @@ ACME = Path("/etc/dokploy/traefik/dynamic/acme.json")
 HOST = "mail.naperu.cloud"
 WEBMAIL = "webmail.naperu.cloud"
 IP = "72.61.37.46"
+RESOLVERS = ("8.8.8.8", "1.1.1.1")
+PTR_LEGACY = "srv1095953.hstgr.cloud"
+PTR_ZONE = "37.61.72.in-addr.arpa"
+PTR_AUTHORITIES = ("rdns1.hostinger.com", "rdns2.hostinger.com")
 CONTAINER = "naperu-mail-mailserver-1"
 CONTAINERS = ("naperu-mail-mailserver-1", "naperu-mail-roundcube-1")
 COMPONENTS = ("config", "certs", "mail-data", "mail-state", "roundcube-db",
@@ -191,12 +195,12 @@ def container_state(name, *, missing_ok=False):
                 raise ValueError("ssl")
         return bool(running)
     except (ValueError, IndexError, TypeError, AttributeError) as exc:
+
         raise OpsError("El contenedor no pertenece a la configuración de correo esperada.") from exc
 
 
 def certificate_fingerprint(fullchain):
     der = run(["openssl", "x509", "-outform", "DER"], input=fullchain)
-
     return hashlib.sha256(der).hexdigest()
 
 
@@ -207,24 +211,42 @@ def copied_certificate_fingerprint(*, timeout=10):
     return hashlib.sha256(der).hexdigest()
 
 
-def loopback_tls_port():
+def mail_tls_endpoint():
+    if not container_state(CONTAINER, missing_ok=True):
+        raise OpsError("El contenedor propio no está activo para verificar TLS.")
     output = run(["docker", "inspect", "--format",
                   '{{json (index .NetworkSettings.Ports "465/tcp")}}', CONTAINER])
     try:
         bindings = json.loads(output)
-        ports = {int(item["HostPort"]) for item in bindings
-                 if item.get("HostIp") in ("", "0.0.0.0", "127.0.0.1")}
-        if len(ports) != 1 or not ports.issubset({465, 2465}):
-            raise ValueError("binding")
-        return ports.pop()
+        endpoints = set()
+        for item in bindings:
+            address, port = item["HostIp"], int(item["HostPort"])
+            if (address, port) == ("127.0.0.1", 2465):
+                endpoints.add(("127.0.0.1", 2465))
+            elif port == 465 and address in ("", "0.0.0.0", "127.0.0.1"):
+                endpoints.add(("127.0.0.1", 465))
+            elif (address, port) == (IP, 465):
+                endpoints.add((IP, 465))
+            else:
+                raise ValueError("binding")
+        if len(endpoints) != 1:
+            raise ValueError("binding count")
+        return endpoints.pop()
     except (TypeError, ValueError, KeyError) as exc:
-        raise OpsError("No hay un endpoint propio 465/2465 verificable en loopback.") from exc
+        raise OpsError("El binding TLS no es el endpoint propio esperado de staging o publicación.") from exc
 
 
-def served_certificate_fingerprint(port, *, cafile=None, timeout=10):
+def loopback_tls_port():
+    """Compatibility wrapper; new callers use mail_tls_endpoint for exact host+port."""
+    return mail_tls_endpoint()[1]
+
+
+def served_certificate_fingerprint(endpoint, *, cafile=None, timeout=10):
+    if endpoint not in {("127.0.0.1", 2465), ("127.0.0.1", 465), (IP, 465)}:
+        raise OpsError("Endpoint TLS fuera del ámbito propio.")
     # SNI and hostname validation remain exact even before public DNS is available.
     context = ssl.create_default_context(cafile=str(cafile) if cafile else None)
-    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as raw:
+    with socket.create_connection(endpoint, timeout=timeout) as raw:
         with context.wrap_socket(raw, server_hostname=HOST) as secure:
             return hashlib.sha256(secure.getpeercert(binary_form=True)).hexdigest()
 
@@ -249,12 +271,12 @@ def reload_mail(expected_fingerprint, *, cafile=None, timeout=75, interval=2):
         raise OpsError("DMS se detuvo durante la renovación; certificado exportado conservado.")
     run(["docker", "exec", CONTAINER, "postfix", "reload"], timeout=10)
     run(["docker", "exec", CONTAINER, "doveadm", "reload"], timeout=10)
-    port = loopback_tls_port()
+    endpoint = mail_tls_endpoint()
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
         try:
             fingerprint = served_certificate_fingerprint(
-                port, cafile=cafile, timeout=max(0.1, min(10, remaining)))
+                endpoint, cafile=cafile, timeout=max(0.1, min(10, remaining)))
             if fingerprint == expected_fingerprint:
                 return True
         except (OSError, ssl.SSLError):
@@ -330,6 +352,7 @@ def export_cert(root=ROOT, acme=ACME, *, cafile=None, minimum_seconds=604800,
         if unchanged:
             # Retry a previously incomplete rollout without creating another cert version.
             if inspect and incomplete_certificate_export(root, expected):
+
                 reloaded = complete_certificate_export(
                     root, expected, os.readlink(certdir / "current"), cafile=cafile)
                 return {"changed": False, "reloaded": reloaded, "serving_verified": reloaded}
@@ -350,7 +373,6 @@ def export_cert(root=ROOT, acme=ACME, *, cafile=None, minimum_seconds=604800,
             if os.path.lexists(link):
                 link.unlink()
         reloaded = complete_certificate_export(
-
             root, expected, "versions/" + stage.name, cafile=cafile) if inspect else False
         return {"changed": True, "reloaded": reloaded, "serving_verified": reloaded}
     finally:
@@ -500,6 +522,7 @@ def backup(root=ROOT, *, offline=False, key=None):
             # Services resume before the full decrypt-and-check pass.
             checked = verify_backup(pending, key)
             if checked["components"] != summarize(manifest):
+
                 raise OpsError("La verificación no corresponde al snapshot.")
             with open(pending, "rb") as handle:
                 os.fsync(handle.fileno())
@@ -520,7 +543,6 @@ def backup(root=ROOT, *, offline=False, key=None):
 def decrypted_archive(backup_file, key):
     private_file(backup_file)
     private_file(key)
-
     with tempfile.TemporaryDirectory(prefix="mail-verify-") as scratch:
         with tempfile.TemporaryFile(mode="w+b") as plaintext:
             args = gpg_base(Path(scratch) / "gpg", key) + ["--status-fd", "2", "--decrypt", str(backup_file)]
@@ -653,6 +675,7 @@ def restore_test(backup_file, key, destination, root=ROOT):
             or destination.name in ("", ".", "..") or os.path.lexists(destination)):
         raise OpsError("La restauración exige un directorio nuevo dentro de .local/restore-tests.")
     with decrypted_archive(Path(backup_file), Path(key)) as archive:
+
         manifest, byname = checked_archive(archive)  # Check every path/hash/owner before writing.
         if os.geteuid() != 0:
             groups = set(os.getgroups()) | {os.getegid()}
@@ -671,7 +694,6 @@ def restore_test(backup_file, key, destination, root=ROOT):
                 else:
                     with target.open("xb") as handle:
                         shutil.copyfileobj(archive.extractfile(member), handle)
-
                     os.chown(target, member.uid, member.gid)
                     target.chmod(member.mode & 0o7777)
             for name, member in byname.items():
@@ -698,20 +720,76 @@ def restore_test(backup_file, key, destination, root=ROOT):
     return {"verified": True, "destination": str(destination), "components": summarize(manifest)}
 
 
-def dns_query(resolver, host, record):
+def dns_response(resolver, host, record, *, authoritative=False):
+    """Read DNS metadata without accepting CNAMEs, wrong owners or error statuses."""
     args = ["dig", "@" + resolver, "+time=4", "+tries=1", "+noall", "+comments", "+answer"]
+    if authoritative:
+        args.append("+norecurse")
     args += ["-x", host] if record == "PTR" else [host, record]
-    output = run(args, timeout=15).decode()
+    output = run(args, timeout=15).decode("ascii", errors="replace")
     if not re.search(r"status: NOERROR[,\s]", output):
-        raise OpsError("El resolver público no confirmó una respuesta DNS válida.")
-    answers = []
+        raise OpsError("El resolver DNS no confirmó una respuesta NOERROR.")
+    flags = re.search(r";;\s+flags:\s*([^;]*);", output)
+    is_authoritative = bool(flags and "aa" in flags.group(1).split())
+    if authoritative and not is_authoritative:
+        raise OpsError("El servidor de reverse DNS no confirmó una respuesta autoritativa AA.")
+    owner = ".".join(reversed(host.split("."))) + ".in-addr.arpa" if record == "PTR" else host.rstrip(".").lower()
+    answers, ttls = [], []
     for line in output.splitlines():
         if line and not line.startswith(";"):
             fields = line.split()
-            if len(fields) < 5 or fields[3] != record:
-                raise OpsError("La respuesta DNS no contiene únicamente el registro esperado.")
-            answers.append(fields[4].rstrip("."))
-    return answers
+            try:
+                if (len(fields) != 5 or fields[0].rstrip(".").lower() != owner
+                        or fields[2] != "IN" or fields[3] != record):
+                    raise ValueError("record")
+                ttl = int(fields[1])
+                if ttl < 0:
+                    raise ValueError("ttl")
+            except (ValueError, IndexError) as exc:
+                raise OpsError("La respuesta DNS contiene un registro, propietario o TTL inesperado.") from exc
+            answers.append(fields[4].rstrip(".").lower())
+            ttls.append(ttl)
+    return {"values": answers, "ttl_seconds": ttls, "authoritative": is_authoritative}
+
+
+def dns_query(resolver, host, record):
+    return dns_response(resolver, host, record)["values"]
+
+
+def check_ptr_public():
+    """Confirm published PTR; permit only positive-TTL legacy cache with exact authorities."""
+    recursive = []
+    for resolver in RESOLVERS:
+        response = dns_response(resolver, IP, "PTR")
+        if (len(response["values"]) != 1 or len(response["ttl_seconds"]) != 1
+                or response["values"][0] not in (HOST, PTR_LEGACY)
+                or response["ttl_seconds"][0] <= 0):
+            raise OpsError("PTR público inesperado, múltiple o sin TTL positivo.")
+        recursive.append({"resolver": resolver, "value": response["values"][0],
+                          "ttl_seconds": response["ttl_seconds"][0]})
+    report = {"verified": True, "propagation_pending": False, "source": "recursive",
+              "recursive": recursive, "authorities": [], "dns_queries": 2}
+    if all(item["value"] == HOST for item in recursive):
+        return report
+    # This narrow exception covers only the known old PTR still cached with TTL>0.
+    # Confirm delegation using both public recursors, then query both named authorities.
+    for resolver in RESOLVERS:
+        delegation = dns_response(resolver, PTR_ZONE, "NS")
+        if (len(delegation["values"]) != 2 or set(delegation["values"]) != set(PTR_AUTHORITIES)
+                or len(delegation["ttl_seconds"]) != 2
+                or any(ttl <= 0 for ttl in delegation["ttl_seconds"])):
+            raise OpsError("La delegación reverse DNS no coincide con ambas autoridades Hostinger esperadas.")
+    authorities = []
+    for server in PTR_AUTHORITIES:
+        response = dns_response(server, IP, "PTR", authoritative=True)
+        if (not response["authoritative"] or response["values"] != [HOST]
+                or len(response["ttl_seconds"]) != 1 or response["ttl_seconds"][0] <= 0):
+            raise OpsError("Las autoridades reverse DNS no confirman PTR exacto, AA y TTL positivo concordantes.")
+        authorities.append({"server": server, "value": HOST,
+                            "ttl_seconds": response["ttl_seconds"][0], "authoritative": True})
+    report.update(propagation_pending=True, source="authoritative", authorities=authorities,
+                  delegation={"zone": PTR_ZONE, "names": list(PTR_AUTHORITIES)}, dns_queries=6)
+    return report
 
 
 def tls_socket(host, port):
@@ -723,13 +801,12 @@ def tls_socket(host, port):
 
 def check_public(*, mail_tls=False):
     checks = []
-    for resolver in ("8.8.8.8", "1.1.1.1"):
+    for resolver in RESOLVERS:
         for host in (HOST, WEBMAIL):
             if dns_query(resolver, host, "A") != [IP] or dns_query(resolver, host, "AAAA"):
                 raise OpsError("DNS público pendiente: A exacto y ausencia de AAAA requeridos en ambos resolvers.")
             checks.append(resolver + "/" + host)
-        if dns_query(resolver, IP, "PTR") != [HOST]:
-            raise OpsError("PTR público pendiente: debe ser exactamente mail.naperu.cloud.")
+    ptr_report = check_ptr_public()
     try:
         for host in (HOST, WEBMAIL):
             tls_socket(host, 443)
@@ -742,7 +819,9 @@ def check_public(*, mail_tls=False):
                 client.ehlo()
     except (OSError, ssl.SSLError, smtplib.SMTPException) as exc:
         raise OpsError("La comprobación TLS pública con confianza normal no pasó.") from exc
-    return {"verified": True, "dns_checks": len(checks) + 2,
+    return {"verified": True, "dns_checks": len(checks) * 2 + ptr_report["dns_queries"],
+
+            "ptr": ptr_report, "propagation_pending": ptr_report["propagation_pending"],
             "tls": ["mail:443", "webmail:443"] + (["mail:465", "mail:993", "mail:587"] if mail_tls else [])}
 
 

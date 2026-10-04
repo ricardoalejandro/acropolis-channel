@@ -61,12 +61,12 @@ class MailOpsTests(unittest.TestCase):
         self.acme = self.root / "dummy-acme.json"
         actual_run, actual_popen = subprocess.run, subprocess.Popen
         def isolated_run(args, *a, **kwargs):
-            if args[0] == "docker":
-                raise AssertionError("An isolated test attempted real Docker access.")
+            if args[0] in ("docker", "dig"):
+                raise AssertionError("An isolated test attempted real Docker or DNS access.")
             return actual_run(args, *a, **kwargs)
         def isolated_popen(args, *a, **kwargs):
-            if args[0] == "docker":
-                raise AssertionError("An isolated test attempted real Docker access.")
+            if args[0] in ("docker", "dig"):
+                raise AssertionError("An isolated test attempted real Docker or DNS access.")
             return actual_popen(args, *a, **kwargs)
         run_guard = mock.patch.object(ops.subprocess, "run", side_effect=isolated_run)
         popen_guard = mock.patch.object(ops.subprocess, "Popen", side_effect=isolated_popen)
@@ -174,7 +174,7 @@ class MailOpsTests(unittest.TestCase):
              mock.patch.object(ops, "run", side_effect=runner) as commands, \
              mock.patch.object(ops, "copied_certificate_fingerprint", return_value=expected), \
              mock.patch.object(ops, "served_certificate_fingerprint", return_value=expected), \
-             mock.patch.object(ops, "loopback_tls_port", return_value=2465):
+             mock.patch.object(ops, "mail_tls_endpoint", return_value=("127.0.0.1", 2465)):
             result = ops.export_cert(self.root, self.acme, cafile=self.pki / "ca.pem")
             self.assertTrue(result["serving_verified"])
             calls = [call.args[0] for call in commands.call_args_list if call.args[0][0] == "docker"]
@@ -223,7 +223,7 @@ class MailOpsTests(unittest.TestCase):
              mock.patch.object(ops, "container_state", return_value=True), \
              mock.patch.object(ops, "copied_certificate_fingerprint", side_effect=copied), \
              mock.patch.object(ops, "served_certificate_fingerprint", side_effect=lambda *a, **kw: next(served)), \
-             mock.patch.object(ops, "loopback_tls_port", return_value=2465), \
+             mock.patch.object(ops, "mail_tls_endpoint", return_value=("127.0.0.1", 2465)), \
              mock.patch.object(ops, "run", side_effect=runner):
             self.assertTrue(ops.reload_mail("expected", timeout=10, interval=2))
         self.assertEqual(events[:3], ["copy:old", "copy:old", "copy:expected"])
@@ -243,7 +243,7 @@ class MailOpsTests(unittest.TestCase):
              mock.patch.object(ops, "container_state", return_value=True), \
              mock.patch.object(ops, "copied_certificate_fingerprint", return_value="expected"), \
              mock.patch.object(ops, "served_certificate_fingerprint", return_value="old"), \
-             mock.patch.object(ops, "loopback_tls_port", return_value=2465), \
+             mock.patch.object(ops, "mail_tls_endpoint", return_value=("127.0.0.1", 2465)), \
              mock.patch.object(ops, "run", return_value=b""):
             with self.assertRaises(ops.OpsError):
                 ops.reload_mail("expected", timeout=6, interval=2)
@@ -270,18 +270,47 @@ class MailOpsTests(unittest.TestCase):
         self.assertEqual(len(list((self.root / "certs/versions").iterdir())), 1)
         self.assertEqual(json.loads(statefile.read_bytes())["status"], "passed")
 
-    def test_loopback_port_allows_only_own_expected_bindings(self):
-        for port in (465, 2465):
-            payload = json.dumps([{"HostIp": "0.0.0.0", "HostPort": str(port)}]).encode()
-            with mock.patch.object(ops, "run", return_value=payload):
+    def test_mail_tls_endpoint_allows_only_own_stage_or_exact_public_binding(self):
+        valid = (("127.0.0.1", 2465, ("127.0.0.1", 2465)),
+                 ("0.0.0.0", 465, ("127.0.0.1", 465)),
+                 (ops.IP, 465, (ops.IP, 465)))
+        for address, port, endpoint in valid:
+            payload = json.dumps([{"HostIp": address, "HostPort": str(port)}]).encode()
+            with mock.patch.object(ops, "container_state", return_value=True), \
+                 mock.patch.object(ops, "run", return_value=payload):
+                self.assertEqual(ops.mail_tls_endpoint(), endpoint)
                 self.assertEqual(ops.loopback_tls_port(), port)
         for bindings in (None, [], [{"HostIp": "192.0.2.1", "HostPort": "465"}],
                          [{"HostIp": "127.0.0.1", "HostPort": "444"}],
+                         [{"HostIp": ops.IP, "HostPort": "2465"}],
+                         [{"HostIp": "0.0.0.0", "HostPort": "2465"}],
                          [{"HostIp": "127.0.0.1", "HostPort": "465"},
                           {"HostIp": "127.0.0.1", "HostPort": "2465"}]):
-            with mock.patch.object(ops, "run", return_value=json.dumps(bindings).encode()):
+            with mock.patch.object(ops, "container_state", return_value=True), \
+                 mock.patch.object(ops, "run", return_value=json.dumps(bindings).encode()):
                 with self.assertRaises(ops.OpsError):
-                    ops.loopback_tls_port()
+                    ops.mail_tls_endpoint()
+
+        with mock.patch.object(ops, "container_state", return_value=False), \
+             mock.patch.object(ops, "run") as runner:
+            with self.assertRaises(ops.OpsError):
+                ops.mail_tls_endpoint()
+            runner.assert_not_called()
+
+    def test_public_bound_certificate_check_uses_exact_endpoint_sni_and_trust(self):
+        secure = mock.MagicMock()
+        secure.getpeercert.return_value = b"synthetic certificate DER"
+        context = mock.MagicMock()
+        context.wrap_socket.return_value.__enter__.return_value = secure
+        with mock.patch.object(ops.ssl, "create_default_context", return_value=context) as factory, \
+             mock.patch.object(ops.socket, "create_connection") as connect:
+            expected = ops.hashlib.sha256(b"synthetic certificate DER").hexdigest()
+            self.assertEqual(ops.served_certificate_fingerprint((ops.IP, 465)), expected)
+            connect.assert_called_once_with((ops.IP, 465), timeout=10)
+            factory.assert_called_once_with(cafile=None)
+            self.assertEqual(context.wrap_socket.call_args.kwargs["server_hostname"], ops.HOST)
+        with self.assertRaises(ops.OpsError):
+            ops.served_certificate_fingerprint(("192.0.2.1", 465))
 
     def test_restore_preserves_uid_gid_of_mail_webmail_and_certificate_symlinks(self):
         self.snapshot_source()
@@ -292,7 +321,6 @@ class MailOpsTests(unittest.TestCase):
             os.chown(self.root / component, uid, gid)
             os.chown(self.root / component / "sample", uid, gid)
         link_identity = (33, 33) if os.geteuid() == 0 else (os.geteuid(), os.getegid())
-
         os.chown(self.root / "certs/current", *link_identity, follow_symlinks=False)
         backup, key = self.backup()
         destination = self.root / ".local/restore-tests/ownership"
@@ -403,6 +431,7 @@ class MailOpsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 with ops.maintenance():
                     raise ValueError("synthetic interruption")
+
         self.assertEqual(events, [["docker", "stop", "--time", "30", ops.CONTAINER],
                                    ["docker", "start", ops.CONTAINER]])
         with mock.patch.object(ops, "container_state", return_value=True), \
@@ -416,19 +445,19 @@ class MailOpsTests(unittest.TestCase):
         def dns(resolver, host, record):
             return [ops.HOST] if record == "PTR" else [ops.IP] if record == "A" else []
         with mock.patch.object(ops, "dns_query", side_effect=dns), \
+             mock.patch.object(ops, "check_ptr_public", return_value={"verified": True, "propagation_pending": False, "dns_queries": 2}), \
              mock.patch.object(ops, "tls_socket") as tls:
             self.assertTrue(ops.check_public()["verified"])
             self.assertEqual(tls.call_args_list, [mock.call(ops.HOST, 443), mock.call(ops.WEBMAIL, 443)])
-        for reason in ("aaaa", "ptr", "a"):
+        for reason in ("aaaa", "a"):
             def bad(resolver, host, record):
                 if reason == "aaaa" and record == "AAAA":
                     return ["2001:db8::1"]
-                if reason == "ptr" and record == "PTR":
-                    return ["other.invalid"]
                 if reason == "a" and record == "A":
                     return [ops.IP, "192.0.2.1"]
                 return dns(resolver, host, record)
             with mock.patch.object(ops, "dns_query", side_effect=bad), \
+                 mock.patch.object(ops, "check_ptr_public", return_value={"verified": True, "propagation_pending": False, "dns_queries": 2}), \
                  mock.patch.object(ops, "tls_socket") as tls:
                 with self.assertRaises(ops.OpsError):
                     ops.check_public()
@@ -436,7 +465,6 @@ class MailOpsTests(unittest.TestCase):
 
     def test_dns_queries_reject_nxdomain_servfail_and_cname(self):
         answer = b";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nmail.naperu.cloud. 30 IN A 72.61.37.46\n"
-
         with mock.patch.object(ops, "run", return_value=answer):
             self.assertEqual(ops.dns_query("8.8.8.8", ops.HOST, "A"), [ops.IP])
         empty = b";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n"
@@ -541,7 +569,114 @@ class MailOpsTests(unittest.TestCase):
                 original = archive.extractfile
                 archive.extractfile = lambda member: io.BytesIO(changed) if member.name == "MANIFEST.json" else original(member)
                 with self.assertRaises(ops.OpsError):
+
                     ops.checked_archive(archive)
+
+    def ptr_fixture(self, recursive=None, delegation=None, authorities=None):
+        recursive = recursive or {}
+        authorities = authorities or {}
+        def response(server, host, record, *, authoritative=False):
+            if server in ops.RESOLVERS and record == "PTR":
+                return recursive.get(server, {"values": [ops.HOST], "ttl_seconds": [300], "authoritative": False})
+            if server in ops.RESOLVERS and record == "NS":
+                if isinstance(delegation, Exception):
+                    raise delegation
+                return delegation or {"values": list(reversed(ops.PTR_AUTHORITIES)),
+                                      "ttl_seconds": [600, 600], "authoritative": False}
+            if server in ops.PTR_AUTHORITIES and record == "PTR" and authoritative:
+                result = authorities.get(server, {"values": [ops.HOST], "ttl_seconds": [86400], "authoritative": True})
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            raise AssertionError("Unexpected DNS operation in isolated PTR fixture.")
+        return response
+
+    def test_ptr_fresh_recursors_pass_without_authority_fallback(self):
+        with mock.patch.object(ops, "dns_response", side_effect=self.ptr_fixture()) as dns:
+            result = ops.check_ptr_public()
+        self.assertTrue(result["verified"])
+        self.assertFalse(result["propagation_pending"])
+        self.assertEqual(result["source"], "recursive")
+        self.assertEqual(result["authorities"], [])
+        self.assertEqual(result["dns_queries"], 2)
+        self.assertEqual(dns.call_count, 2)
+
+    def test_ptr_known_legacy_positive_ttl_requires_both_exact_authorities(self):
+        for resolvers in ((ops.RESOLVERS[1],), ops.RESOLVERS):
+            recursive = {server: {"values": [ops.PTR_LEGACY], "ttl_seconds": [21600],
+                                  "authoritative": False} for server in resolvers}
+            with mock.patch.object(ops, "dns_response", side_effect=self.ptr_fixture(recursive=recursive)) as dns:
+                result = ops.check_ptr_public()
+            self.assertTrue(result["verified"])
+            self.assertTrue(result["propagation_pending"])
+            self.assertEqual(result["source"], "authoritative")
+            self.assertEqual(result["dns_queries"], 6)
+            self.assertEqual(result["delegation"]["names"], list(ops.PTR_AUTHORITIES))
+            self.assertEqual([item["server"] for item in result["authorities"]], list(ops.PTR_AUTHORITIES))
+            self.assertEqual(len([item for item in result["recursive"] if item["value"] == ops.PTR_LEGACY]), len(resolvers))
+            self.assertTrue(all(item["ttl_seconds"] > 0 and item["authoritative"]
+                                for item in result["authorities"]))
+            self.assertEqual(dns.call_count, 6)
+            direct_calls = [call for call in dns.call_args_list if call.kwargs.get("authoritative")]
+            self.assertEqual(len(direct_calls), 2)
+
+    def test_ptr_unknown_multiple_missing_or_nonpositive_ttl_never_falls_back(self):
+        cases = ({"values": ["other.invalid"], "ttl_seconds": [300], "authoritative": False},
+                 {"values": [ops.HOST, ops.PTR_LEGACY], "ttl_seconds": [300, 300], "authoritative": False},
+                 {"values": [], "ttl_seconds": [], "authoritative": False},
+                 {"values": [ops.PTR_LEGACY], "ttl_seconds": [0], "authoritative": False},
+                 {"values": [ops.HOST], "ttl_seconds": [0], "authoritative": False})
+        for response in cases:
+            with mock.patch.object(ops, "dns_response", side_effect=self.ptr_fixture(
+                    recursive={ops.RESOLVERS[0]: response})) as dns:
+                with self.assertRaises(ops.OpsError):
+                    ops.check_ptr_public()
+                self.assertEqual(dns.call_count, 1)
+
+    def test_ptr_delegation_mismatch_duplicates_zero_ttl_or_lookup_failure_block(self):
+        legacy = {ops.RESOLVERS[1]: {"values": [ops.PTR_LEGACY], "ttl_seconds": [21600],
+                                    "authoritative": False}}
+        cases = ({"values": ["other.invalid", ops.PTR_AUTHORITIES[1]], "ttl_seconds": [600, 600], "authoritative": False},
+                 {"values": [ops.PTR_AUTHORITIES[0]] * 2, "ttl_seconds": [600, 600], "authoritative": False},
+                 {"values": list(ops.PTR_AUTHORITIES), "ttl_seconds": [0, 600], "authoritative": False},
+                 ops.OpsError("synthetic delegation timeout"))
+        for delegation in cases:
+            with mock.patch.object(ops, "dns_response", side_effect=self.ptr_fixture(
+                    recursive=legacy, delegation=delegation)) as dns:
+                with self.assertRaises(ops.OpsError):
+                    ops.check_ptr_public()
+                self.assertFalse(any(call.kwargs.get("authoritative") for call in dns.call_args_list))
+
+    def test_ptr_authority_unknown_noaa_zero_ttl_and_timeout_block(self):
+        legacy = {ops.RESOLVERS[1]: {"values": [ops.PTR_LEGACY], "ttl_seconds": [21600],
+                                    "authoritative": False}}
+        cases = ({"values": [ops.PTR_LEGACY], "ttl_seconds": [86400], "authoritative": True},
+                 {"values": [ops.HOST], "ttl_seconds": [86400], "authoritative": False},
+                 {"values": [ops.HOST], "ttl_seconds": [0], "authoritative": True},
+                 ops.OpsError("synthetic authority timeout"))
+        for authority in cases:
+            with mock.patch.object(ops, "dns_response", side_effect=self.ptr_fixture(
+                    recursive=legacy, authorities={ops.PTR_AUTHORITIES[1]: authority})):
+                with self.assertRaises(ops.OpsError):
+                    ops.check_ptr_public()
+
+    def test_direct_dns_metadata_requires_aa_noerror_exact_owner_and_valid_ttl(self):
+        answer = (b";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n"
+                  b";; flags: qr aa; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0\n"
+                  b"46.37.61.72.in-addr.arpa. 86400 IN PTR mail.naperu.cloud.\n")
+        with mock.patch.object(ops, "run", return_value=answer) as runner:
+            result = ops.dns_response(ops.PTR_AUTHORITIES[0], ops.IP, "PTR", authoritative=True)
+            self.assertEqual(result, {"values": [ops.HOST], "ttl_seconds": [86400], "authoritative": True})
+            self.assertIn("+norecurse", runner.call_args.args[0])
+        for output in (answer.replace(b"NOERROR", b"SERVFAIL"),
+                       answer.replace(b"NOERROR", b"NXDOMAIN"),
+                       answer.replace(b"qr aa;", b"qr;"),
+                       answer.replace(b"86400", b"-1"),
+                       answer.replace(b"46.37.61.72", b"45.37.61.72"),
+                       answer.replace(b" IN PTR ", b" IN CNAME ")):
+            with mock.patch.object(ops, "run", return_value=output):
+                with self.assertRaises(ops.OpsError):
+                    ops.dns_response(ops.PTR_AUTHORITIES[0], ops.IP, "PTR", authoritative=True)
 
     def test_lock_and_key_creation_never_overwrite(self):
         ops.init_key(self.root)
