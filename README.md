@@ -1,76 +1,81 @@
 # Acrópolis Channel
 
-Base técnica del monolito modular: ASP.NET Core / .NET 10 LTS, React 19 con TypeScript y Vite, PostgreSQL 18. La aplicación y la base de datos se ejecutan en el VPS; la distribución multimedia futura estará en AWS.
+Monolito modular con ASP.NET Core / .NET 10 LTS, React 19, TypeScript, Vite y PostgreSQL 18. El código y las validaciones se trabajan en el VPS; la distribución multimedia futura estará en AWS.
 
-## Trabajo y alcance inicial
+## Trabajo y alcance
 
-El checkout canónico está en `/root/proyect/acropolis-channel`; rama `main`, remoto HTTPS `https://github.com/ricardoalejandro/acropolis-channel`. La carpeta Windows contiene instrucciones, nunca otra copia del código. Conectar con el alias existente:
+Checkout canónico: `/root/proyect/acropolis-channel`, rama `main`, remoto HTTPS `https://github.com/ricardoalejandro/acropolis-channel`. La carpeta Windows guarda instrucciones y skills, nunca otra copia del código.
 
 ```powershell
 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps
 ```
 
-La entrega inicial muestra «Hola mundo» obtenido de una API real. Identidad, contenidos, suscripciones, pagos, facturación e integraciones son módulos posteriores; no hay registro, cobros ni migración de WordPress implementados.
+La fase de identidad incorpora registro con confirmación de correo, acceso, recuperación y cambio de contraseña, perfil y administración de usuarios. Los niveles institucionales pueden coexistir y se gestionan por separado del permiso administrativo `Users.Manage`. El correo utiliza el SMTP existente, configurado privadamente.
 
-- Backend y migraciones: `src/`.
-- Interfaz, componentes y navegador: `frontend/`.
-- Pruebas backend: `tests/backend/`; carga: `tests/load/`.
-- Límites de módulos: [arquitectura](docs/architecture.md).
-- Pruebas y criterios de calidad: [QA](docs/quality.md).
+La portada tiene una dirección editorial inspirada en Acrópolis Channel Perú. El prototipo del catálogo se construye aparte: no contiene reproducción, pagos ni suscripciones operativas. Los precios y condiciones del sitio anterior son referencias pendientes de validación comercial. No se migra WordPress ni se crean recursos AWS en esta fase. MFA queda pendiente antes del lanzamiento operativo.
 
-## Contratos HTTP
+- [Arquitectura y límites](docs/architecture.md).
+- [Diseño, estructura y procedencia de imágenes](docs/design.md).
+- [Identidad: correo, administración y recuperación](docs/identity-operations.md).
+- [Validación y criterios de calidad](docs/quality.md).
 
-| Ruta | Resultado |
+## Contratos y aplicación
+
+React y API comparten origen. Las API desconocidas devuelven 404, sin ocultarse tras el fallback de la SPA. El sitio requiere HTTPS para las cookies de cuentas.
+
+| Ruta | Responsabilidad |
 | --- | --- |
-| `/` | Interfaz React responsive con carga, saludo, error y reintento |
-| `/api/v1/greeting` | `200 {"message":"Hola mundo"}` |
-| `/health` | Liveness `200 {"status":"ok"}`; independiente de PostgreSQL |
-| `/health/ready` | `200 {"status":"ok"}` cuando PostgreSQL y migraciones están listos; `503` en caso contrario |
+| `/api/v1/identity/csrf` | Token antifalsificación para operaciones que modifican estado |
+| `/api/v1/identity/*` | Registro, confirmación, sesión, recuperación y perfil |
+| `/api/v1/admin/users` | Búsqueda, filtros y gestión paginada con autorización |
+| `/api/v1/greeting` | Contrato de diagnóstico `{"message":"Hola mundo"}` |
+| `/health` | Liveness sin dependencia de PostgreSQL |
+| `/health/ready` | Conexión y migraciones esperadas de Platform e Identity |
 
-Las API desconocidas devuelven 404; el fallback de SPA no las oculta. Los errores no exponen excepciones ni credenciales. OpenAPI se limita a desarrollo. React y API comparten origen: las solicitudes usan rutas relativas.
+El servidor guarda sesiones revocables y aplica un máximo absoluto de ocho horas. Los enlaces de correo se consumen una sola vez; registro y recuperación evitan revelar si una cuenta existe. La administración aplica control de concurrencia y auditoría. Los niveles no conceden permisos administrativos por sí mismos.
 
-## Calidad desde el VPS
+## Desarrollo y QA
 
-No hay GitHub Actions. Todo se valida con contenedores, sin instalar SDK .NET ni cambiar Node.js del host. El frontend se construye con Node.js 22 en Docker; el servidor de producción es ASP.NET Core en el puerto interno 8080.
-
-Durante desarrollo puede ejecutarse `bash scripts/verify.sh --working-tree`. Su informe no autoriza desplegar una copia sin commit. Para una entrega:
+No hay GitHub Actions. Node.js 22 y SDK .NET 10 se usan dentro de Docker; se conserva Node.js del host. Todo cambio se valida en recursos `acropolis_test_*`, PostgreSQL real, correo de pruebas y HTTPS con una CA exclusiva de QA. Nunca se usa la configuración ni los datos de producción.
 
 ```bash
 cd /root/proyect/acropolis-channel
 git status --short --branch
 git fetch origin
-# Sincronizar por fast-forward antes de editar, conservando trabajo previo.
-# Crear el commit local candidato cuando el cambio esté completo.
+# Sincronizar por fast-forward antes de editar cuando el estado lo permita.
+bash scripts/verify.sh --working-tree
+# Revisar y crear el commit completo; después certificar el checkout limpio:
 bash scripts/verify.sh
-# Publicar main únicamente si todas las comprobaciones pasan.
+# Publicar sólo si el gate completo pasa:
 git push origin main
-bash scripts/deploy.sh --expected-sha "$(git rev-parse HEAD)"
 ```
 
-QA utiliza PostgreSQL real y datos sintéticos en proyecto, red y volúmenes propios; no carga `.env` de producción ni monta sus volúmenes o el socket Docker. Los informes privados quedan en `.local/qa/<sha>/<run>/`. Cada proceso nuevo requiere pruebas de reglas, casos de uso, persistencia, acceso, fallos y recorrido funcional; no agregar pruebas vacías.
+El modo `--working-tree` permite iterar, pero nunca certifica un despliegue. Informes y capturas permanecen en `.local/qa/<sha>/<run>/`. Las imágenes finales se identifican por SHA y por su identificador Docker: publicar no las reconstruye.
 
-## Configuración y publicación
+El prototipo usa `npm run build:preview` y genera `frontend/dist-preview/`, aislado del build productivo. Es material de evaluación visual con contenido de demostración, no un catálogo disponible para usuarios reales.
 
-Crear `.env` exclusivamente en el VPS, siguiendo `.env.example`, con contraseñas distintas y permisos 600. Nunca publicar `.env`, `.local/`, dumps, informes con datos privados ni secretos. `PUBLIC_VPS_IPV4` se configura privadamente para comprobar DNS.
+## Configuración y despliegue manual
 
-Compose conserva proyecto `acropolis-channel`, servicio `web`, alias `acropolis-channel-web` y red externa `dokploy-network`. PostgreSQL está en una red privada sin puerto publicado. La aplicación usa un rol sin DDL; las migraciones usan otro rol limitado a esta base. Las migraciones se ejecutan por separado, con exclusión mutua.
+La URL objetivo es **https://acropolischannel.naperu.cloud**. Configurar `.env` exclusivamente en el VPS, a partir de `.env.example`, con permisos 600. Nunca versionar secretos, dumps, reportes privados, el protector PFX ni el key ring.
 
-El script de despliegue requiere checkout limpio en main, SHA esperado, coincidencia con origin y un informe QA aprobado que corresponda a los identificadores exactos de ambas imágenes. No reconstruye después de QA. Guarda una recuperación privada, respalda la base, ejecuta migraciones, arranca la aplicación y verifica readiness.
+Seguir [la operación de identidad](docs/identity-operations.md) para configurar SMTP, preparar el protector cifrado y registrar las direcciones exactas de Traefik. El remitente real y el primer administrador deben quedar definidos antes de habilitar cuentas.
 
-La URL objetivo es **https://acropolischannel.naperu.cloud**. La publicación usa exclusivamente `/etc/dokploy/traefik/dynamic/acropolis-channel.yml`, a partir del asset propio `infra/traefik/acropolis-channel.yml`. No modificar Traefik global, otros routers ni DNS como parte del despliegue. DNS incorrecto pospone una nueva publicación ACME; el resultado interno se informa por separado.
-
-La publicación requiere certificado válido, redirección HTTP, interfaz y contratos públicos correctos. No aceptar TLS con `-k`. Una construcción exitosa no equivale a un despliegue verificado.
-
-## Recuperación y datos
-
-Los manifiestos y snapshots están en `.local/deployments/`; `.local/last-deployment` indica la última publicación completada. Preservar imágenes anteriores y su routing compatible. El rollback no ejecuta migraciones descendentes ni elimina datos. Si una versión anterior no admite el esquema actual, detener y aplicar el procedimiento documentado de recuperación.
-
-Para una copia manual:
+Sólo cuando el despliegue esté solicitado:
 
 ```bash
-bash scripts/backup-db.sh --project acropolis-channel --database acropolis --output /root/proyect/acropolis-channel/.local/backups/acropolis.dump
+bash scripts/deploy.sh --expected-sha SHA_VALIDADO
 ```
 
-La restauración automatizada está restringida a proyectos y bases de pruebas `acropolis_test_*`. Verificar primero allí una recuperación; no restaurar producción ni borrar volúmenes como operación rutinaria.
+El script exige main limpio, coincidencia con origin y QA aprobado para las imágenes exactas; comprueba configuración y conexión SMTP, respalda datos y material de identidad, ejecuta migraciones y cambia la aplicación. No aplica migraciones descendentes ni reconstruye.
 
-Los 100.000 usuarios registrados y aproximadamente 1.000 conectados son un objetivo del producto. La carga limitada de esta base es una referencia técnica, no una acreditación de capacidad para los procesos futuros.
+Compose mantiene el proyecto `acropolis-channel`, web interna 8080, alias `acropolis-channel-web` y red externa `dokploy-network`. PostgreSQL tiene una red privada y roles separados para administración, migración y aplicación. Sólo se modifica el routing propio `/etc/dokploy/traefik/dynamic/acropolis-channel.yml`; se preservan Traefik global y los demás proyectos.
+
+Verificar DNS público, certificado válido, redirección HTTP, interfaz, API y entrega real del correo. Un build o una prueba interna no acreditan publicación. La preparación de código o QA no autoriza desplegar.
+
+## Respaldo y capacidad
+
+Los manifiestos se guardan en `.local/deployments/` y las copias en `.local/backups/`. Una copia completa incluye base, key ring, protector y configuración privada. Tras restaurar una base antigua, poner cuentas en mantenimiento y revalidar su seguridad según el procedimiento; nunca reabrir sesiones o credenciales revocadas por restaurar un backup.
+
+`restore-db-test.sh` sólo admite destinos QA `acropolis_test_*`. No borrar volúmenes productivos ni restaurar producción como operación rutinaria.
+
+El objetivo del producto es 100.000 cuentas y alrededor de 1.000 usuarios simultáneos. Sembrar 100.000 registros y probar concurrencia acotada permite detectar problemas iniciales, pero no acredita todavía esa capacidad operativa.

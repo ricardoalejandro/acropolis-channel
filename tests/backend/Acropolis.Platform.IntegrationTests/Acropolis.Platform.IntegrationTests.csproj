@@ -12,6 +12,7 @@
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <ProjectReference Include="../../../src/Acropolis.Migrations/Acropolis.Migrations.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

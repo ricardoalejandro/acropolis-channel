@@ -17,3 +17,5 @@ TestResults/
 **/*.pyc
 
 /artifacts/
+
+**/dist-preview/

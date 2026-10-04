@@ -8,6 +8,8 @@
 - Revisar antes de desplegar la skill local de Windows `.agents/skills/acropolis-vps-deploy/SKILL.md` y la skill acropolis-quality. Desplegar solo cuando solicitado; la autorización de la conversación basta.
 - Publicación: https://acropolischannel.naperu.cloud, Compose acropolis-channel, web8080, alias acropolis-channel-web, red dokploy-network. PostgreSQL privado con roles separados; migraciones sólo runner. scripts/deploy.sh --expected-sha SHA exige informe QA de las imágenes exactas y no vuelve a construir.
 - Sólo editar routing propio /etc/dokploy/traefik/dynamic/acropolis-channel.yml; preservar Traefik global y otros proyectos. Verificar DNS, TLS sin -k, HTTP redirect y navegador/API antes de declarar éxito.
-- Multimedia futura AWS; no crear recursos, claves ni políticas cloud sin petición. Las funciones de negocio aún no están implementadas.
+- Multimedia futura AWS; no crear recursos, claves ni políticas cloud sin petición. Identidad y administración de cuentas son el módulo actual; catálogo y multimedia siguen pendientes. El prototipo editorial se construye aparte y no entra en producción.
 - `.env` y `.local/` son privados: no imprimir secretos ni copiar a Git, imágenes o informes. Consultar .local/vps-deployment.md. Preservar SSH administrativo, GitHub, datos y volúmenes. Nunca purgar Docker ni down-v producción.
 - Conservar backups/imagen previa, aplicar migraciones compatibles y validar restauración únicamente en QA. No ejecutar migraciones descendentes automáticamente. Actualizar README/AGENTS/skills si cambia el flujo y distinguir preparación, QA y publicación comprobada.
+
+- Para identidad leer docs/identity-operations.md y docs/design.md. SMTP y protector privados obligatorios para desplegar; sesiones de ocho horas, niveles separados de permisos, MFA pendiente antes del lanzamiento operativo. Nunca restaurar cuentas desde un backup antiguo sin mantenimiento e invalidación/revalidación.

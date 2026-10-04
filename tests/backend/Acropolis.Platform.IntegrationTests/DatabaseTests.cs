@@ -102,6 +102,7 @@ public sealed class DatabaseTests(PostgresFixture database)
         var token = TestContext.Current.CancellationToken;
         await database.ResetSchemaAsync(token);
         await new PlatformMigrationRunner().RunAsync(database.MigrationConnection, token);
+        await new Acropolis.Migrations.ChannelMigrationRunner().RunAsync(database.MigrationConnection, token);
         await using var factory = new DatabaseApiFactory(database.RuntimeConnection);
         using var client = factory.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready", token)).StatusCode);

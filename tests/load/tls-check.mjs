@@ -1,0 +1,11 @@
+import { spawnSync } from 'node:child_process';
+const url = process.env.BASE_URL;
+if (!url?.startsWith('https://qa-') || !process.env.QA_PROJECT?.startsWith('acropolis_test_')) throw new Error('TLS gate requires an isolated QA origin.');
+const environment = { ...process.env };
+delete environment.NODE_EXTRA_CA_CERTS;
+delete environment.NODE_TLS_REJECT_UNAUTHORIZED;
+const untrusted = spawnSync(process.execPath, ['--input-type=module', '-e', 'try { await fetch(process.env.BASE_URL+"/health"); process.exit(1); } catch(e) { if (!["UNABLE_TO_VERIFY_LEAF_SIGNATURE","UNABLE_TO_GET_ISSUER_CERT_LOCALLY","SELF_SIGNED_CERT_IN_CHAIN","DEPTH_ZERO_SELF_SIGNED_CERT"].includes(e.cause?.code)) process.exit(2); }'], { env: environment, stdio: 'pipe', timeout: 10000 });
+if (untrusted.status !== 0) throw new Error('An untrusted QA CA did not fail certificate validation as expected.');
+const response = await fetch(url + '/health', { signal: AbortSignal.timeout(5000) });
+if (response.status !== 200) throw new Error('Trusted QA HTTPS liveness failed.');
+console.log('Untrusted CA rejected and trusted QA HTTPS validated with hostname verification.');

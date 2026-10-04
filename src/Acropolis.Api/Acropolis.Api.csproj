@@ -3,5 +3,7 @@
     <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Application/Acropolis.Platform.Application.csproj" />
     <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Infrastructure/Acropolis.Platform.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+      <ProjectReference Include="../Modules/Identity/Acropolis.Identity.Application/Acropolis.Identity.Application.csproj" />
+    <ProjectReference Include="../Modules/Identity/Acropolis.Identity.Infrastructure/Acropolis.Identity.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

@@ -6,7 +6,14 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', '.local/**', 'playwright-report/**', 'test-results/**'],
+    ignores: [
+      'dist/**',
+      'dist-preview/**',
+      'node_modules/**',
+      '.local/**',
+      'playwright-report/**',
+      'test-results/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

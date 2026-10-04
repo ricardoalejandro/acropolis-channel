@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const [mode, input, value] = process.argv.slice(2);
+const [mode, input, value, expectedAssembly] = process.argv.slice(2);
 function fail(message) { console.error(message); process.exit(1); }
 function files(directory, suffix) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((item) => {
@@ -14,7 +14,10 @@ if (mode === 'coverage') {
   if (reports.length === 0) fail('Missing scoped backend coverage report.');
   const threshold = Number(value);
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) fail('Invalid coverage threshold.');
+  const observed = new Set();
   for (const report of reports) {
+    const packages = [...fs.readFileSync(report, 'utf8').matchAll(/<package\s[^>]*name="([^"]+)"/g)].map((match) => match[1]);
+    for (const name of packages) observed.add(name);
     const xml = fs.readFileSync(report, 'utf8');
     const root = xml.match(/<coverage\s[^>]*>/)?.[0];
     const rate = Number(root?.match(/line-rate="([\d.]+)"/)?.[1]);
@@ -30,7 +33,18 @@ if (mode === 'coverage') {
     }
     if (branchesValid === 0) console.log('Branch coverage not applicable: the report has no branches.');
   }
+  if (expectedAssembly && !observed.has(expectedAssembly)) fail(`Missing required coverage assembly: ${expectedAssembly}.`);
   console.log(`Scoped backend coverage passed >= ${threshold}% in lines and applicable branches.`);
+} else if (mode === 'migration-history') {
+  const observed = JSON.parse(fs.readFileSync(input, 'utf8'));
+  const expected = JSON.parse(fs.readFileSync(value, 'utf8'));
+  for (const module of ['platform', 'identity']) {
+    if (!Array.isArray(expected[module]) || expected[module].length === 0) fail(`Missing expected ${module} migrations.`);
+    if (!Array.isArray(observed[module])) fail(`Missing ${module} migration history.`);
+    const ids = observed[module].map((row) => row.id).sort();
+    if (new Set(ids).size !== ids.length || JSON.stringify(ids) !== JSON.stringify([...expected[module]].sort())) fail(`Migration history differs from the candidate assembly for ${module}.`);
+  }
+  console.log('Both module histories match the candidate migration manifest.');
 } else if (mode === 'dotnet-audit') {
   const report = JSON.parse(fs.readFileSync(input, 'utf8'));
   if (!Array.isArray(report.projects) || report.projects.length === 0) fail('Missing NuGet audit projects.');

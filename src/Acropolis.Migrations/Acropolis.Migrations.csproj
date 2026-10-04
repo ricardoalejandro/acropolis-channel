@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Infrastructure/Acropolis.Platform.Infrastructure.csproj" />
+      <ProjectReference Include="../Modules/Identity/Acropolis.Identity.Infrastructure/Acropolis.Identity.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

@@ -31,31 +31,35 @@ public sealed class PlatformMigrationRunner
                 }
             }
 
-            await ValidateSchemaAsync(connection, cancellationToken);
-            var options = new DbContextOptionsBuilder<PlatformDbContext>()
-                .UseNpgsql(connection, provider => provider.MigrationsHistoryTable(PlatformDbContext.HistoryTable, PlatformDbContext.Schema))
-                .Options;
-            await using var context = new PlatformDbContext(options);
-            var expected = context.Database.GetMigrations().ToHashSet(StringComparer.Ordinal);
-            var applied = await context.Database.GetAppliedMigrationsAsync(cancellationToken);
-            if (applied.Any(migration => !expected.Contains(migration)))
-            {
-                throw new InvalidOperationException("The platform schema contains unsupported migrations.");
-            }
-
-            await context.Database.MigrateAsync(cancellationToken);
-            await RestrictHistoryAsync(connection, cancellationToken);
+            await ApplyLockedAsync(connection, cancellationToken);
         }
         finally
         {
             if (locked && connection.State == System.Data.ConnectionState.Open)
             {
-                // Closing this dedicated connection also releases the session lock after cancellation.
                 await using var release = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", connection);
                 release.Parameters.AddWithValue("key", AdvisoryLockKey);
                 await release.ExecuteScalarAsync(CancellationToken.None);
             }
         }
+    }
+
+    public static async Task ApplyLockedAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await ValidateSchemaAsync(connection, cancellationToken);
+        var options = new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseNpgsql(connection, provider => provider.MigrationsHistoryTable(PlatformDbContext.HistoryTable, PlatformDbContext.Schema))
+            .Options;
+        await using var context = new PlatformDbContext(options);
+        var expected = context.Database.GetMigrations().ToHashSet(StringComparer.Ordinal);
+        var applied = await context.Database.GetAppliedMigrationsAsync(cancellationToken);
+        if (applied.Any(migration => !expected.Contains(migration)))
+        {
+            throw new InvalidOperationException("The platform schema contains unsupported migrations.");
+        }
+
+        await context.Database.MigrateAsync(cancellationToken);
+        await RestrictHistoryAsync(connection, cancellationToken);
     }
 
     private static async Task ValidateSchemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken)

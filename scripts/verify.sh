@@ -21,6 +21,12 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)_$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 export QA_PROJECT="acropolis_test_${run_id,,}"
 export QA_DATABASE="$QA_PROJECT"
 export QA_ARTIFACTS="$project_dir/.local/qa/$sha/$run_id"
+export QA_HOST="qa-${run_id//_/}.test"
+QA_HOST="${QA_HOST,,}"
+export QA_TLS="$QA_ARTIFACTS/tls"
+export QA_DP_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+export QA_SMTP_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+export QA_IDENTITY_PASSWORD="Qa1!$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
 export QA_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 export QA_APP_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 export QA_MIGRATION_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
@@ -30,19 +36,28 @@ export QA_MIGRATION_IMAGE="acropolis-channel-migrations:$sha"
 [[ "$working_tree" == false ]] || QA_MIGRATION_IMAGE="acropolis-channel-migrations:working-${sha:0:12}-${run_id,,}"
 export QA_SDK_IMAGE="acropolis-channel-qa-sdk:${run_id,,}"
 export QA_NODE_IMAGE="acropolis-channel-qa-node:${run_id,,}"
+export QA_PKI_IMAGE="acropolis-channel-qa-pki:${run_id,,}"
+export QA_PREVIEW_IMAGE="acropolis-channel-preview:${run_id,,}"
 export QA_PLAYWRIGHT_IMAGE="acropolis-channel-qa-playwright:${run_id,,}"
 restore_project="${QA_PROJECT}_restore"
 restore_database="${QA_DATABASE}_restore"
 integration_project="${QA_PROJECT}_integration"
 integration_database="${QA_DATABASE}_integration"
-mkdir -p -- "$QA_ARTIFACTS"
+mkdir -p -- "$QA_ARTIFACTS" "$QA_TLS/trust" "$QA_TLS/smtp" "$QA_TLS/protection"
 started_at="$(date -u +%FT%TZ)"
 stage=initialization
 image_id= migration_image_id=
 steps_json='[]'
 compose() { docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$QA_PROJECT" "$@"; }
 redact_log() {
-  sed -i -e "s/$QA_PASSWORD/[redacted]/g" -e "s/$QA_APP_PASSWORD/[redacted]/g" -e "s/$QA_MIGRATION_PASSWORD/[redacted]/g" "$1"
+  sed -i -e "s/$QA_PASSWORD/[redacted]/g" -e "s/$QA_APP_PASSWORD/[redacted]/g" -e "s/$QA_MIGRATION_PASSWORD/[redacted]/g" -e "s/$QA_DP_PASSWORD/[redacted]/g" -e "s/$QA_SMTP_PASSWORD/[redacted]/g" -e "s/$QA_IDENTITY_PASSWORD/[redacted]/g" "$1"
+  python3 - "$1" <<'PY_REDACT'
+import re,sys
+from pathlib import Path
+p=Path(sys.argv[1]); text=p.read_text(errors="replace")
+text=re.sub(r"(?i)(token=|token%3D|password=|Cookie:|Set-Cookie:)\S+",r"\1[redacted]",text)
+p.write_text(text)
+PY_REDACT
 }
 run_step() {
   stage="$1"; shift
@@ -56,13 +71,30 @@ run_step() {
     return 1
   fi
 }
+safe_cleanup_project() {
+  local own_project="$1" own_database="$2" volume network="$1""_network"
+  [[ "$own_project" =~ ^acropolis_test_[a-z0-9_]+$ ]] || { echo 'Unsafe QA cleanup project rejected.' >&2; return 1; }
+  for volume in "$own_project""_postgres" "$own_project""_keyring" "$own_project""_caddy"; do
+    if docker volume inspect "$volume" >/dev/null 2>&1; then
+      [[ "$(docker volume inspect --format '{{index .Labels "acropolis.qa.run"}}' "$volume")" == "$own_project" ]] || { echo 'QA volume ownership mismatch; refusing cleanup.' >&2; return 1; }
+    fi
+  done
+  if docker network inspect "$network" >/dev/null 2>&1; then
+    [[ "$(docker network inspect --format '{{index .Labels "acropolis.qa.run"}}' "$network")" == "$own_project" ]] || { echo 'QA network ownership mismatch; refusing cleanup.' >&2; return 1; }
+  fi
+  QA_PROJECT="$own_project" QA_DATABASE="$own_database" compose --profile tools --profile preview down --volumes --remove-orphans --timeout 10 || return 1
+  [[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$own_project")" ]] || return 1
+  for volume in "$own_project""_postgres" "$own_project""_keyring" "$own_project""_caddy"; do
+    ! docker volume inspect "$volume" >/dev/null 2>&1 || return 1
+  done
+  ! docker network inspect "$network" >/dev/null 2>&1
+}
 cleanup() {
   local exit_code=$? cleanup_failed=false status=failed eligible=false
   trap - EXIT INT TERM
-  # Unique projects created by this run only; production Compose is never selected.
-  if ! compose down --volumes --timeout 10 > "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
-  if ! QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" compose down --volumes --timeout 10 >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
-  if ! QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" compose down --volumes --timeout 10 >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
+  if ! safe_cleanup_project "$QA_PROJECT" "$QA_DATABASE" > "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
+  if ! safe_cleanup_project "$restore_project" "$restore_database" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
+  if ! safe_cleanup_project "$integration_project" "$integration_database" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   redact_log "$QA_ARTIFACTS/cleanup.log"
   if [[ "$cleanup_failed" == true ]]; then exit_code=1; stage=cleanup; fi
   if [[ "$exit_code" == 0 && ( "$stage" != complete || -z "$image_id" || -z "$migration_image_id" ) ]]; then exit_code=1; stage=incomplete; fi
@@ -116,10 +148,29 @@ migration_image_id="$(docker image inspect --format '{{.Id}}' "$QA_MIGRATION_IMA
 run_step build_sdk_runner docker build --target sdk --label "org.opencontainers.image.revision=$sha" --tag "$QA_SDK_IMAGE" .
 run_step build_node_runner docker build --target node --label "org.opencontainers.image.revision=$sha" --tag "$QA_NODE_IMAGE" .
 run_step build_playwright_runner docker build --target playwright --label "org.opencontainers.image.revision=$sha" --tag "$QA_PLAYWRIGHT_IMAGE" .
+run_step build_pki_runner docker build --target qa-pki --tag "$QA_PKI_IMAGE" .
+run_step build_preview docker build --target preview --label "org.opencontainers.image.revision=$sha" --tag "$QA_PREVIEW_IMAGE" .
+export QA_APP_UID="$(docker run --rm --network none --read-only --entrypoint id "$QA_IMAGE" -u)"
+run_step private_proxy_start compose up -d proxy
+proxy_id="$(compose ps -q proxy)"
+[[ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$proxy_id")" == "$QA_PROJECT" ]] || exit 1
+export QA_PROXY_IP="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$proxy_id")"
+[[ "$QA_PROXY_IP" =~ ^[0-9.]+$ ]] || { echo 'QA proxy has no trusted private address.' >&2; exit 1; }
+run_step private_pki compose run --rm --no-deps pki prepare
+run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit
+run_step smtp_strict_tls compose run --rm --no-deps migrations smtp-check
+smtp_untrusted_tls() {
+  if compose run --rm --no-deps -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
+    echo 'SMTP accepted an untrusted QA CA.' >&2; return 1
+  fi
+  echo 'SMTP rejects the same endpoint without its trusted private CA.'
+}
+run_step smtp_untrusted_tls smtp_untrusted_tls
 run_step database_start compose up -d --wait --wait-timeout 90 db
 run_step application_before_migrations compose up -d web
-run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 503 not_ready'
-run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http http://web:8080/health 200 ok'
+run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 503 not_ready'
+run_step strict_private_tls compose run --rm --no-deps node 'node /qa-tools/tls-check.mjs'
+run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
 run_step integration_database_start env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" up -d --wait --wait-timeout 90 db
 run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" run --rm --no-deps sdk '
   mkdir -p /workspace && cp -a /source/. /workspace/ && cd /workspace
@@ -127,15 +178,19 @@ run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$int
   dotnet build AcropolisChannel.slnx -c Release --no-restore -m:1 -p:BuildInParallel=false
   dotnet format AcropolisChannel.slnx --verify-no-changes --no-restore
   dotnet list AcropolisChannel.slnx package --vulnerable --include-transitive --format json > /artifacts/dotnet-audit.json
-  dotnet test tests/backend/Acropolis.Platform.UnitTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/unit -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Platform.Application]*"
+  dotnet test tests/backend/Acropolis.Platform.UnitTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/platform-unit -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Platform.Application]*"
   dotnet test tests/backend/Acropolis.Api.Tests -c Release --no-build --no-restore --results-directory /artifacts/backend/api
   dotnet test tests/backend/Acropolis.Architecture.Tests -c Release --no-build --no-restore --results-directory /artifacts/backend/architecture
-  dotnet test tests/backend/Acropolis.Platform.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Platform.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
+  dotnet test tests/backend/Acropolis.Platform.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/platform-integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Platform.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
+  dotnet test tests/backend/Acropolis.Identity.UnitTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/identity-unit -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Identity.Application]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Acropolis.Identity.Application/Contracts.cs"
+  dotnet test tests/backend/Acropolis.Identity.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/identity-integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Identity.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
 '
 run_step backend_audit compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs dotnet-audit /artifacts/dotnet-audit.json'
-run_step backend_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/unit 80'
-run_step integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/integration 80'
-run_step integration_database_cleanup env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" down --volumes --timeout 10
+run_step backend_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/platform-unit 80 Acropolis.Platform.Application'
+run_step integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/platform-integration 80 Acropolis.Platform.Infrastructure'
+run_step identity_unit_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/identity-unit 80 Acropolis.Identity.Application'
+run_step identity_integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/identity-integration 80 Acropolis.Identity.Infrastructure'
+run_step integration_database_cleanup safe_cleanup_project "$integration_project" "$integration_database"
 run_step frontend_quality compose run --rm --no-deps node '
   mkdir -p /workspace && cp -a /source/frontend/. /workspace/ && cd /workspace
   node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"
@@ -145,6 +200,7 @@ run_step frontend_quality compose run --rm --no-deps node '
   npm run format:check
   FRONTEND_COVERAGE_DIR=/artifacts/frontend-coverage npm run test:coverage
   npm run build
+  npm run build:preview
   npm audit --audit-level=high --json > /artifacts/npm-audit.json
 '
 run_step migrations_first compose run --rm --no-deps migrations
@@ -152,45 +208,127 @@ schema_digest() {
   compose exec -T db sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --schema-only --no-owner --no-privileges' |
     sed '/^\\restrict /d; /^\\unrestrict /d' | sha256sum | cut -d ' ' -f 1
 }
-history_digest() {
+history_json() {
   compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
-SELECT count(*) || ':' || md5(string_agg("MigrationId" || ':' || "ProductVersion", ',' ORDER BY "MigrationId")) FROM platform."__EFMigrationsHistory";
+SELECT json_build_object(
+ 'platform', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM platform."__EFMigrationsHistory"),
+ 'identity', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM identity."__EFMigrationsHistory"));
 SQL
 }
+history_digest() { history_json | sha256sum | cut -d ' ' -f 1; }
+python3 - "$QA_ARTIFACTS/expected-migrations.json" <<'PY_MIGRATIONS'
+import json,re,sys
+from pathlib import Path
+manifest={}
+for module in ("Platform","Identity"):
+    ids=[]
+    for source in Path("src/Modules/"+module).glob("**/Migrations/*.cs"):
+        ids.extend(re.findall(r'\[Migration\("([^"]+)"\)\]',source.read_text()))
+    if not ids or len(ids)!=len(set(ids)): raise SystemExit("Missing or duplicate migration IDs for "+module)
+    manifest[module.lower()]=sorted(ids)
+Path(sys.argv[1]).write_text(json.dumps(manifest))
+PY_MIGRATIONS
+history_json > "$QA_ARTIFACTS/migration-history.json"
+run_step migration_manifest compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs migration-history /artifacts/migration-history.json /artifacts/expected-migrations.json'
+
 schema_before="$(schema_digest)"
 history_before="$(history_digest)"
-[[ "$history_before" == 1:* ]] || { echo 'Expected exactly one initial platform migration.' >&2; exit 1; }
 run_step migrations_repeat compose run --rm --no-deps migrations
 stage=migrations_idempotence
 [[ "$(schema_digest)" == "$schema_before" && "$(history_digest)" == "$history_before" ]] || { echo 'Repeated migrations changed schema or migration history.' >&2; exit 1; }
 run_step application_start compose up -d web
-run_step readiness_initial compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 200 ok'
-run_step playwright_e2e compose run --rm --no-deps playwright '
-  mkdir -p /workspace && cp -a /source/frontend/. /workspace/ && cd /workspace
+run_step preview_start compose --profile preview up -d preview
+run_step readiness_initial compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step public_asset_efficiency compose run --rm --no-deps node 'node /qa-tools/http-assets.mjs'
+run_step synthetic_accounts compose run --rm --no-deps migrations qa-seed --count 100000
+synthetic_account_count() {
+  local count
+  count="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT count(*) FROM identity."Users" WHERE "Email" ~ '^qa-load-[0-9]{6}@example[.]test$' AND "EmailConfirmed";
+SQL
+)"
+  [[ "$count" == 100000 ]] || { echo 'The real synthetic account fixture must contain 100000 confirmed accounts.' >&2; return 1; }
+}
+run_step synthetic_account_count synthetic_account_count
+run_step bootstrap_qa_admin compose run --rm --no-deps migrations bootstrap-admin --email qa-load-000000@example.test
+run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash playwright -euc 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs'
+run_step playwright_desktop compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/desktop -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/desktop playwright '
+  cd /source/frontend
   node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"
-  npm ci --no-audit --no-fund
-  npm run test:e2e
+  npm run test:e2e -- --project desktop-chromium --grep-invert @preview
 '
+# Public register/confirmation/login/reset endpoints retain their Production rate limit.
+run_step browser_rate_window sleep 61
+run_step playwright_mobile compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/mobile -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/mobile playwright '
+  cd /source/frontend
+  npm run test:e2e -- --project mobile-chromium --grep-invert @preview
+'
+run_step preview_e2e compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/preview -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/preview playwright '
+  cd /source/frontend
+  npm run test:e2e -- --grep @preview
+'
+run_step smtp_stop compose stop mailpit
+run_step smtp_outage_registration compose run --rm --no-deps node 'node /qa-tools/smtp-failure.mjs queue'
+smtp_failed_attempt() {
+  local email result
+  email="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["email"])' "$QA_ARTIFACTS/smtp-recovery.json")"
+  [[ "$email" =~ ^smtp-failure-[0-9]+@acropolis[.]test$ ]] || return 1
+  for attempt in {1..45}; do
+    result="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -v email="$1"' sh "$email" <<'SQL'
+SELECT EXISTS(SELECT 1 FROM identity."Outbox" AS o JOIN identity."Users" AS u ON u."Id" = o."UserId" WHERE u."Email" = :'email' AND o."Attempts" > 0 AND o."Status" = 'pending');
+SQL
+)"
+    if [[ "$result" == t ]]; then echo 'Real SMTP outage recorded a failed attempt and retained the retryable message.'; return 0; fi
+    sleep 1
+  done
+  echo 'SMTP outage never exercised a real failed dispatch attempt.' >&2; return 1
+}
+run_step smtp_failed_attempt smtp_failed_attempt
+run_step smtp_recovery compose up -d --wait --wait-timeout 60 mailpit
+run_step smtp_queue_delivery compose run --rm --no-deps node 'node /qa-tools/smtp-failure.mjs delivered'
 run_step database_stop compose stop db
-run_step readiness_database_down compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http http://web:8080/health/ready 503 not_ready'
-run_step liveness_database_down compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http http://web:8080/health 200 ok'
+run_step readiness_database_down compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health/ready" 503 not_ready'
+run_step liveness_database_down compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
+run_step authenticated_database_down compose run --rm --no-deps node 'node /qa-tools/identity-state.mjs database-down'
 run_step database_recovery compose up -d --wait --wait-timeout 90 db
-run_step readiness_database_recovery compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 200 ok'
+run_step readiness_database_recovery compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step persistence_recreate compose up -d --force-recreate web
+run_step readiness_after_recreate compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step session_after_recreate compose run --rm --no-deps node 'node /qa-tools/identity-state.mjs persistence'
 run_step persistence_restart compose restart db web
-run_step readiness_after_restart compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 200 ok'
+run_step readiness_after_restart compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
 stage=persistence_consistency
 [[ "$(schema_digest)" == "$schema_before" && "$(history_digest)" == "$history_before" ]] || { echo 'Database schema or migration state did not persist after restart.' >&2; exit 1; }
+run_step identity_load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-identity-summary.json /qa-tools/identity.js
+synthetic_session_count() {
+  local count
+  count="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT count(DISTINCT s."UserId") FROM identity."Sessions" s JOIN identity."Users" u ON u."Id" = s."UserId" WHERE u."Email" ~ '^qa-load-0000[0-4][0-9]@example[.]test$' AND s."ExpiresUtc" > now();
+SQL
+)"
+  [[ "$count" == 50 ]] || { echo 'Performance run did not exercise 50 real active account sessions.' >&2; return 1; }
+}
+run_step synthetic_session_count synthetic_session_count
+run_step load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-summary.json /qa-tools/smoke.js
+run_step keyring_backup compose run --rm --no-deps pki backup-keyring
+run_step private_ca_backup compose run --rm --no-deps pki backup-caddy
 run_step backup bash scripts/backup-db.sh --project "$QA_PROJECT" --database "$QA_DATABASE" --output "$QA_ARTIFACTS/database.dump"
 run_step restore_database_start env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" up -d --wait --wait-timeout 90 db
-run_step restore bash scripts/restore-db-test.sh --project "$restore_project" --database "$restore_database" --input "$QA_ARTIFACTS/database.dump"
+run_step restore bash scripts/restore-db-test.sh --project "$restore_project" --database "$restore_database" --input "$QA_ARTIFACTS/database.dump" --maintenance
+restore_proxy_ip="$QA_PROXY_IP"
 restore_compose() {
-  QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" compose "$@"
+  QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" QA_PROXY_IP="$restore_proxy_ip" compose "$@"
 }
 restored_permissions() {
   local result
   result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 SELECT CASE WHEN
   has_schema_privilege('acropolis_app', 'platform', 'USAGE')
+  AND has_schema_privilege('acropolis_app', 'identity', 'USAGE')
+  AND NOT has_schema_privilege('acropolis_app', 'identity', 'CREATE')
+  AND has_table_privilege('acropolis_app', 'identity."__EFMigrationsHistory"', 'SELECT')
+  AND NOT has_table_privilege('acropolis_app', 'identity."__EFMigrationsHistory"', 'INSERT')
+  AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'identity') = 'acropolis_migrator'
   AND NOT has_schema_privilege('acropolis_app', 'platform', 'CREATE')
   AND has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'SELECT')
   AND NOT has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'INSERT')
@@ -203,9 +341,50 @@ SQL
   [[ "$result" == ok ]] || { echo 'Restored ownership or application permissions differ from the expected boundary.' >&2; return 1; }
 }
 run_step restored_permissions restored_permissions
-run_step restored_application_start restore_compose up -d web
-run_step restored_readiness restore_compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 200 ok'
-run_step restored_greeting restore_compose run --rm --no-deps node 'node --input-type=module -e "const r = await fetch(\"http://web:8080/api/v1/greeting\", { signal: AbortSignal.timeout(5000) }); const body = await r.json(); if (r.status !== 200 || body.message !== \"Hola mundo\") process.exit(1);"'
+run_step restore_keyring restore_compose run --rm --no-deps pki restore-keyring
+run_step restore_private_ca restore_compose run --rm --no-deps pki restore-caddy
+run_step recovery_invalidation restore_compose run --rm --no-deps migrations recovery-invalidate --maintenance
+run_step restored_mail_start restore_compose up -d --wait --wait-timeout 60 mailpit
+run_step restored_proxy_start restore_compose up -d proxy
+restore_proxy_id="$(restore_compose ps -q proxy)"
+restore_proxy_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$restore_proxy_id")"
+run_step restored_application_start env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" QA_PROXY_IP="$restore_proxy_ip" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" up -d web
+run_step restored_readiness restore_compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+recovery_accounts() {
+  local result
+  result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT CASE WHEN
+ NOT EXISTS (SELECT 1 FROM identity."Users" WHERE NOT "RevalidationRequired")
+ AND NOT EXISTS (SELECT 1 FROM identity."Sessions")
+ AND NOT EXISTS (SELECT 1 FROM identity."Flows" WHERE "ConsumedUtc" IS NULL)
+ AND NOT EXISTS (SELECT 1 FROM identity."Outbox" WHERE "Status" <> 'cancelled' OR "Payload" <> '')
+THEN 'ok' ELSE 'failed' END;
+SQL
+)"
+  [[ "$result" == ok ]] || { echo 'Recovery would reactivate accounts, permissions, sessions, tokens or pending messages.' >&2; return 1; }
+}
+run_step recovery_security_state recovery_accounts
+run_step restored_sessions restore_compose run --rm --no-deps node 'node /qa-tools/identity-state.mjs recovery'
+run_step restored_accounts_blocked restore_compose run --rm --no-deps node 'node /qa-tools/identity-recovery.mjs blocked'
+run_step restored_maintenance restore_compose stop web
+run_step explicit_revalidation restore_compose run --rm --no-deps migrations recovery-revalidate --email qa-load-000000@example.test --maintenance
+revalidated_permissions() {
+  local result
+  result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT CASE WHEN
+ (SELECT count(*) FROM identity."Users" WHERE "Email" = 'qa-load-000000@example.test' AND NOT "RevalidationRequired" AND NOT "EmailConfirmed" AND NOT "UsersManage" AND "PasswordHash" IS NULL AND "RevalidatedUtc" IS NOT NULL) = 1
+ AND (SELECT array_agg(l."Level"::text ORDER BY l."Level") FROM identity."UserLevels" l JOIN identity."Users" u ON u."Id" = l."UserId" WHERE u."Email" = 'qa-load-000000@example.test') = ARRAY['Externo']
+THEN 'ok' ELSE 'failed' END;
+SQL
+)"
+  [[ "$result" == ok ]] || { echo 'Explicit revalidation retained old credentials or privileges.' >&2; return 1; }
+}
+run_step revalidated_permissions revalidated_permissions
+run_step restored_revalidation_start restore_compose up -d web
+run_step restored_revalidation_readiness restore_compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step restored_fresh_account_flow restore_compose run --rm --no-deps node 'node /qa-tools/identity-recovery.mjs revalidated'
+
+run_step restored_greeting restore_compose run --rm --no-deps node 'node --input-type=module -e "const r = await fetch(process.env.BASE_URL + \"/api/v1/greeting\", { signal: AbortSignal.timeout(5000) }); const body = await r.json(); if (r.status !== 200 || body.message !== \"Hola mundo\") process.exit(1);"'
 run_step restored_migrations env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" run --rm --no-deps migrations
 stage=restore_consistency
 [[ "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" schema_digest)" == "$schema_before" && "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" history_digest)" == "$history_before" ]] || { echo 'Restored schema or data does not match the backup source.' >&2; exit 1; }
@@ -216,7 +395,6 @@ restore_guard() {
   grep -q 'Restore is restricted to QA projects' "$QA_ARTIFACTS/restore-guard-rejection.log"
 }
 run_step restore_production_guard restore_guard
-run_step load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-summary.json /qa-tools/smoke.js
 stage=checkout_consistency
 if [[ "$working_tree" == false ]]; then
   [[ "$(git rev-parse HEAD)" == "$sha" && -z "$(git status --porcelain)" ]] || { echo 'Checkout changed during verification; cannot certify candidate.' >&2; exit 1; }

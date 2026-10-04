@@ -1,9 +1,10 @@
+# Private Identity configuration: see docs/identity-operations.md.
 name: acropolis-channel
-x-logging: &logging
+x-logging: &id001
   driver: json-file
   options:
-    max-size: "10m"
-    max-file: "3"
+    max-size: 10m
+    max-file: '3'
 services:
   db:
     image: postgres:18-bookworm
@@ -15,60 +16,114 @@ services:
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?Configure DB_APP_PASSWORD}
       DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:?Configure DB_MIGRATION_PASSWORD}
     volumes:
-      - database:/var/lib/postgresql
-      - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
-    networks: [private]
+    - database:/var/lib/postgresql
+    - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    networks:
+    - private
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U acropolis_admin -d acropolis"]
+      test:
+      - CMD-SHELL
+      - pg_isready -h 127.0.0.1 -U acropolis_admin -d acropolis
       interval: 5s
       timeout: 3s
       retries: 12
     mem_limit: 2g
     cpus: 1.0
-    logging: *logging
+    logging: *id001
   migrations:
     image: ${MIGRATION_IMAGE:-acropolis-channel-migrations:local}
-    profiles: [migration]
+    profiles:
+    - migration
     environment:
-      ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_migrator;Password=${DB_MIGRATION_PASSWORD};Timeout=5;Command Timeout=30
-    networks: [private]
+      ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_migrator;Password=${DB_MIGRATION_PASSWORD};Timeout=5;Command
+        Timeout=30
+      Identity__PublicOrigin: ${IDENTITY_PUBLIC_ORIGIN:-https://acropolischannel.naperu.cloud}
+      Identity__KnownProxies: ${IDENTITY_KNOWN_PROXIES:-}
+      Identity__DataProtection__KeyRingPath: /var/acropolis/keys
+      Identity__DataProtection__CertificatePath: /run/secrets/acropolis-dp.pfx
+      Identity__DataProtection__CertificatePassword: ${IDENTITY_DP_CERT_PASSWORD:-}
+      Identity__Smtp__Host: ${IDENTITY_SMTP_HOST:-}
+      Identity__Smtp__Port: ${IDENTITY_SMTP_PORT:-587}
+      Identity__Smtp__Username: ${IDENTITY_SMTP_USERNAME:-}
+      Identity__Smtp__Password: ${IDENTITY_SMTP_PASSWORD:-}
+      Identity__Smtp__FromEmail: ${IDENTITY_SMTP_FROM_EMAIL:-}
+      Identity__Smtp__FromName: ${IDENTITY_SMTP_FROM_NAME:-Acrópolis Channel}
+      Identity__Smtp__Security: ${IDENTITY_SMTP_SECURITY:-starttls}
+    networks:
+    - private
+    - egress
     read_only: true
-    tmpfs: ["/tmp:size=64m,mode=1777"]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    tmpfs:
+    - /tmp:size=64m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
     mem_limit: 512m
     cpus: 1.0
     depends_on:
       db:
         condition: service_healthy
-    logging: *logging
+    logging: *id001
+    volumes:
+    - data_protection:/var/acropolis/keys
+    - &id002
+      type: bind
+      source: ./.local/identity/key-protector.pfx
+      target: /run/secrets/acropolis-dp.pfx
+      read_only: true
+      bind:
+        create_host_path: false
   web:
     image: ${APP_IMAGE:-acropolis-channel:local}
     restart: unless-stopped
     init: true
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_app;Password=${DB_APP_PASSWORD};Timeout=3;Command Timeout=3
+      ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_app;Password=${DB_APP_PASSWORD};Timeout=3;Command
+        Timeout=3
+      Identity__PublicOrigin: ${IDENTITY_PUBLIC_ORIGIN:-https://acropolischannel.naperu.cloud}
+      Identity__KnownProxies: ${IDENTITY_KNOWN_PROXIES:-}
+      Identity__DataProtection__KeyRingPath: /var/acropolis/keys
+      Identity__DataProtection__CertificatePath: /run/secrets/acropolis-dp.pfx
+      Identity__DataProtection__CertificatePassword: ${IDENTITY_DP_CERT_PASSWORD:-}
+      Identity__Smtp__Host: ${IDENTITY_SMTP_HOST:-}
+      Identity__Smtp__Port: ${IDENTITY_SMTP_PORT:-587}
+      Identity__Smtp__Username: ${IDENTITY_SMTP_USERNAME:-}
+      Identity__Smtp__Password: ${IDENTITY_SMTP_PASSWORD:-}
+      Identity__Smtp__FromEmail: ${IDENTITY_SMTP_FROM_EMAIL:-}
+      Identity__Smtp__FromName: ${IDENTITY_SMTP_FROM_NAME:-Acrópolis Channel}
+      Identity__Smtp__Security: ${IDENTITY_SMTP_SECURITY:-starttls}
     read_only: true
-    tmpfs: ["/tmp:size=64m,mode=1777"]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    tmpfs:
+    - /tmp:size=64m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
     stop_grace_period: 15s
     networks:
       private: {}
       publication:
-        aliases: [acropolis-channel-web]
+        aliases:
+        - acropolis-channel-web
     depends_on:
       db:
         condition: service_healthy
     mem_limit: 1g
     cpus: 1.0
-    logging: *logging
+    logging: *id001
+    volumes:
+    - data_protection:/var/acropolis/keys
+    - *id002
 networks:
   private:
     internal: true
   publication:
     external: true
     name: ${TRAEFIK_NETWORK:?Configure TRAEFIK_NETWORK}
+  egress:
+    driver: bridge
 volumes:
-  database:
+  database: null
+  data_protection: null

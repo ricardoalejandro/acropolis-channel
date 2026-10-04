@@ -1,40 +1,58 @@
-# Arquitectura de Acropolis Channel
+# Arquitectura de Acrópolis Channel
 
-Acropolis Channel es un monolito modular: una API ASP.NET Core sirve el frontend React y compone los módulos. La base inicial implementa únicamente el saludo y las comprobaciones operativas. No contiene usuarios, contenidos, pagos ni otras entidades de negocio inventadas.
+Monolito modular ASP.NET Core 10: un host sirve API y React del mismo origen y compone módulos con límites explícitos. PostgreSQL 18 almacena datos; el runner de migraciones es un proceso separado. La distribución multimedia futura en AWS no forma parte de esta fase.
 
-## Componentes presentes
+## Componentes
 
-| Componente | Responsabilidad | Dependencias permitidas |
-| --- | --- | --- |
-| `src/Acropolis.Api` | Composición, HTTP, errores, cabeceras, estáticos React y endpoints | Application e Infrastructure del módulo Platform |
-| `src/Modules/Platform/Acropolis.Platform.Application` | Saludo y decisión de readiness, timeout y contratos | Bibliotecas base de .NET; sin EF, Npgsql, ASP.NET ni React |
-| `src/Modules/Platform/Acropolis.Platform.Infrastructure` | PostgreSQL, EF Core, lectura del estado de migraciones y ejecución de migraciones | Application; EF Core y Npgsql |
-| `src/Acropolis.Migrations` | Proceso explícito y limitado para aplicar las migraciones | Infrastructure; configuración por entorno |
-| `frontend` | Interfaz React, llamada al saludo real y estados de carga, error y reintento | Contrato HTTP; no conoce PostgreSQL ni credenciales |
+| Componente | Responsabilidad |
+| --- | --- |
+| Acropolis.Api | Composición, HTTP, autenticación, autorización, antifalsificación, errores, cabeceras y estáticos |
+| Platform.Application | Contratos del saludo y decisión de readiness |
+| Platform.Infrastructure | Conexión, estado de migraciones y schema platform |
+| Identity.Application | Contratos, validación y reglas de cuentas, niveles y permisos |
+| Identity.Infrastructure | ASP.NET Identity, EF Core, sesiones, tokens, auditoría y outbox SMTP |
+| Acropolis.Migrations | Migración explícita, inicialización administrativa y recuperación en mantenimiento |
+| frontend | Aplicación React, formularios accesibles, perfil y administración |
+| frontend/preview | Prototipo editorial separado del build productivo |
 
-La API expone `GET /api/v1/greeting` con `{ "message": "Hola mundo" }`. React lo obtiene de la API y muestra un fallo cuando la petición no funciona. Una ruta desconocida bajo `/api/` devuelve 404; no recibe el HTML de la SPA. Frontend y API comparten origen, por lo que la base no requiere CORS abierto.
+Application no depende de ASP.NET, EF, Npgsql ni del host. Infrastructure depende de su contrato Application. Ningún módulo referencia la API ni lee directamente las tablas internas de otro módulo. Las pruebas de arquitectura verifican estos límites.
 
-## Salud y persistencia
+## Identidad y autorización
 
-- `GET /health` verifica liveness y devuelve `200 { "status": "ok" }` sin abrir una conexión a PostgreSQL.
-- `GET /health/ready` comprueba la conexión y que las migraciones aplicadas coinciden con las esperadas por el ensamblado. Devuelve 200/`ok` o 503/`not_ready`, con timeout. La respuesta no expone conexiones ni errores internos.
-- El schema inicial es `platform`; su historial EF reside en `platform."__EFMigrationsHistory"`. El runner ejecuta la migración inicial real de ese schema e historial. No crea tablas de negocio ficticias.
-- El arranque HTTP no aplica migraciones automáticamente. El runner tiene un límite temporal, un bloqueo advisory de sesión y salida de error sanitizada. Ejecutarlo de nuevo no cambia un estado que ya está actualizado.
+ASP.NET Identity gestiona las credenciales y el bloqueo por intentos fallidos. El registro siempre crea una cuenta Externo sin permisos administrativos y exige confirmación de correo antes de permitir acceso. Las contraseñas tienen entre 15 y 128 caracteres, sin reglas arbitrarias de composición.
 
-PostgreSQL 18 conserva su directorio de datos en un volumen montado en `/var/lib/postgresql`. Hay tres identidades: `acropolis_admin` para inicialización y respaldo, `acropolis_migrator` propietario de esta base y su schema, y `acropolis_app` para el proceso HTTP sin DDL. La configuración se recibe por `ConnectionStrings__Database`; ninguna credencial se guarda en código o en el bundle React. La aplicación puede leer el historial de migraciones, pero no modificarlo.
+Los niveles Externo, Probacionista, Miembro, FFVV, Instructor y Hachado pueden coexistir. Son atributos institucionales, independientes de Users.Manage y de futuras suscripciones. La interfaz administrativa no puede conceder ese permiso; el primer administrador se inicializa mediante un comando explícito para una cuenta exacta y confirmada.
 
-## Construcción y ejecución
+La cookie segura contiene la referencia protegida de una sesión persistida en PostgreSQL. Su duración máxima es ocho horas, sin renovación deslizante. El servidor comprueba estado y versión de seguridad de la cuenta en las peticiones autenticadas. Los cambios sensibles invalidan sesiones; no se confía en permisos antiguos del navegador.
 
-El Dockerfile usa Node.js 22 para React, el SDK .NET 10 para construir y ASP.NET Core .NET 10 para ejecutar. El host no necesita instalar esos runtimes. Los locks de NuGet y npm fijan las dependencias y se verifican antes de aceptar una imagen.
+Todas las mutaciones HTTP, incluidas las de acceso público, exigen antifalsificación. React obtiene el token del mismo origen y envía X-CSRF-TOKEN. Las cookies son Secure, HttpOnly y con prefijo __Host-. Sólo se aceptan cabeceras forwarded de las direcciones exactas del proxy configurado. API y UI no requieren CORS abierto.
 
-El target final `web` contiene `Acropolis.Api.dll` y los estáticos React; escucha HTTP en 8080 como usuario `app`. El target `migrations` contiene `Acropolis.Migrations.dll` y no es un servidor HTTP. Los targets `sdk`, `node` y `playwright` son herramientas de QA, no servicios de producción. Playwright conserva sus navegadores de la imagen oficial correspondiente y usa Node.js 22 del target `node`.
+Confirmación y recuperación usan tokens aleatorios de un solo uso: sólo se persiste su hash. La confirmación caduca en 24 horas y el reset en 30 minutos. El enlace transporta el token en un fragmento de URL que React retira; una petición GET no cambia el estado de la cuenta. Los errores de registro, reenvío y recuperación evitan revelar la existencia de cuentas.
 
-Producción mantiene la red interna de la aplicación y la red de publicación existente. Traefik termina HTTPS mediante el archivo dinámico propio del proyecto. QA utiliza proyectos, redes y volúmenes diferentes, sin puertos del host, socket Docker montado, red de Traefik ni `.env` de producción.
+El permiso administrativo se comprueba en servidor. Las actualizaciones usan versión de concurrencia, transacción, registro de auditoría y protección del último administrador. Las listas están paginadas y sus filtros no cargan la tabla completa en memoria.
 
-## Añadir módulos cuando exista una necesidad real
+## Correo y claves
 
-Un módulo nuevo tendrá un límite explícito dentro de `src/Modules/<Nombre>`. Su capa Application expresará casos de uso y contratos; Infrastructure implementará persistencia e integraciones. Una capa Domain se añadirá cuando existan reglas y entidades de negocio que la justifiquen. La API actuará como composición y adaptador HTTP.
+El cambio de estado y la intención de correo se guardan juntos. El outbox cifra su payload con Data Protection y un worker envía por SMTP con TLS validado, reintentos y reclamaciones temporales recuperables. SMTP no participa en una transacción distribuida: puede existir un duplicado después de una aceptación remota seguida de un fallo local. El token sólo se consume una vez.
 
-Cada módulo será dueño de su persistencia y sus migraciones; no leerá ni escribirá directamente tablas internas de otro módulo. La interacción entre módulos usará contratos de Application y transacciones explícitas cuando sean necesarias. Un módulo no referenciará el host API. Los tests de arquitectura deben extenderse para verificar estas reglas al introducirlo.
+La aplicación usa un nombre estable para Data Protection, un key ring persistente y un certificado protector PFX privado. No se generan claves efímeras por reiniciar el contenedor. Se respaldan base, claves, protector y configuración juntos. Ninguno de estos materiales entra en Git ni en las imágenes.
 
-Antes de añadir autenticación, publicación de contenidos u otro módulo, se debe definir su contrato, reglas, permisos, schema y escenarios de fallo. La estructura actual deja ese crecimiento posible sin presentar funcionalidades que aún no existen.
+La restauración de un backup antiguo exige invalidar sesiones, enlaces y correos restaurados, bloquear cuentas para revalidación y sustituir credenciales antiguas antes de reabrirlas. El procedimiento está en identity-operations.md. MFA queda pendiente antes del lanzamiento operativo.
+
+## Persistencia y migraciones
+
+Platform e Identity son propietarios de sus schemas e historiales de EF. El runner aplica Platform y después Identity bajo un único bloqueo advisory exclusivo; el host HTTP nunca aplica migraciones. La readiness comprueba ambos historiales esperados con timeout. Liveness no abre conexiones a PostgreSQL.
+
+PostgreSQL conserva sus datos en /var/lib/postgresql. acropolis_admin se limita a inicialización y respaldo; acropolis_migrator es propietario de schemas; acropolis_app tiene permisos de ejecución sin DDL ni escritura de historiales. El runner configura privilegios de Identity también sobre una base ya existente, no sólo durante la inicialización de un volumen nuevo.
+
+Las migraciones deben ser compatibles con la recuperación de imagen prevista. No ejecutar descensos automáticos ni compartir transacciones entre módulos sin un contrato y una necesidad explícitos.
+
+## Construcción, ejecución y crecimiento
+
+Docker construye React con Node 22 y backend con SDK 10. El runtime final sólo contiene ASP.NET Core, assemblies y estáticos productivos. Corre como app no root, con raíz de contenedor de sólo lectura y puertos internos. Los locks NuGet y npm fijan dependencias. Los assets con hash usan cache inmutable y JavaScript/CSS admiten Brotli/Gzip; el HTML exige revalidación. Las respuestas de identidad y administración usan no-store y quedan fuera de la compresión.
+
+El target preview contiene el prototipo separado. Los targets sdk, node, playwright y qa-pki son herramientas de verificación y no se publican como la aplicación. El prototipo no añade endpoints de contenido falso, pagos ni autenticación simulada a producción.
+
+QA crea CA, correo SMTP, bases y redes exclusivos de cada ejecución. El candidato usa configuración Production, TLS real y las mismas imágenes que se podrán desplegar. No se conectan los tests a Traefik, al socket Docker ni a datos productivos.
+
+Los siguientes módulos se incorporarán cuando exista su contrato: catálogo, acceso a multimedia, suscripciones, pagos e integración institucional. Un nivel institucional no debe convertirse implícitamente en una suscripción ni en un rol administrativo. Cada proceso nuevo requiere reglas, límites, errores, idempotencia cuando corresponda y pruebas por nivel.

@@ -31,7 +31,7 @@ El despliegue puede reutilizar una imagen únicamente cuando existe un informe `
 
 Hay tres ámbitos: el candidato, los tests de integración y la restauración del backup. Cada uno tiene su propio PostgreSQL 18 y volumen. Los tests de integración no inicializan ni modifican la base vacía con la que se verifica el primer despliegue de migraciones del candidato.
 
-Los servidores de prueba unitarios y el runner usan Testing. El candidato HTTP usa Production para ejercitar la configuración desplegable, con conexión QA explícita y `AllowedHosts` limitado a los nombres internos utilizados por las pruebas. Esto no lo conecta a producción.
+Los servidores de pruebas y el seed sintético usan Testing. El candidato HTTP usa Production para ejercitar la configuración desplegable, con conexión QA explícita y `AllowedHosts` limitado a los nombres internos utilizados por las pruebas. Esto no lo conecta a producción.
 
 Los servicios limitan CPU, memoria y procesos; las construcciones .NET usan un único procesador/MSBuild sin paralelismo. Playwright tiene memoria compartida propia, no IPC del host. La limpieza, incluso después de un fallo, selecciona únicamente los nombres aleatorios creados por esa ejecución y retira sus contenedores, redes y volúmenes de pruebas. No purga Docker ni elimina datos de otros proyectos. Se conservan las imágenes candidatas y los informes para revisión y reutilización.
 
@@ -43,7 +43,7 @@ Los servicios limitan CPU, memoria y procesos; las construcciones .NET usan un �
 | Orquestación del despliegue | Tests Python con mocks y directorios temporales para SHA, estado Git, artefacto, DNS bloqueado y recuperación; no contactan Docker, Git, DNS ni producción |
 | Imagen de ejecución | Usuario no root; sin fuente, `.env`, `.local`, metadata Git, node_modules, Node, Git ni SDK .NET; comprobación sin red y en modo read-only |
 | Backend | Restore NuGet `--locked-mode`, build Release, formato y auditoría de dependencias transitivas; vulnerabilidades High/Critical bloquean |
-| Unidad backend | Casos reales de saludo y decisión de readiness, con cobertura de líneas y ramas de `Acropolis.Platform.Application` de al menos 80% |
+| Unidad backend | Reglas reales de Platform e Identity: validación, estados, niveles, permisos y límites; cobertura por ensamblado de al menos 80% en líneas y ramas |
 | HTTP y arquitectura | Tests del contrato HTTP, fallos sanitizados y dependencias permitidas |
 | Integración | PostgreSQL real, configuración Testing obligatoria, base `acropolis_test_*` y credencial QA propia; sin fallback ni tests omitidos por falta de base; cobertura de líneas y ramas de Infrastructure de al menos 80%, excluyendo migraciones generadas y snapshot |
 | Frontend | `npm ci`, typecheck, lint, formato, tests, cobertura mínima 80% en líneas, ramas, funciones y statements; build y auditoría npm High/Critical |
@@ -51,11 +51,11 @@ Los servicios limitan CPU, memoria y procesos; las construcciones .NET usan un �
 | Navegador | Playwright desktop/móvil contra frontend y API del candidato real; resultados y reporte conservados |
 | Resiliencia | Al detener PostgreSQL readiness 503 y liveness 200; al recuperarlo readiness 200; reinicio de app y base con schema e historial persistentes |
 | Recuperación | `pg_dump` custom, restauración en otro proyecto QA conservando ACL, comprobación de propietarios y permisos efectivos, readiness/saludo de la aplicación restaurada antes de reaplicar migraciones, reaplicación idempotente y comparación de schema e historial con el origen; intento de restaurar producción rechazado antes de contactar Docker |
-| Carga | k6: cinco iteraciones breves de calentamiento antes de la medición; 20 VU durante 60 segundos, pausa de 1 segundo por iteración, p95 HTTP menor de 500 ms, tasa de errores HTTP 0 y todos los checks correctos |
+| Carga | k6: cinco iteraciones breves de calentamiento antes de la medición; 50 VU durante 60 segundos, pausa de 1 segundo por iteración, p95 HTTP menor de 500 ms, tasa de errores HTTP 0 y todos los checks correctos |
 
-La cobertura de Application mide decisiones de la capa sin infraestructura. Las métricas de líneas y ramas deben existir y ser válidas; un informe sin ramas reales se declara no aplicable para esa métrica. Los tests de PostgreSQL y del runner ejercitan SQL y permisos con una base real; no se contabilizan como unidad ni se reemplazan por mocks para aumentar el porcentaje.
+La cobertura de Application mide decisiones de la capa sin infraestructura. Se excluye exclusivamente Contracts.cs de Identity, que declara DTOs sin comportamiento; serialización y contratos se verifican mediante HTTP real. IdentityResult y sus decisiones permanecen en el alcance medido. Las métricas de líneas y ramas deben existir y ser válidas; un informe sin ramas reales se declara no aplicable para esa métrica. Los tests de PostgreSQL y del runner ejercitan SQL y permisos con una base real; no se contabilizan como unidad ni se reemplazan por mocks para aumentar el porcentaje.
 
-La carga utiliza el saludo y readiness reales. El umbral describe este escenario inicial y no es una promesa de capacidad para futuros módulos. El resumen contiene mediciones observadas. El runner utiliza la [imagen oficial de k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) con una versión fijada en Compose.
+La carga de identidad utiliza 100.000 cuentas sintéticas, sesiones obtenidas mediante acceso real, consultas de perfil/readiness y búsqueda administrativa. El setup respeta el límite de acceso por IP. El umbral describe una concurrencia acotada y no acredita 1.000 usuarios simultáneos ni reproducción multimedia. El resumen contiene mediciones observadas. El runner utiliza la [imagen oficial de k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) con una versión fijada en Compose.
 
 ## Backups manuales y restauración de prueba
 
@@ -76,7 +76,18 @@ bash scripts/backup-db.sh \
 bash scripts/restore-db-test.sh \
   --project acropolis_test_RUN_restore \
   --database acropolis_test_RUN_restore \
-  --input /root/proyect/acropolis-channel/.local/backups/ARCHIVO.dump
+  --input /root/proyect/acropolis-channel/.local/backups/ARCHIVO.dump \
+  --maintenance
 ```
 
 Sustituir `RUN` por el identificador real en minúsculas y `ARCHIVO` por un backup existente. El destino requiere los roles de inicialización QA. El backup conserva las ACL y privilegios predeterminados propios; no incluye roles globales ni sus contraseñas. La restauración usa `--no-owner --role=acropolis_migrator`, por lo que los objetos quedan bajo el migrador del destino y las ACL originales se reponen contra los roles inicializados. El gate comprueba propiedad, permisos efectivos de la aplicación y readiness antes de ejecutar de nuevo el runner del mismo ámbito QA. El script no permite una restauración sobre el proyecto de producción.
+
+## Identidad, HTTPS y prototipo
+
+El candidato Production requiere correo y claves persistentes incluso en QA. La ejecución crea una CA exclusiva, certificado para el proxy HTTPS, certificado SMTP y protector PFX; los clientes confían únicamente en esa CA de prueba. La clave privada de la CA no se monta en el navegador. No utilizar ignoreHTTPSErrors, TLS inseguro ni certificados productivos.
+
+Los recorridos de navegador cubren registro, correo en el buzón SMTP aislado, confirmación explícita, acceso, perfil, cambio/recuperación de contraseña, permisos y administración. Las pruebas backend con PostgreSQL ejercitan además concurrencia, tokens de un solo uso, bloqueo, ocho horas absolutas, revocación, auditoría y protección del último administrador. Verificar respuestas 401/403/409, CSRF y campos desconocidos; un botón oculto no es autorización.
+
+Comprobar reintento SMTP, protección cifrada de payloads y sesiones persistentes después de reiniciar la imagen. Restaurar con web detenido, invalidar cuentas restauradas y demostrar que la cookie y credenciales antiguas no vuelven a admitir acceso. La revalidación individual exige confirmación y contraseña nuevas y no recupera automáticamente permisos anteriores.
+
+El prototipo se construye como target separado y se valida con capturas de escritorio y móvil, navegación por teclado y axe. El build productivo no incluye las rutas o fixtures del catálogo de demostración. Conservar las capturas junto al informe; una auditoría automatizada no sustituye la revisión visual y funcional.

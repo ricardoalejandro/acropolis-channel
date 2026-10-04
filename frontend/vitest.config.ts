@@ -11,7 +11,13 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/main.tsx', 'src/**/*.test.{ts,tsx}', 'src/test/**', 'src/**/*.d.ts'],
+      exclude: [
+        'src/main.tsx',
+        'src/preview/main.tsx',
+        'src/**/*.test.{ts,tsx}',
+        'src/test/**',
+        'src/**/*.d.ts',
+      ],
       reportsDirectory: process.env['FRONTEND_COVERAGE_DIR'] ?? '../.local/qa/frontend-coverage',
       reporter: ['text', 'json-summary', 'lcov'],
       thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },

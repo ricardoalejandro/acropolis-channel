@@ -1,0 +1,9 @@
+{
+    admin off
+    skip_install_trust
+    auto_https disable_redirects
+}
+https://{$QA_HOST}:8443 {
+    tls internal
+    reverse_proxy web:8080
+}

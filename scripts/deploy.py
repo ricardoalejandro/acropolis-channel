@@ -105,6 +105,24 @@ def public_smoke():
         if response.code not in (301, 308) or response.headers.get('Location') != 'https://' + DOMAIN + '/':
             raise RuntimeError('Unexpected HTTPS redirection')
 
+def backup_identity_material(directory, previous_container):
+    protector = ROOT / '.local/identity/key-protector.pfx'
+    if not protector.is_file():
+        return
+    target = directory / 'identity'
+    target.mkdir(mode=0o700)
+    shutil.copy2(protector, target / 'key-protector.pfx')
+    (target / 'key-protector.pfx').chmod(0o600)
+    if previous_container:
+        result = command(['docker', 'exec', previous_container, 'test', '-d',
+                          '/var/acropolis/keys'], check=False)
+        if result == 0:
+            keyring = target / 'keyring'
+            keyring.mkdir(mode=0o700)
+            command(['docker', 'cp', previous_container + ':/var/acropolis/keys/.', str(keyring)])
+            for path in keyring.rglob('*'):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-sha', required=True)
@@ -141,6 +159,7 @@ def main():
                 break
         if valid is None:
             raise RuntimeError('No matching passed QA report; run scripts/verify.sh first')
+        command(['python3', 'scripts/identity-runtime.py', '--check'])
         template = routing_check()
         settings = env_values()
         expected_ip = settings.get('PUBLIC_VPS_IPV4')
@@ -151,6 +170,8 @@ def main():
         backup = local / 'deployments' / timestamp
         backup.mkdir(parents=True)
         backup.chmod(0o700)
+        shutil.copy2(ROOT / '.env', backup / 'candidate.env')
+        (backup / 'candidate.env').chmod(0o600)
         shutil.copy2(ROOT / '.env', backup / 'previous.env')
         shutil.copy2(ROOT / 'compose.yml', backup / 'compose.yml')
         previous_container = compose('ps', '-q', 'web', capture=True)
@@ -179,8 +200,10 @@ def main():
         active = False
         try:
             compose('config', '--quiet', env=env)
+            compose('--profile', 'migration', 'run', '--rm', '--no-deps', 'migrations', 'smtp-check', env=env)
             compose('up', '-d', '--no-build', '--wait', '--wait-timeout', '90', 'db', env=env)
             command(['bash', 'scripts/backup-db.sh', '--project', PROJECT, '--database', 'acropolis', '--output', str(local / 'backups' / ('deploy-' + timestamp + '.dump'))], env=env)
+            backup_identity_material(backup, previous_container)
             compose('--profile', 'migration', 'run', '--rm', 'migrations', env=env)
             active = True
             compose('up', '-d', '--no-build', 'web', env=env)
@@ -219,7 +242,7 @@ def main():
             print(json.dumps({'status': 'published', 'sha': sha, 'image_id': manifest['image_id'], 'url': 'https://' + DOMAIN}))
             return 0
         except Exception:
-            shutil.copy2(backup / 'previous.env', ROOT / '.env')
+            shutil.copy2(backup / 'candidate.env', ROOT / '.env')
             if previous_route:
                 atomic_copy(backup / 'previous-routing.yml', ROUTE)
             elif ROUTE.exists():
@@ -228,7 +251,7 @@ def main():
                 if previous_image:
                     override = backup / 'rollback.yml'
                     override.write_text(yaml.safe_dump({'services': {'web': {'image': previous_image}}}))
-                    command(['docker', 'compose', '-p', PROJECT, '--env-file', str(backup / 'previous.env'), '-f', str(backup / 'compose.yml'), '-f', str(override), 'up', '-d', '--no-build', '--no-deps', 'web'])
+                    command(['docker', 'compose', '--project-directory', str(ROOT), '-p', PROJECT, '--env-file', str(backup / 'previous.env'), '-f', str(backup / 'compose.yml'), '-f', str(override), 'up', '-d', '--no-build', '--no-deps', 'web'])
                 else:
                     compose('stop', 'web', check=False)
             if previous_active:

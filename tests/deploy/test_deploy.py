@@ -130,6 +130,8 @@ class DeploymentTests(unittest.TestCase):
             return self.running_image
         if args[:2] == ["docker", "tag"]:
             return 0
+        if args == ["python3", "scripts/identity-runtime.py", "--check"]:
+            return 0
         if args[:2] == ["bash", "scripts/backup-db.sh"]:
             output = Path(args[args.index("--output") + 1])
             self.assertTrue(output.is_relative_to(self.local / "backups"))
@@ -151,6 +153,8 @@ class DeploymentTests(unittest.TestCase):
         self.operations.append(("compose", args))
         if args == ("ps", "-q", "web"):
             return "simulated-web-container" if self.running_image else ""
+        if args == ("--profile", "migration", "run", "--rm", "--no-deps", "migrations", "smtp-check"):
+            return 0
         if args == ("config", "--quiet"):
             return 0
         if args == ("up", "-d", "--no-build", "--wait", "--wait-timeout", "90", "db"):
@@ -197,6 +201,72 @@ class DeploymentTests(unittest.TestCase):
         directories = [p for p in (self.local / "deployments").iterdir() if p.name != "previous"]
         newest = max(directories, key=lambda p: p.name)
         return newest, json.loads((newest / "manifest.json").read_text())
+
+    def test_identity_configuration_failure_prevents_database_or_application_change(self):
+        original = self.command.side_effect
+
+        def invalid_configuration(args, **kwargs):
+            if args == ["python3", "scripts/identity-runtime.py", "--check"]:
+                raise subprocess.CalledProcessError(1, args)
+            return original(args, **kwargs)
+
+        self.command.side_effect = invalid_configuration
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.execute()
+        self.assert_not_activated()
+
+    def test_identity_backup_preserves_protector_and_keyring_in_private_directory(self):
+        source = self.local / "identity/key-protector.pfx"
+        source.parent.mkdir()
+        source.write_bytes(b"synthetic protected key material")
+        destination = self.local / "recovery-fixture"
+        destination.mkdir()
+
+        def copy_from_container(args, **kwargs):
+            if args[:2] == ["docker", "exec"]:
+                self.assertEqual(args[2], "own-web")
+                return 0
+            self.assertEqual(args[:2], ["docker", "cp"])
+            self.assertEqual(args[2], "own-web:/var/acropolis/keys/.")
+            Path(args[3], "key.xml").write_text("synthetic encrypted data key")
+            return 0
+
+        with patch.object(DEPLOY, "command", side_effect=copy_from_container):
+            DEPLOY.backup_identity_material(destination, "own-web")
+        self.assertEqual((destination / "identity/key-protector.pfx").read_bytes(), source.read_bytes())
+        self.assertEqual((destination / "identity/keyring/key.xml").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((destination / "identity").stat().st_mode & 0o777, 0o700)
+
+    def test_smtp_failure_stops_before_database_or_web_activation(self):
+        self.seed_previous_deployment()
+        original = self.compose.side_effect
+
+        def unavailable_smtp(*args, **kwargs):
+            if args == ("--profile", "migration", "run", "--rm", "--no-deps", "migrations", "smtp-check"):
+                raise RuntimeError("SMTP unavailable")
+            return original(*args, **kwargs)
+
+        self.compose.side_effect = unavailable_smtp
+        with self.assertRaisesRegex(RuntimeError, "SMTP unavailable"):
+            self.execute()
+        self.assertEqual(self.running_image, OLD_ID)
+        self.assertFalse(any(kind == "compose" and args[0] == "up" for kind, args in self.operations))
+        self.assertFalse(any(args[:2] == ("bash", "scripts/backup-db.sh") for _, args in self.operations))
+        self.ready.assert_not_called()
+
+    def test_recovery_preserves_new_private_configuration_and_uses_previous_runtime_snapshot(self):
+        _, previous_env, _ = self.seed_previous_deployment()
+        prepared_env = previous_env + "IDENTITY_DP_CERT_PASSWORD=synthetic-new-protector-password\n"
+        (self.root / ".env").write_text(prepared_env)
+        self.smoke.side_effect = RuntimeError("simulated upstream failure")
+        with self.assertRaisesRegex(RuntimeError, "Public HTTPS"):
+            self.execute()
+        directory, _ = self.deployment_manifest()
+        self.assertEqual((self.root / ".env").read_text(), prepared_env)
+        self.assertEqual((directory / "candidate.env").read_text(), prepared_env)
+        self.assertEqual((directory / "previous.env").read_text(), previous_env)
+        self.assertEqual((directory / "candidate.env").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.running_image, OLD_ID)
 
     def test_dirty_checkout_never_activates(self):
         self.dirty = " M frontend/src/App.tsx"
@@ -317,6 +387,7 @@ class DeploymentTests(unittest.TestCase):
         rollback = [args for kind, args in self.operations if kind == "command" and args[:2] == ("docker", "compose")]
         self.assertEqual(len(rollback), 1)
         self.assertIn("--no-deps", rollback[0])
+        self.assertEqual(rollback[0][rollback[0].index("--project-directory") + 1], str(self.root))
         self.assertEqual(rollback[0][-1], "web")
         self.assertFalse(any("restore-db" in str(args) or "down" in args for _, args in self.operations))
         self.assertEqual(self.ready.call_count, 30 if phase == "readiness" else 1)

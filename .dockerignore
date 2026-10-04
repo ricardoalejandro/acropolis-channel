@@ -16,3 +16,5 @@ work/
 **/*.pyc
 
 /artifacts/
+
+**/dist-preview/

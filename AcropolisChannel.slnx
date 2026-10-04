@@ -7,4 +7,8 @@
   <Project Path="tests/backend/Acropolis.Api.Tests/Acropolis.Api.Tests.csproj" />
   <Project Path="tests/backend/Acropolis.Architecture.Tests/Acropolis.Architecture.Tests.csproj" />
   <Project Path="tests/backend/Acropolis.Platform.IntegrationTests/Acropolis.Platform.IntegrationTests.csproj" />
+  <Project Path="src/Modules/Identity/Acropolis.Identity.Application/Acropolis.Identity.Application.csproj" />
+  <Project Path="src/Modules/Identity/Acropolis.Identity.Infrastructure/Acropolis.Identity.Infrastructure.csproj" />
+  <Project Path="tests/backend/Acropolis.Identity.UnitTests/Acropolis.Identity.UnitTests.csproj" />
+  <Project Path="tests/backend/Acropolis.Identity.IntegrationTests/Acropolis.Identity.IntegrationTests.csproj" />
 </Solution>
