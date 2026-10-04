@@ -28,5 +28,5 @@ if (mode === 'queue') {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   } while (Date.now() < deadline);
   if (!delivered) throw new Error('Queued real email was not delivered after SMTP recovery.');
-  console.log('Queued registration email delivered after authenticated STARTTLS recovery.');
+  console.log('Queued registration email delivered after authenticated implicit TLS recovery.');
 } else throw new Error('Unknown SMTP failure gate.');

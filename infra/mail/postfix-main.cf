@@ -1,0 +1,20 @@
+# One transport / global pacing, including different recipients and retries.
+default_transport = smtp
+relay_transport = smtp
+smtp_transport_rate_delay = 16s
+smtp_destination_recipient_limit = 1
+smtp_destination_concurrency_limit = 1
+smtp_helo_name = $myhostname
+inet_protocols = ipv4
+message_size_limit = 20971520
+smtpd_recipient_limit = 20
+smtpd_client_connection_count_limit = 10
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit = 10
+smtpd_client_recipient_rate_limit = 40
+smtpd_error_sleep_time = 2s
+smtpd_soft_error_limit = 5
+smtpd_hard_error_limit = 10
+# Fail closed until DNS/PTR/TLS and controlled delivery are ready.
+defer_transports = smtp
+milter_default_action = tempfail

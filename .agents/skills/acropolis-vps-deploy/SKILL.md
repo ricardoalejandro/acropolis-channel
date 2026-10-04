@@ -21,9 +21,9 @@ Consultar `.local/last-active-deployment` y su manifiesto para el runtime real; 
 - Mantener Compose `acropolis-channel`, web8080/alias `acropolis-channel-web`, red `dokploy-network`, PostgreSQL18 privado y roles separados. .NET10/Node22 sólo Docker; conservar Node20 host. Migraciones sólo runner con bloqueo.
 - Antes de modificar `.env` conservar una copia privada; registrar imagen/configuración activa y recursos ajenos necesarios para comprobar preservación. Inspeccionar valores sensibles sólo dentro del proceso, con salida de presencia/validez y sin mostrar secretos.
 
-## Identidad y correo pendiente
+## Identidad e integración SMTP propia
 
-Leer `docs/identity-operations.md`. SMTP está pospuesto por el propietario: no volver a pedir cuentas. Mantener explícito `IDENTITY_EMAIL_ENABLED=false` hasta que retome correo. Registro/reenvío/recuperación quedan deshabilitados; no auto-confirmar usuarios ni sembrar cuentas QA para crear un administrador. La cuenta inicial debe estar confirmada y su autoridad designada.
+Leer `docs/identity-operations.md`. SMTP propio fue retomado y autorizado por el propietario: leer `docs/mail-operations.md`. Mantener explícito `IDENTITY_EMAIL_ENABLED=false` hasta completar DNS/PTR/TLS y entrega controlada. Credenciales generadas privadas en el VPS, nunca por chat. Registro/reenvío/recuperación quedan deshabilitados; no auto-confirmar usuarios ni sembrar cuentas QA para crear un administrador. La cuenta inicial debe estar confirmada y su autoridad designada.
 
 Antes de publicar identidad por primera vez o cuando cambie el proxy, ejecutar `python3 scripts/identity-runtime.py --prepare` y `--check`. Preparan PFX/key ring/proxies exactos; no reemplazar automáticamente un protector existente o perdido. Conservar permisos privados y lectura por app UID/GID1654. El preflight exige claves/proxy aun sin SMTP; smtp-check sólo se ejecuta con correo habilitado. Al retomar SMTP validar TLS/autenticación y entrega real controlada.
 

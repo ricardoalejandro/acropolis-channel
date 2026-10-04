@@ -133,6 +133,7 @@ PY_STATIC
 run_step static_checks static_checks
 [[ -s tests/deploy/test_deploy.py ]] || { echo 'Missing deployment orchestration test suite.' >&2; exit 1; }
 run_step deployment_orchestration env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s tests/deploy -v
+run_step mail_operations env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 infra/mail/tests/test_mail_ops.py
 run_step compose_validation compose config --quiet
 run_step build_candidate docker build --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_IMAGE" .
 image_id="$(docker image inspect --format '{{.Id}}' "$QA_IMAGE")"
@@ -165,7 +166,7 @@ proxy_id="$(compose ps -q proxy)"
 export QA_PROXY_IP="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$proxy_id")"
 [[ "$QA_PROXY_IP" =~ ^[0-9.]+$ ]] || { echo 'QA proxy has no trusted private address.' >&2; exit 1; }
 run_step private_pki compose run --rm --no-deps pki prepare
-run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit
+run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit mailpit-starttls
 run_step smtp_strict_tls compose run --rm --no-deps migrations smtp-check
 smtp_untrusted_tls() {
   if compose run --rm --no-deps -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
@@ -174,6 +175,29 @@ smtp_untrusted_tls() {
   echo 'SMTP rejects the same endpoint without its trusted private CA.'
 }
 run_step smtp_untrusted_tls smtp_untrusted_tls
+smtp_rejects_invalid_auth() {
+  if compose run --rm --no-deps -e Identity__Smtp__Password=invalid-synthetic-qa-password migrations smtp-check; then
+    echo 'SMTP aceptó una contraseña incorrecta.' >&2; return 1
+  fi
+  echo 'SMTP TLS implícito rechaza la autenticación incorrecta.'
+}
+smtp_rejects_invalid_hostname() {
+  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-wrong-host migrations smtp-check; then
+    echo 'SMTP aceptó un nombre de servidor fuera del certificado.' >&2; return 1
+  fi
+  echo 'SMTP TLS implícito rechaza un hostname que no coincide con el certificado.'
+}
+smtp_starttls_untrusted_ca() {
+  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
+    echo 'SMTP STARTTLS aceptó una CA no confiable.' >&2; return 1
+  fi
+  echo 'SMTP STARTTLS conserva la validación estricta de la CA.'
+}
+run_step smtp_ssl_invalid_auth smtp_rejects_invalid_auth
+run_step smtp_ssl_invalid_hostname smtp_rejects_invalid_hostname
+run_step smtp_ssl_plaintext_rejected compose run --rm --no-deps node 'node /qa-tools/smtp-transport.mjs plaintext-rejected'
+run_step smtp_starttls_strict_tls compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls migrations smtp-check
+run_step smtp_starttls_untrusted_ca smtp_starttls_untrusted_ca
 run_step database_start compose up -d --wait --wait-timeout 90 db
 run_step application_before_migrations compose up -d web
 run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 503 not_ready'

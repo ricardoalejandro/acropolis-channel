@@ -1,0 +1,40 @@
+# Owned exclusively by the independent naperu-mail service.
+http:
+  routers:
+    naperu-mail-http:
+      rule: "Host(`mail.naperu.cloud`) || Host(`webmail.naperu.cloud`)"
+      entryPoints: [web]
+      middlewares: [naperu-mail-https]
+      service: naperu-mail-webmail
+    naperu-mail-https:
+      rule: "Host(`mail.naperu.cloud`) || Host(`webmail.naperu.cloud`)"
+      entryPoints: [websecure]
+      middlewares: [naperu-mail-headers, naperu-mail-rate]
+      service: naperu-mail-webmail
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: mail.naperu.cloud
+            sans: [webmail.naperu.cloud]
+  services:
+    naperu-mail-webmail:
+      loadBalancer:
+        servers:
+          - url: "http://naperu-mail-roundcube-1:80"
+  middlewares:
+    naperu-mail-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    naperu-mail-rate:
+      rateLimit:
+        average: 10
+        burst: 20
+        period: 1s
+    naperu-mail-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: no-referrer
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"

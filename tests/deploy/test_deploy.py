@@ -264,6 +264,32 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(rollback[0].kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "true")
         self.assertEqual(self.running_image, OLD_ID)
 
+    def test_failed_smtp_enabled_candidate_recovers_explicitly_disabled_runtime(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        disabled_env = previous_env + "IDENTITY_EMAIL_ENABLED=false\n"
+        (previous / "active.env").write_text(disabled_env)
+        prepared_env = previous_env + (
+            "IDENTITY_EMAIL_ENABLED=true\n"
+            "IDENTITY_SMTP_HOST=mail.example.test\n"
+            "IDENTITY_SMTP_PORT=465\n"
+            "IDENTITY_SMTP_SECURITY=ssl\n"
+        )
+        (self.root / ".env").write_text(prepared_env)
+        self.smoke.side_effect = RuntimeError("simulated public failure")
+        with patch.dict(os.environ, {"IDENTITY_EMAIL_ENABLED": "true"}):
+            with self.assertRaisesRegex(RuntimeError, "Public HTTPS"):
+                self.execute()
+        self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
+        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"]]
+        self.assertEqual(len(rollback), 1)
+        self.assertEqual(rollback[0].kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "false")
+        directory, manifest = self.deployment_manifest()
+        self.assertEqual((directory / "previous.env").read_text(), disabled_env)
+        self.assertEqual((self.root / ".env").read_text(), prepared_env)
+        self.assertEqual(self.running_image, OLD_ID)
+        self.assertEqual(manifest["status"], "failed_recovery_applied")
+        self.assertEqual((self.local / "last-active-deployment").read_text().strip(), str(previous))
+
     def test_invalid_email_mode_never_activates_candidate(self):
         self.seed_previous_deployment()
         with (self.root / ".env").open("a") as handle:

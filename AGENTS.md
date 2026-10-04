@@ -21,11 +21,11 @@ Las skills canónicas están versionadas en `.agents/skills/acropolis-quality/SK
 ## Producto, identidad y diseño
 
 - La versión publicada ya incorpora diseño adaptable, cuentas/MFA y catálogo editorial persistente. El estado de cuentas y contenidos debe consultarse; no tratar datos vacíos como un fallo ni poblar producción con semillas QA.
-- El propietario pospuso SMTP el 4 de octubre de 2026. Mantener `IDENTITY_EMAIL_ENABLED=false` hasta que retome la integración; no volver a pedir credenciales. Registro, reenvío y solicitud de recuperación quedan deshabilitados; cuentas confirmadas existentes pueden entrar. No crear confirmaciones o accesos por atajo.
+- El propietario retomó SMTP el 4 de octubre de 2026 y autorizó correo propio naperu.cloud en un servicio independiente del VPS. Leer `docs/mail-operations.md`. Mantener `IDENTITY_EMAIL_ENABLED=false` hasta verificar DNS/PTR/TLS y entrega controlada; las credenciales se generan y almacenan sólo en el VPS, sin pedirlas por chat. Registro, reenvío y solicitud de recuperación quedan deshabilitados; cuentas confirmadas existentes pueden entrar. No crear confirmaciones o accesos por atajo.
 - Protector PFX privado, key ring persistente, HTTPS y proxies exactos siguen siendo obligatorios sin correo. MFA TOTP es obligatorio para `Users.Manage` y `Content.Manage`; niveles institucionales, permisos y suscripciones son independientes. Primer administrador sólo para una cuenta exacta confirmada y designada.
 - Catálogo: Lecturas, Documentales, Videos, Podcast, Charlas online y Cursos. Sólo metadatos y sinopsis públicas; borradores/archivados no se exponen y el material restringido no se guarda en sinopsis. Publicación con concurrencia, slug estable y auditoría atómica.
 - Diseño sobrio, elegante y contemporáneo para jóvenes, acorde con Nueva Acrópolis. Conservar la estructura del sitio oficial acropolischannel.pe; BBVA Aprendemos Juntos y DocPlus son inspiración visual. Leer `docs/design.md`, preservar la dirección aprobada y revisar móvil, teclado, contraste, cargas y errores reales.
-- Reproducción/acceso AWS, membresías, pagos/facturación, migración de datos y SMTP siguen pendientes de contratos e integraciones. No inventar precios, reglas de acceso o proveedores. `dist-preview` y sus demostraciones permanecen separados del build productivo; no crear recursos AWS/DNS sin solicitud.
+- Reproducción/acceso AWS, membresías, pagos/facturación, migración de datos siguen pendientes de contratos e integraciones. SMTP propio está autorizado y su activación depende de las guardas de correo. No inventar precios, reglas de acceso o proveedores. `dist-preview` y sus demostraciones permanecen separados del build productivo; no crear recursos AWS/DNS sin solicitud.
 
 ## Validación y publicación
 

@@ -84,6 +84,30 @@ services:
     environment:
       MP_SMTP_TLS_CERT: /smtp/cert.pem
       MP_SMTP_TLS_KEY: /smtp/key.pem
+      MP_SMTP_BIND_ADDR: '0.0.0.0:465'
+      MP_SMTP_REQUIRE_TLS: 'true'
+      MP_SMTP_AUTH: qa:${QA_SMTP_PASSWORD:?QA SMTP password required}
+      MP_MAX_MESSAGES: '200'
+    depends_on:
+      crl:
+        condition: service_healthy
+    volumes:
+      - ${QA_TLS}/smtp:/smtp:ro
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    networks:
+      default:
+        aliases: [mailpit-wrong-host]
+  mailpit-starttls:
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: /smtp/cert.pem
+      MP_SMTP_TLS_KEY: /smtp/key.pem
       MP_SMTP_REQUIRE_STARTTLS: 'true'
       MP_SMTP_AUTH: qa:${QA_SMTP_PASSWORD:?QA SMTP password required}
       MP_MAX_MESSAGES: '200'
@@ -114,12 +138,12 @@ services:
       Identity__DataProtection__CertificatePath: /run/secrets/acropolis-dp.pfx
       Identity__DataProtection__CertificatePassword: ${QA_DP_PASSWORD}
       Identity__Smtp__Host: mailpit
-      Identity__Smtp__Port: '1025'
+      Identity__Smtp__Port: '465'
       Identity__Smtp__Username: qa
       Identity__Smtp__Password: ${QA_SMTP_PASSWORD}
       Identity__Smtp__FromEmail: qa@acropolis.test
       Identity__Smtp__FromName: Acropolis QA
-      Identity__Smtp__Security: starttls
+      Identity__Smtp__Security: ssl
       SSL_CERT_FILE: /qa-trust/ca-bundle.crt
       SSL_CERT_DIR: /etc/ssl/certs
     volumes:
@@ -150,12 +174,12 @@ services:
       Identity__DataProtection__CertificatePath: /run/secrets/acropolis-dp.pfx
       Identity__DataProtection__CertificatePassword: ${QA_DP_PASSWORD}
       Identity__Smtp__Host: mailpit
-      Identity__Smtp__Port: '1025'
+      Identity__Smtp__Port: '465'
       Identity__Smtp__Username: qa
       Identity__Smtp__Password: ${QA_SMTP_PASSWORD}
       Identity__Smtp__FromEmail: qa@acropolis.test
       Identity__Smtp__FromName: Acropolis QA
-      Identity__Smtp__Security: starttls
+      Identity__Smtp__Security: ssl
       SSL_CERT_FILE: /qa-trust/ca-bundle.crt
       SSL_CERT_DIR: /etc/ssl/certs
       ConnectionStrings__Database: Host=db;Port=5432;Database=${QA_DATABASE};Username=acropolis_migrator;Password=${QA_MIGRATION_PASSWORD};Timeout=3;Command Timeout=30

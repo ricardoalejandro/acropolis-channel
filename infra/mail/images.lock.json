@@ -1,0 +1,12 @@
+[
+  {
+    "requested": "ghcr.io/docker-mailserver/docker-mailserver:16.0.1",
+    "id": "sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86",
+    "digest": "ghcr.io/docker-mailserver/docker-mailserver@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86"
+  },
+  {
+    "requested": "roundcube/roundcubemail:1.7.4-apache",
+    "id": "sha256:93c6ccb63ce2feccb107c0eca128f8625ac4c3e9e42329e44d0a60da66a70a40",
+    "digest": "roundcube/roundcubemail@sha256:93c6ccb63ce2feccb107c0eca128f8625ac4c3e9e42329e44d0a60da66a70a40"
+  }
+]

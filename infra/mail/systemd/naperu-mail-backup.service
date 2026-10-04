@@ -1,0 +1,11 @@
+[Unit]
+Description=Encrypted consistent backup of the independent Naperu mail service
+After=docker.service
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /root/proyect/acropolis-channel/infra/mail/scripts/mail-ops.py backup
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle

@@ -20,7 +20,7 @@ case "${1:-prepare}" in
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:mailpit
+subjectAltName=DNS:mailpit,DNS:mailpit-starttls
 crlDistributionPoints=URI:http://crl:8082/root.crl
 EXT
     openssl x509 -req -in /tls/smtp/request.csr -CA "$ca/root.crt" -CAkey "$ca/root.key" -set_serial "0x$(openssl rand -hex 16)" -days 1 -extfile /tls/smtp/extensions -out /tls/smtp/cert.pem >/dev/null 2>&1
@@ -44,6 +44,7 @@ CRL
     openssl ca -gencrl -config /tmp/qa-crl/openssl.cnf -out /tls/crl/root.pem >/dev/null 2>&1
     openssl crl -in /tls/crl/root.pem -outform DER -out /tls/crl/root.crl
     openssl verify -crl_check -CAfile /tls/trust/root.crt -CRLfile /tls/crl/root.pem -verify_hostname mailpit /tls/smtp/cert.pem >/dev/null
+    openssl verify -crl_check -CAfile /tls/trust/root.crt -CRLfile /tls/crl/root.pem -verify_hostname mailpit-starttls /tls/smtp/cert.pem >/dev/null
     rm -rf -- /tmp/qa-crl
     openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout /tls/protection/key.pem -out /tls/protection/cert.pem -subj '/CN=Acropolis QA Data Protection' >/dev/null 2>&1
     openssl pkcs12 -export -inkey /tls/protection/key.pem -in /tls/protection/cert.pem -out /tls/protection/protector.pfx -passout env:QA_DP_PASSWORD

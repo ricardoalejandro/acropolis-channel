@@ -1,0 +1,13 @@
+services:
+  mailserver:
+    cap_add: [NET_ADMIN]
+    environment:
+      ENABLE_FAIL2BAN: 1
+    ports:
+      - "72.61.37.46:25:25"
+      - "72.61.37.46:465:465"
+      - "72.61.37.46:587:587"
+      - "72.61.37.46:993:993"
+  roundcube:
+    environment:
+      NAPERU_MAIL_PUBLIC: 1
