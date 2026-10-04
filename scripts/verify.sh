@@ -94,7 +94,7 @@ run_step static_checks static_checks
 [[ -s tests/deploy/test_deploy.py ]] || { echo 'Missing deployment orchestration test suite.' >&2; exit 1; }
 run_step deployment_orchestration env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s tests/deploy -v
 run_step compose_validation compose config --quiet
-run_step build_candidate docker build --label "org.opencontainers.image.revision=$sha" --build-arg "VERSION=$sha" --tag "$QA_IMAGE" .
+run_step build_candidate docker build --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_IMAGE" .
 image_id="$(docker image inspect --format '{{.Id}}' "$QA_IMAGE")"
 runtime_image_check() {
   local runtime_user
@@ -111,7 +111,7 @@ runtime_image_check() {
   '
 }
 run_step runtime_image_security runtime_image_check
-run_step build_migrations docker build --target migrations --label "org.opencontainers.image.revision=$sha" --build-arg "VERSION=$sha" --tag "$QA_MIGRATION_IMAGE" .
+run_step build_migrations docker build --target migrations --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_MIGRATION_IMAGE" .
 migration_image_id="$(docker image inspect --format '{{.Id}}' "$QA_MIGRATION_IMAGE")"
 run_step build_sdk_runner docker build --target sdk --label "org.opencontainers.image.revision=$sha" --tag "$QA_SDK_IMAGE" .
 run_step build_node_runner docker build --target node --label "org.opencontainers.image.revision=$sha" --tag "$QA_NODE_IMAGE" .

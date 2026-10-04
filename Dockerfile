@@ -15,9 +15,9 @@ COPY . .
 RUN dotnet restore AcropolisChannel.slnx --locked-mode --disable-parallel
 
 FROM sdk AS publish
-ARG VERSION=development
-RUN dotnet publish src/Acropolis.Api/Acropolis.Api.csproj --no-restore -c Release -o /out/web -m:1 -p:InformationalVersion=$VERSION
-RUN dotnet publish src/Acropolis.Migrations/Acropolis.Migrations.csproj --no-restore -c Release -o /out/migrations -m:1 -p:InformationalVersion=$VERSION
+ARG REVISION=development
+RUN dotnet publish src/Acropolis.Api/Acropolis.Api.csproj --no-restore -c Release -o /out/web -m:1 -p:InformationalVersion=0.1.0+$REVISION
+RUN dotnet publish src/Acropolis.Migrations/Acropolis.Migrations.csproj --no-restore -c Release -o /out/migrations -m:1 -p:InformationalVersion=0.1.0+$REVISION
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 USER root
@@ -27,8 +27,8 @@ ENV ASPNETCORE_HTTP_PORTS=8080 DOTNET_EnableDiagnostics=0 DOTNET_CLI_TELEMETRY_O
 USER app
 
 FROM runtime AS migrations
-ARG VERSION=development
-LABEL org.opencontainers.image.revision=$VERSION
+ARG REVISION=development
+LABEL org.opencontainers.image.revision=$REVISION
 COPY --from=publish --chown=app:app /out/migrations/ ./
 ENTRYPOINT ["dotnet", "Acropolis.Migrations.dll"]
 
@@ -39,8 +39,8 @@ COPY --from=node /source/frontend/ /source/frontend/
 WORKDIR /source/frontend
 
 FROM runtime AS web
-ARG VERSION=development
-LABEL org.opencontainers.image.revision=$VERSION
+ARG REVISION=development
+LABEL org.opencontainers.image.revision=$REVISION
 COPY --from=publish --chown=app:app /out/web/ ./
 COPY --from=frontend --chown=app:app /source/frontend/dist/ ./wwwroot/
 EXPOSE 8080
