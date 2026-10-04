@@ -33,7 +33,7 @@ services:
       ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_migrator;Password=${DB_MIGRATION_PASSWORD};Timeout=5;Command Timeout=30
     networks: [private]
     read_only: true
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 512m
@@ -50,7 +50,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_app;Password=${DB_APP_PASSWORD};Timeout=3;Command Timeout=3
     read_only: true
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     stop_grace_period: 15s
