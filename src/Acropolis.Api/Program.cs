@@ -1,3 +1,4 @@
+using Acropolis.Catalog.Infrastructure;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.ResponseCompression;
@@ -37,6 +38,7 @@ builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Le
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.AddExceptionHandler<SafeExceptionHandler>();
 builder.Services.AddChannelIdentity(builder.Configuration);
+builder.Services.AddChannelCatalog(builder.Configuration);
 builder.Services.AddHostedService<IdentityConfigurationValidator>();
 builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddCookie(IdentityConstants.ApplicationScheme, options =>
 {
@@ -50,7 +52,11 @@ builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddCooki
     options.Events.OnRedirectToLogin = context => IdentityEndpoints.Problem("invalid_credentials", 401).ExecuteAsync(context.HttpContext);
     options.Events.OnRedirectToAccessDenied = context => IdentityEndpoints.Problem("forbidden", 403).ExecuteAsync(context.HttpContext);
 });
-builder.Services.AddAuthorization(options => options.AddPolicy(IdentityRules.ManageUsers, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageUsers)));
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(IdentityRules.ManageUsers, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageUsers).RequireClaim("amr", "mfa"));
+    options.AddPolicy(IdentityRules.ManageContent, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageContent).RequireClaim("amr", "mfa"));
+});
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-CSRF-TOKEN";
@@ -101,6 +107,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 app.MapChannelIdentity();
+app.MapChannelCatalog();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();

@@ -24,10 +24,12 @@ class IdentityRuntimeTests(unittest.TestCase):
             "IDENTITY_SMTP_HOST": "mail.example.test",
             "IDENTITY_SMTP_FROM_EMAIL": "noreply@example.test",
             "IDENTITY_SMTP_PORT": "587",
+            "IDENTITY_SMTP_USERNAME": "qa",
+            "IDENTITY_SMTP_PASSWORD": "synthetic-fixture-only",
             "IDENTITY_SMTP_SECURITY": "starttls",
         }
 
-    def test_tls_configuration_accepts_authenticated_and_relay_providers(self):
+    def test_tls_configuration_accepts_authenticated_provider(self):
         settings = self.settings()
         RUNTIME.validate_settings(settings)
         settings.update(IDENTITY_SMTP_USERNAME="qa", IDENTITY_SMTP_PASSWORD="fixture")
@@ -39,7 +41,9 @@ class IdentityRuntimeTests(unittest.TestCase):
             {"IDENTITY_SMTP_SECURITY": "none"},
             {"IDENTITY_SMTP_PORT": "invalid"},
             {"IDENTITY_SMTP_PORT": "65536"},
-            {"IDENTITY_SMTP_USERNAME": "unpaired"},
+            {"IDENTITY_SMTP_USERNAME": ""},
+            {"IDENTITY_SMTP_PASSWORD": ""},
+            {"IDENTITY_EMAIL_ENABLED": "typo"},
             {"IDENTITY_PUBLIC_ORIGIN": "https://attacker.example"},
             {"IDENTITY_KNOWN_PROXIES": "0.0.0.0"},
             {"IDENTITY_SMTP_FROM_EMAIL": "bad\r\nBcc: x@example.test"},
@@ -48,6 +52,19 @@ class IdentityRuntimeTests(unittest.TestCase):
             with self.subTest(variant=variant):
                 with self.assertRaises((RuntimeError, ValueError)):
                     RUNTIME.validate_settings(dict(self.settings(), **variant))
+
+    def test_explicitly_deferred_email_keeps_origin_proxy_and_key_requirements(self):
+        settings = {key: value for key, value in self.settings().items()
+                    if not key.startswith("IDENTITY_SMTP_")}
+        settings["IDENTITY_EMAIL_ENABLED"] = "false"
+        RUNTIME.validate_settings(settings)
+        for variant in [{"IDENTITY_DP_CERT_PASSWORD": ""},
+                        {"IDENTITY_KNOWN_PROXIES": "0.0.0.0"},
+                        {"IDENTITY_PUBLIC_ORIGIN": "https://foreign.test"}]:
+            with self.subTest(variant=variant), self.assertRaises((RuntimeError, ValueError)):
+                RUNTIME.validate_settings(dict(settings, **variant))
+        with self.assertRaises(RuntimeError):
+            RUNTIME.validate_settings(dict(settings, IDENTITY_EMAIL_ENABLED="true"))
 
     def test_updates_preserve_unrelated_secrets_comments_and_private_mode(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(RUNTIME, "ROOT", Path(folder)):

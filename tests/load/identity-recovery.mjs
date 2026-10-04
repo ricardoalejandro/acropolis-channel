@@ -63,6 +63,7 @@ async function newLink(route) {
 if (mode === 'blocked') {
   await expectStatus(await request('/api/v1/identity/login', { email, password }), 401);
   await expectStatus(await request('/api/v1/admin/users'), 401);
+  await expectStatus(await request('/api/v1/identity/mfa'), 401);
   console.log('Restored former administrator remains quarantined and cannot authenticate.');
 } else if (mode === 'revalidated') {
   await expectStatus(await request('/api/v1/identity/login', { email, password }), 401);
@@ -81,6 +82,10 @@ if (mode === 'blocked') {
     throw new Error('Recovery resurrected administrative or institutional privileges.');
   }
   await expectStatus(await request('/api/v1/admin/users'), 403);
+  const mfa = await request('/api/v1/identity/mfa');
+  await expectStatus(mfa, 200);
+  const mfaState = await mfa.json();
+  if (mfaState.enabled || mfaState.required || mfaState.recoveryCodesLeft !== 0) throw new Error('Recovery resurrected prior MFA material.');
   await expectStatus(await request('/api/v1/identity/reset-password', { ...flow, newPassword: password + 'Reused' }), 400);
   fs.writeFileSync('/artifacts/recovery-result.json', JSON.stringify({ status: 'passed', previousPrivilegesRestored: false }), { mode: 0o600 });
   console.log('Explicitly revalidated account requires fresh confirmation/password and receives no old privileges.');

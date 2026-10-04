@@ -123,6 +123,7 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
     {
         if (!IdentityRules.ValidPassword(request.NewPassword) || !IdentityRules.ValidPassword(request.CurrentPassword)) return IdentityResult<bool>.Fail("validation_error");
         await using var transaction = await database.Database.BeginTransactionAsync(token);
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
         var user = await users.FindByIdAsync(userId.ToString());
         if (user is null || user.IsDisabled || user.RevalidationRequired || !user.EmailConfirmed) return IdentityResult<bool>.Fail("invalid_credentials", 401);
         var result = await users.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
@@ -180,6 +181,7 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         if (fields.Count > 0) return IdentityResult<UserView>.Fail("validation_error", fields: fields);
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({AdministrationLockKey})", token);
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
         var actor = await database.Users.SingleOrDefaultAsync(x => x.Id == actorId, token);
         if (actor is null || !actor.UsersManage || actor.IsDisabled || actor.RevalidationRequired) return IdentityResult<UserView>.Fail("forbidden", 403);
         var user = await database.Users.Include(x => x.Levels).SingleOrDefaultAsync(x => x.Id == userId, token);
@@ -226,6 +228,7 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
     private async Task<IdentityFlow?> LockFlowAsync(Guid userId, string? secret, string purpose, CancellationToken token)
     {
         if (string.IsNullOrEmpty(secret) || secret.Length > 256) return null;
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
         var hash = Hash(secret);
         var flow = await database.Flows.FromSqlInterpolated($"SELECT * FROM identity.\"Flows\" WHERE \"UserId\"={userId} AND \"TokenHash\"={hash} AND \"Purpose\"={purpose} FOR UPDATE").SingleOrDefaultAsync(token);
         return flow is not null && flow.ConsumedUtc is null && flow.ExpiresUtc > clock.GetUtcNow() ? flow : null;
@@ -239,10 +242,17 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         await database.Outbox.Where(x => x.UserId == user.Id && (x.Status == "pending" || x.Status == "sending")).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.Payload, ""), token);
     }
     internal static string Hash(string secret) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
-    internal static long UserLock(Guid id) => BitConverter.ToInt64(SHA256.HashData(id.ToByteArray()), 0);
+    public static long UserLock(Guid id) => BitConverter.ToInt64(SHA256.HashData(id.ToByteArray()), 0);
     internal static UserView View(ChannelUser user) => new(user.Id, user.DisplayName, user.Email!, user.EmailConfirmed,
         IdentityRules.Status(user.EmailConfirmed, user.IsDisabled, user.RevalidationRequired),
         user.Levels.Select(x => x.Level).Order(StringComparer.Ordinal).ToArray(),
-        user.UsersManage ? [IdentityRules.ManageUsers] : [], user.ConcurrencyStamp!);
+        Permissions(user), user.ConcurrencyStamp!);
+    private static string[] Permissions(ChannelUser user)
+    {
+        var permissions = new List<string>();
+        if (user.UsersManage) permissions.Add(IdentityRules.ManageUsers);
+        if (user.ContentManage) permissions.Add(IdentityRules.ManageContent);
+        return permissions.ToArray();
+    }
 }
 public sealed record MailPayload(string Email, Guid UserId, string Token, string Purpose, Guid MessageId);

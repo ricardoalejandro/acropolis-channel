@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { clearCsrf, identity, request } from '../../api/identity';
 import { useSession } from '../../auth/useSession';
 import { AccountForm } from '../../components/AccountForm';
@@ -98,6 +98,17 @@ export function Profile() {
                 navigate('/login', { replace: true });
               }}
             />
+          </section>
+          <section className="surface" aria-labelledby="profile-mfa">
+            <p className="eyebrow">03 · Verificación en dos pasos</p>
+            <h2 id="profile-mfa">Protege tu cuenta.</h2>
+            <p className="section-copy">
+              Añade un código de tu autenticador y conserva códigos de recuperación para cuando los
+              necesites.
+            </p>
+            <Link className="text-link mfa-profile-link" to="/profile/security">
+              Verificación en dos pasos <span aria-hidden="true">→</span>
+            </Link>
           </section>
         </div>
       </div>

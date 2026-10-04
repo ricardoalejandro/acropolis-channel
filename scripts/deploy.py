@@ -29,9 +29,9 @@ def compose(*args, env=None, capture=False, check=True):
 def image_id(ref):
     return command(['docker', 'image', 'inspect', ref, '--format', '{{.Id}}'], capture=True)
 
-def env_values():
+def env_values(path=None):
     values = {}
-    for line in (ROOT / '.env').read_text().splitlines():
+    for line in (path or ROOT / '.env').read_text().splitlines():
         if line.strip() and not line.lstrip().startswith('#') and '=' in line:
             key, value = line.split('=', 1)
             values[key.strip()] = value.strip().strip('"').strip("'")
@@ -162,6 +162,9 @@ def main():
         command(['python3', 'scripts/identity-runtime.py', '--check'])
         template = routing_check()
         settings = env_values()
+        email_mode = settings.get('IDENTITY_EMAIL_ENABLED', 'true').lower()
+        if email_mode not in ('true', 'false'):
+            raise RuntimeError('IDENTITY_EMAIL_ENABLED must be true or false')
         expected_ip = settings.get('PUBLIC_VPS_IPV4')
         if not expected_ip:
             raise RuntimeError('Configure PUBLIC_VPS_IPV4 privately')
@@ -196,11 +199,12 @@ def main():
         manifest = {'database_backup': str(local / 'backups' / ('deploy-' + timestamp + '.dump')), 'sha': sha, 'image_id': image_id(web_ref), 'migration_image_id': image_id(migration_ref), 'qa_report': str(valid.relative_to(ROOT)), 'previous_image': previous_image, 'previous_routing': previous_route, 'previous_active': previous_active, 'status': 'starting'}
         (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         env = os.environ.copy()
-        env.update(APP_IMAGE=web_ref, MIGRATION_IMAGE=migration_ref)
+        env.update(APP_IMAGE=web_ref, MIGRATION_IMAGE=migration_ref, IDENTITY_EMAIL_ENABLED=email_mode)
         active = False
         try:
             compose('config', '--quiet', env=env)
-            compose('--profile', 'migration', 'run', '--rm', '--no-deps', 'migrations', 'smtp-check', env=env)
+            if email_mode == 'true':
+                compose('--profile', 'migration', 'run', '--rm', '--no-deps', 'migrations', 'smtp-check', env=env)
             compose('up', '-d', '--no-build', '--wait', '--wait-timeout', '90', 'db', env=env)
             command(['bash', 'scripts/backup-db.sh', '--project', PROJECT, '--database', 'acropolis', '--output', str(local / 'backups' / ('deploy-' + timestamp + '.dump'))], env=env)
             backup_identity_material(backup, previous_container)
@@ -251,7 +255,8 @@ def main():
                 if previous_image:
                     override = backup / 'rollback.yml'
                     override.write_text(yaml.safe_dump({'services': {'web': {'image': previous_image}}}))
-                    command(['docker', 'compose', '--project-directory', str(ROOT), '-p', PROJECT, '--env-file', str(backup / 'previous.env'), '-f', str(backup / 'compose.yml'), '-f', str(override), 'up', '-d', '--no-build', '--no-deps', 'web'])
+                    recovery_env = dict(os.environ, IDENTITY_EMAIL_ENABLED=env_values(backup / 'previous.env').get('IDENTITY_EMAIL_ENABLED', 'true'))
+                    command(['docker', 'compose', '--project-directory', str(ROOT), '-p', PROJECT, '--env-file', str(backup / 'previous.env'), '-f', str(backup / 'compose.yml'), '-f', str(override), 'up', '-d', '--no-build', '--no-deps', 'web'], env=recovery_env)
                 else:
                     compose('stop', 'web', check=False)
             if previous_active:

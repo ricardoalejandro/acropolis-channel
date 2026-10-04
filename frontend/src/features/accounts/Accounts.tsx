@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { identity, request } from '../../api/identity';
+import { identity, request, type MfaChallenge } from '../../api/identity';
 import { useSession } from '../../auth/useSession';
 import { readEmailLink } from './emailLink';
 import { AccountForm, type Field } from '../../components/AccountForm';
+import { EmailCapability } from './EmailCapability';
+import { MfaLogin } from './Mfa';
 const email: Field = {
   name: 'email',
   label: 'Correo electrónico',
@@ -68,19 +70,55 @@ export function AccountLayout({
 export function Login() {
   const { user, loading, setUser } = useSession();
   const navigate = useNavigate();
+  const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
+  const [loginNotice, setLoginNotice] = useState('');
   if (!loading && user) return <Navigate to="/profile" replace />;
+  if (challenge)
+    return (
+      <AccountLayout
+        eyebrow="PROTEGE TU ACCESO"
+        title="Confirma que eres tú."
+        description="Completa la verificación en dos pasos para continuar."
+      >
+        <MfaLogin
+          challenge={challenge}
+          authenticated={(value) => {
+            setChallenge(null);
+            setUser(value);
+            navigate('/profile', { replace: true });
+          }}
+          cancel={(notice) => {
+            setChallenge(null);
+            setLoginNotice(notice);
+          }}
+        />
+      </AccountLayout>
+    );
   return (
     <AccountLayout
       eyebrow="Tu espacio"
       title="Qué bueno verte."
       description="Ingresa para continuar en Acrópolis Channel."
     >
+      {loginNotice && (
+        <p className="form-alert" role="alert">
+          {loginNotice}
+        </p>
+      )}
       <AccountForm
         fields={[email, password]}
         submit="Ingresar"
         onSubmit={async (values) => {
-          setUser(await identity.login(values['email'] as string, values['password'] as string));
-          navigate('/profile', { replace: true });
+          const result = await identity.login(
+            values['email'] as string,
+            values['password'] as string,
+          );
+          setLoginNotice('');
+          if ('mfaRequired' in result) setChallenge(result);
+          else {
+            setUser(result);
+            navigate('/profile', { replace: true });
+          }
         }}
       >
         <Link className="text-link form-secondary" to="/forgot-password">
@@ -104,23 +142,25 @@ export function Register() {
       title="Abre tu mirada."
       description="Crea tu cuenta y comienza a formar parte de este espacio."
     >
-      <AccountForm
-        fields={[
-          displayName,
-          email,
-          { ...password, autoComplete: 'new-password', help: 'Entre 15 y 128 caracteres.' },
-          confirmation,
-        ]}
-        submit="Crear cuenta"
-        onSubmit={async (values) => {
-          await request('/identity/register', {
-            displayName: values['displayName'],
-            email: values['email'],
-            password: values['password'],
-          });
-          navigate('/email-pending');
-        }}
-      />
+      <EmailCapability>
+        <AccountForm
+          fields={[
+            displayName,
+            email,
+            { ...password, autoComplete: 'new-password', help: 'Entre 15 y 128 caracteres.' },
+            confirmation,
+          ]}
+          submit="Crear cuenta"
+          onSubmit={async (values) => {
+            await request('/identity/register', {
+              displayName: values['displayName'],
+              email: values['email'],
+              password: values['password'],
+            });
+            navigate('/email-pending');
+          }}
+        />
+      </EmailCapability>
       <p className="account-switch">
         ¿Ya tienes cuenta? <Link to="/login">Ingresar</Link>
       </p>
@@ -136,22 +176,24 @@ export function EmailPending() {
       description="Para ingresar necesitas confirmar tu correo electrónico. Revisa también la carpeta de correo no deseado."
     >
       <p className="quiet-note">
-        Si corresponde, recibirás un correo con las instrucciones. Por seguridad, no indicamos si
-        una dirección ya tiene una cuenta.
+        Revisa tu bandeja de entrada y el correo no deseado. Si aún necesitas confirmar tu cuenta,
+        recibirás las instrucciones cuando corresponda.
       </p>
       {sent && (
         <p className="success-message" role="status">
           Si corresponde, recibirás un nuevo enlace. Revisa tu correo.
         </p>
       )}
-      <AccountForm
-        fields={[email]}
-        submit="Reenviar enlace"
-        onSubmit={async (values) => {
-          await request('/identity/resend-confirmation', { email: values['email'] });
-          setSent(true);
-        }}
-      />
+      <EmailCapability>
+        <AccountForm
+          fields={[email]}
+          submit="Reenviar enlace"
+          onSubmit={async (values) => {
+            await request('/identity/resend-confirmation', { email: values['email'] });
+            setSent(true);
+          }}
+        />
+      </EmailCapability>
       <p className="account-switch">
         <Link to="/login">Volver a ingresar</Link>
       </p>
@@ -166,25 +208,27 @@ export function ForgotPassword() {
       title="Volvamos a empezar."
       description="Escribe tu correo y te enviaremos las instrucciones para recuperar el acceso."
     >
-      {sent ? (
-        <div className="completion" role="status">
-          <span aria-hidden="true">✓</span>
-          <h2>Revisa tu correo</h2>
-          <p>Si corresponde, recibirás un correo con las instrucciones.</p>
-          <Link className="button button-outline" to="/login">
-            Volver a ingresar
-          </Link>
-        </div>
-      ) : (
-        <AccountForm
-          fields={[email]}
-          submit="Enviar instrucciones"
-          onSubmit={async (values) => {
-            await request('/identity/forgot-password', { email: values['email'] });
-            setSent(true);
-          }}
-        />
-      )}
+      <EmailCapability>
+        {sent ? (
+          <div className="completion" role="status">
+            <span aria-hidden="true">✓</span>
+            <h2>Revisa tu correo</h2>
+            <p>Si corresponde, recibirás un correo con las instrucciones.</p>
+            <Link className="button button-outline" to="/login">
+              Volver a ingresar
+            </Link>
+          </div>
+        ) : (
+          <AccountForm
+            fields={[email]}
+            submit="Enviar instrucciones"
+            onSubmit={async (values) => {
+              await request('/identity/forgot-password', { email: values['email'] });
+              setSent(true);
+            }}
+          />
+        )}
+      </EmailCapability>
     </AccountLayout>
   );
 }

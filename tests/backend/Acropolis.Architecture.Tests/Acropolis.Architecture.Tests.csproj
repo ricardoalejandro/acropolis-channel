@@ -11,8 +11,8 @@
     <PackageReference Include="xunit.v3.mtp-off" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
-  </ItemGroup>
+  <ProjectReference Include="../../../src/Modules/Catalog/Acropolis.Catalog.Infrastructure/Acropolis.Catalog.Infrastructure.csproj" /></ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
-  </ItemGroup>
+  <ProjectReference Include="../../../src/Modules/Catalog/Acropolis.Catalog.Infrastructure/Acropolis.Catalog.Infrastructure.csproj" /></ItemGroup>
 </Project>

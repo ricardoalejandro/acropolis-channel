@@ -16,12 +16,17 @@ async function verify(name, expected) {
 if (mode === 'persistence') {
   await verify('active', 200);
   await verify('revoked', 401);
-  console.log('Recreated app preserves its valid session and rejects the revoked one.');
+  await verify('mfa-active', 200);
+  await verify('mfa-revoked', 401);
+  console.log('Recreated app preserves valid password/MFA sessions and rejects the revoked ones.');
 } else if (mode === 'database-down') {
   await verify('active', 503);
+  await verify('mfa-active', 503);
   console.log('A valid session reports database unavailability without being treated as revoked.');
 } else if (mode === 'recovery') {
   await verify('active', 401);
   await verify('revoked', 401);
+  await verify('mfa-active', 401);
+  await verify('mfa-revoked', 401);
   console.log('Restored app rejects all cookies captured before recovery.');
 } else throw new Error('Unknown Identity state gate.');

@@ -61,8 +61,13 @@ def discover_proxies(network):
 
 
 def validate_settings(settings):
-    required = ["IDENTITY_DP_CERT_PASSWORD", "IDENTITY_KNOWN_PROXIES",
-                "IDENTITY_SMTP_HOST", "IDENTITY_SMTP_FROM_EMAIL"]
+    email_mode = settings.get("IDENTITY_EMAIL_ENABLED", "true").lower()
+    if email_mode not in ("true", "false"):
+        raise RuntimeError("IDENTITY_EMAIL_ENABLED must be true or false")
+    required = ["IDENTITY_DP_CERT_PASSWORD", "IDENTITY_KNOWN_PROXIES"]
+    if email_mode == "true":
+        required += ["IDENTITY_SMTP_HOST", "IDENTITY_SMTP_FROM_EMAIL",
+                     "IDENTITY_SMTP_USERNAME", "IDENTITY_SMTP_PASSWORD"]
     missing = [key for key in required if not settings.get(key)]
     if missing:
         raise RuntimeError("Missing private settings: " + ", ".join(missing))
@@ -72,6 +77,8 @@ def validate_settings(settings):
         parsed = ipaddress.ip_address(address.strip())
         if parsed.is_unspecified or parsed.is_multicast:
             raise RuntimeError("Invalid trusted proxy address")
+    if email_mode == "false":
+        return
     try:
         port = int(settings.get("IDENTITY_SMTP_PORT", "587"))
     except ValueError:
@@ -129,7 +136,10 @@ def prepare():
             public_certificate.unlink(missing_ok=True)
     proxies = discover_proxies(settings.get("TRAEFIK_NETWORK", "dokploy-network"))
     write_settings({"IDENTITY_KNOWN_PROXIES": proxies, "IDENTITY_PUBLIC_ORIGIN": DOMAIN})
-    print("Private protector and trusted proxies prepared. SMTP still requires validation.")
+    if settings.get("IDENTITY_EMAIL_ENABLED", "true").lower() == "false":
+        print("Private protector and trusted proxies prepared. Email flows remain disabled.")
+    else:
+        print("Private protector and trusted proxies prepared. SMTP still requires validation.")
 
 
 def validate_protector(certificate, password):
@@ -162,7 +172,10 @@ def check():
                                  for value in settings["IDENTITY_KNOWN_PROXIES"].split(",")))
     if configured != actual:
         raise RuntimeError("Trusted proxy addresses changed; run identity-runtime.py --prepare")
-    print("Identity runtime configuration validated. SMTP delivery requires a real delivery check.")
+    if settings.get("IDENTITY_EMAIL_ENABLED", "true").lower() == "false":
+        print("Identity runtime validated with email flows explicitly disabled.")
+    else:
+        print("Identity runtime configuration validated. SMTP delivery requires a real delivery check.")
 
 
 def main():

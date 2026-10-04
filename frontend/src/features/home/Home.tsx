@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useSession } from '../../auth/useSession';
+import { CategoryStrip, LatestContent } from '../catalog/Catalog';
 export function Home() {
   const { user } = useSession();
   return (
@@ -24,14 +25,21 @@ export function Home() {
             Hay ideas que cambian nuestra manera de mirar.
             <br className="desktop-break" /> Y preguntas que nos ayudan a vivir mejor.
           </p>
-          <Link className="button" to={user ? '/profile' : '/register'}>
-            {user ? 'Ir a mi perfil' : 'Crear mi cuenta'}
-            <span aria-hidden="true">↗</span>
-          </Link>
+          <div className="hero-actions">
+            <Link className="button" to="/explore">
+              Explorar contenidos <span aria-hidden="true">↗</span>
+            </Link>
+            <Link className="hero-account" to={user ? '/profile' : '/register'}>
+              {user ? 'Ir a mi perfil' : 'Crear mi cuenta'}
+              <span aria-hidden="true">↗</span>
+            </Link>
+          </div>
           <span className="hero-caption">Acrópolis Channel · Nueva Acrópolis Perú</span>
         </div>
         <span className="hero-art-coordinate">FILOSOFÍA PARA LA VIDA</span>
       </section>
+      <CategoryStrip />
+      <LatestContent />
       <section className="intro-section">
         <div>
           <p className="eyebrow">EL VALOR DE HACERSE PREGUNTAS</p>

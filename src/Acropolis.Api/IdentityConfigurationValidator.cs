@@ -15,7 +15,7 @@ public sealed class IdentityConfigurationValidator(IOptions<IdentitySettings> op
             throw new InvalidOperationException("Identity public origin is invalid.");
         if (string.IsNullOrWhiteSpace(keys.KeyRingPath) || !Path.IsPathFullyQualified(keys.KeyRingPath) || string.IsNullOrWhiteSpace(keys.CertificatePath) || string.IsNullOrWhiteSpace(keys.CertificatePassword) || !File.Exists(keys.CertificatePath))
             throw new InvalidOperationException("Identity key protection configuration is required.");
-        if (string.IsNullOrWhiteSpace(smtp.Host) || smtp.Port is < 1 or > 65535 || !IdentityRules.ValidEmail(smtp.FromEmail) || smtp.Security is not ("starttls" or "ssl") || string.IsNullOrWhiteSpace(smtp.Username) || string.IsNullOrWhiteSpace(smtp.Password))
+        if (settings.EmailEnabled && (string.IsNullOrWhiteSpace(smtp.Host) || smtp.Port is < 1 or > 65535 || !IdentityRules.ValidEmail(smtp.FromEmail) || smtp.Security is not ("starttls" or "ssl") || string.IsNullOrWhiteSpace(smtp.Username) || string.IsNullOrWhiteSpace(smtp.Password)))
             throw new InvalidOperationException("Identity mail configuration is invalid.");
         var proxies = settings.KnownProxies.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (proxies.Length == 0 || proxies.Any(proxy => !IPAddress.TryParse(proxy, out _))) throw new InvalidOperationException("Identity proxy configuration is invalid.");

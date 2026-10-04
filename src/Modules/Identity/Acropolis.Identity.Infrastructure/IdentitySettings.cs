@@ -1,7 +1,24 @@
+using Microsoft.Extensions.Configuration;
+
 namespace Acropolis.Identity.Infrastructure;
 
 public sealed class IdentitySettings
 {
+    public static IdentitySettings BindFrom(IConfiguration configuration)
+    {
+        var section = configuration.GetSection("Identity");
+        var settings = new IdentitySettings
+        {
+            EmailEnabled = section.GetValue("EmailEnabled", true),
+            PublicOrigin = section.GetValue<string>("PublicOrigin") ?? string.Empty,
+            KnownProxies = section.GetValue<string>("KnownProxies") ?? string.Empty,
+            DataProtection = section.GetSection("DataProtection").Get<KeyProtectionSettings>() ?? new()
+        };
+        if (settings.EmailEnabled) settings.Smtp = section.GetSection("Smtp").Get<SmtpSettings>() ?? new();
+        return settings;
+    }
+
+    public bool EmailEnabled { get; set; } = true;
     public string PublicOrigin { get; set; } = string.Empty;
     public string KnownProxies { get; set; } = string.Empty;
     public KeyProtectionSettings DataProtection { get; set; } = new();

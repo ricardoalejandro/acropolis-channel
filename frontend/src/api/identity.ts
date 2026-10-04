@@ -17,6 +17,26 @@ export type User = {
   permissions: string[];
   version: string;
 };
+export type MfaChallenge = {
+  mfaRequired: true;
+  enrollmentRequired: boolean;
+  challengeToken: string;
+  expiresUtc: string;
+};
+export function challengeFrom(value: unknown): MfaChallenge {
+  if (
+    !isObject(value) ||
+    value['mfaRequired'] !== true ||
+    typeof value['enrollmentRequired'] !== 'boolean' ||
+    typeof value['challengeToken'] !== 'string' ||
+    !value['challengeToken'] ||
+    value['challengeToken'].length > 4096 ||
+    typeof value['expiresUtc'] !== 'string' ||
+    !Number.isFinite(Date.parse(value['expiresUtc']))
+  )
+    throw new ApiError(0, 'invalid_response');
+  return value as MfaChallenge;
+}
 export type UserPage = { items: User[]; page: number; pageSize: number; total: number };
 export class ApiError extends Error {
   constructor(
@@ -31,6 +51,13 @@ export class ApiError extends Error {
 export function errorMessage(code: string): string {
   const messages: Record<string, string> = {
     invalid_credentials: 'No pudimos ingresar con esos datos. Revisa tu correo y contraseña.',
+    mfa_invalid_code:
+      'El código no es válido. Usa un código nuevo de tu autenticador o un código de recuperación sin utilizar.',
+    challenge_invalid: 'Esta verificación ha caducado. Ingresa de nuevo para continuar.',
+    mfa_required_for_admin:
+      'Las cuentas administrativas deben conservar la verificación en dos pasos.',
+    mfa_already_enabled: 'La verificación en dos pasos ya está activa.',
+    mfa_not_enabled: 'La verificación en dos pasos todavía no está activa.',
     current_password_invalid: 'La contraseña actual no es correcta. Revísala e inténtalo de nuevo.',
     validation_error: 'Revisa los campos indicados e inténtalo de nuevo.',
     csrf_invalid: 'La sesión de seguridad ha caducado. Recarga la página e inténtalo de nuevo.',
@@ -43,6 +70,8 @@ export function errorMessage(code: string): string {
     timeout: 'La respuesta está tardando demasiado. Inténtalo de nuevo.',
     unavailable: 'No pudimos conectar. Comprueba tu conexión e inténtalo de nuevo.',
     invalid_response: 'No pudimos leer la respuesta. Inténtalo de nuevo.',
+    email_unavailable:
+      'El registro y la recuperación por correo no están disponibles temporalmente.',
     rate_limited: 'Has realizado varios intentos. Espera unos minutos y vuelve a intentarlo.',
   };
   return messages[code] ?? 'No pudimos completar la acción. Inténtalo de nuevo.';
@@ -147,11 +176,19 @@ export async function request(
   }
 }
 export const identity = {
+  capabilities: async () => {
+    const data = await request('/identity/capabilities');
+    if (!isObject(data) || typeof data['emailEnabled'] !== 'boolean')
+      throw new ApiError(0, 'invalid_response');
+    return { emailEnabled: data['emailEnabled'] };
+  },
   me: async () => userFrom(await request('/identity/me')),
   login: async (email: string, password: string) => {
-    const user = userFrom(await request('/identity/login', { email, password }));
+    const data = await request('/identity/login', { email, password });
+    const result =
+      isObject(data) && data['mfaRequired'] === true ? challengeFrom(data) : userFrom(data);
     clearCsrf();
-    return user;
+    return result;
   },
   logout: async () => {
     await request('/identity/logout', {});

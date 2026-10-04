@@ -16,7 +16,7 @@ Las seis entradas del catálogo son Lecturas, Documentales, Videos, Podcast, Cha
 
 Las fichas de vídeo y podcast son propuestas de interfaz con datos de demostración. Sus campos internos todavía no se han verificado contra el sistema antiguo. Capítulos, transcripciones, nuevas taxonomías o reglas de acceso requieren definición en la entrega de catálogo.
 
-El prototipo se construye por separado en dist-preview. Su navegación es interactiva, pero los contenidos, reproductores y contratación están identificados como demostración. No debe incluirse preview.html ni sus fixtures en el bundle productivo. La aplicación productiva de esta fase ofrece cuentas, perfil y administración.
+El prototipo se construye por separado en dist-preview. Su navegación es interactiva, pero los contenidos, reproductores y contratación están identificados como demostración. No debe incluirse preview.html ni sus fixtures en el bundle productivo. La aplicación productiva ofrece cuentas, perfil, administración de usuarios y catálogo editorial real. La portada, exploración, ficha y edición usan datos de API; no importan los fixtures del prototipo. El estado vacío se presenta explícitamente y no fabrica contenidos.
 
 Las membresías de las capturas (prueba de nueve días y planes anuales de S/50) son referencias del sistema anterior. Su presencia en la maqueta no configura cobros, derechos de acceso ni reglas comerciales.
 

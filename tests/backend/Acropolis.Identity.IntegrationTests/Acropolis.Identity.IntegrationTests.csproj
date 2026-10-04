@@ -9,5 +9,6 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <Using Include="Xunit" />
+    <Compile Include="../Support/MfaTestClient.cs" Link="Support/MfaTestClient.cs" />
   </ItemGroup>
 </Project>

@@ -106,6 +106,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
       AllowedHosts: web;localhost;127.0.0.1;${QA_HOST}
       ConnectionStrings__Database: Host=db;Port=5432;Database=${QA_DATABASE};Username=acropolis_app;Password=${QA_APP_PASSWORD};Timeout=3;Command Timeout=3;Pooling=true
+      Identity__EmailEnabled: ${QA_EMAIL_ENABLED:-true}
       Identity__PublicOrigin: https://${QA_HOST}:8443
       Identity__KnownProxies: ${QA_PROXY_IP:-127.0.0.1}
       Identity__DataProtection__KeyRingPath: /var/acropolis/keys
@@ -142,6 +143,7 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Testing
       QA_SEED_PASSWORD: ${QA_IDENTITY_PASSWORD}
+      Identity__EmailEnabled: ${QA_EMAIL_ENABLED:-true}
       Identity__PublicOrigin: https://${QA_HOST}:8443
       Identity__DataProtection__KeyRingPath: /var/acropolis/keys
       Identity__DataProtection__ApplicationName: AcropolisChannel

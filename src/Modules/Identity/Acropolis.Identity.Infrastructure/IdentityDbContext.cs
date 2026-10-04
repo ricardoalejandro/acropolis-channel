@@ -9,6 +9,7 @@ public sealed class ChannelUser : IdentityUser<Guid>
     public string DisplayName { get; set; } = string.Empty;
     public bool IsDisabled { get; set; }
     public bool UsersManage { get; set; }
+    public bool ContentManage { get; set; }
     public bool RevalidationRequired { get; set; }
     public DateTimeOffset? RevalidatedUtc { get; set; }
     public string SecurityVersion { get; set; } = Guid.NewGuid().ToString("N");
@@ -64,7 +65,7 @@ public sealed class BootstrapState
     public int Id { get; set; }
     public bool Completed { get; set; }
 }
-public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options) : IdentityUserContext<ChannelUser, Guid>(options)
+public sealed partial class IdentityDbContext(DbContextOptions<IdentityDbContext> options) : IdentityUserContext<ChannelUser, Guid>(options)
 {
     public const string Schema = "identity";
     public const string HistoryTable = "__EFMigrationsHistory";
@@ -76,6 +77,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        ConfigureMfa(builder);
         builder.HasDefaultSchema(Schema);
         builder.HasPostgresExtension(Schema, "pg_trgm");
         builder.Entity<ChannelUser>(entity =>

@@ -14,6 +14,9 @@ function mount(path: string, account: User | null = null, override?: Override, s
     const changed = override?.(url, init);
     if (changed) return changed;
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    if (url.includes('/catalog/content?'))
+      return json({ items: [], total: 0, page: 1, pageSize: 3 });
+    if (url.endsWith('/identity/capabilities')) return json({ emailEnabled: true });
     if (url.endsWith('/csrf')) return json({ token: 'sample-csrf' });
     if (url.endsWith('/identity/me')) {
       if (init?.method === 'PATCH') {
@@ -84,6 +87,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
   });
   it('registers only allowed fields and always gives a generic pending-email outcome', async () => {
     const fetch = mount('/register');
+    await screen.findByLabelText('Nombre visible');
     fill('Nombre visible', '  Persona Nueva  ');
     fill('Correo electrónico', 'persona@example.test');
     fill('Contraseña', 'Una frase larga para entrar');
@@ -97,6 +101,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
       password: 'Una frase larga para entrar',
     });
     expect(screen.queryByLabelText('Nivel institucional')).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Reenviar enlace' });
     fill('Correo electrónico', 'persona@example.test');
     await userEvent.click(screen.getByRole('button', { name: 'Reenviar enlace' }));
     await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
@@ -168,6 +173,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
   });
   it('recovers an account with an indistinguishable acknowledgement', async () => {
     const fetch = mount('/forgot-password');
+    await screen.findByLabelText('Correo electrónico');
     fill('Correo electrónico', 'unknown@example.test');
     await userEvent.click(screen.getByRole('button', { name: 'Enviar instrucciones' }));
     await screen.findByRole('heading', { name: 'Revisa tu correo' });
@@ -288,7 +294,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     expect(screen.queryByLabelText('Buscar usuarios')).not.toBeInTheDocument();
   });
   it('renders a safe 404 without inventing a catalogue route', () => {
-    mount('/explore');
+    mount('/unknown-route');
     expect(screen.getByRole('heading', { name: 'Esta página no está aquí.' })).toBeInTheDocument();
   });
 });

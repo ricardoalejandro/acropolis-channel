@@ -11,6 +11,8 @@ Monolito modular ASP.NET Core 10: un host sirve API y React del mismo origen y c
 | Platform.Infrastructure | Conexión, estado de migraciones y schema platform |
 | Identity.Application | Contratos, validación y reglas de cuentas, niveles y permisos |
 | Identity.Infrastructure | ASP.NET Identity, EF Core, sesiones, tokens, auditoría y outbox SMTP |
+| Catalog.Application | Contratos y reglas editoriales de publicación, búsqueda y validación |
+| Catalog.Infrastructure | Persistencia, índices, concurrencia y auditoría del catálogo |
 | Acropolis.Migrations | Migración explícita, inicialización administrativa y recuperación en mantenimiento |
 | frontend | Aplicación React, formularios accesibles, perfil y administración |
 | frontend/preview | Prototipo editorial separado del build productivo |
@@ -37,11 +39,11 @@ El cambio de estado y la intención de correo se guardan juntos. El outbox cifra
 
 La aplicación usa un nombre estable para Data Protection, un key ring persistente y un certificado protector PFX privado. No se generan claves efímeras por reiniciar el contenedor. Se respaldan base, claves, protector y configuración juntos. Ninguno de estos materiales entra en Git ni en las imágenes.
 
-La restauración de un backup antiguo exige invalidar sesiones, enlaces y correos restaurados, bloquear cuentas para revalidación y sustituir credenciales antiguas antes de reabrirlas. El procedimiento está en identity-operations.md. MFA queda pendiente antes del lanzamiento operativo.
+La restauración de un backup antiguo exige invalidar sesiones, enlaces y correos restaurados, bloquear cuentas para revalidación y sustituir credenciales antiguas antes de reabrirlas. El procedimiento está en identity-operations.md. MFA usa el proveedor oficial de códigos de autenticador de ASP.NET Identity. Una contraseña válida inicia un desafío limitado cuando se necesita segundo factor; no emite una sesión completa antes de verificarlo. Las políticas Users.Manage y Content.Manage requieren además la prueba amr=mfa. Claves cifradas, códigos de recuperación de un solo uso, control transaccional de reutilización y recuperación se describen en mfa-operations.md.
 
 ## Persistencia y migraciones
 
-Platform e Identity son propietarios de sus schemas e historiales de EF. El runner aplica Platform y después Identity bajo un único bloqueo advisory exclusivo; el host HTTP nunca aplica migraciones. La readiness comprueba ambos historiales esperados con timeout. Liveness no abre conexiones a PostgreSQL.
+Platform, Identity y Catalog son propietarios de sus schemas e historiales de EF. El runner aplica Platform, Identity y después Catalog bajo un único bloqueo advisory exclusivo; el host HTTP nunca aplica migraciones. La readiness comprueba los tres historiales esperados con timeout. Liveness no abre conexiones a PostgreSQL.
 
 PostgreSQL conserva sus datos en /var/lib/postgresql. acropolis_admin se limita a inicialización y respaldo; acropolis_migrator es propietario de schemas; acropolis_app tiene permisos de ejecución sin DDL ni escritura de historiales. El runner configura privilegios de Identity también sobre una base ya existente, no sólo durante la inicialización de un volumen nuevo.
 
@@ -57,4 +59,13 @@ El target preview contiene el prototipo separado. Los targets sdk, node, playwri
 
 QA crea CA, correo SMTP, bases y redes exclusivos de cada ejecución. El candidato usa configuración Production, TLS real y las mismas imágenes que se podrán desplegar. No se conectan los tests a Traefik, al socket Docker ni a datos productivos.
 
-Los siguientes módulos se incorporarán cuando exista su contrato: catálogo, acceso a multimedia, suscripciones, pagos e integración institucional. Un nivel institucional no debe convertirse implícitamente en una suscripción ni en un rol administrativo. Cada proceso nuevo requiere reglas, límites, errores, idempotencia cuando corresponda y pruebas por nivel.
+Los siguientes módulos se incorporarán cuando exista su contrato: acceso a multimedia, suscripciones, pagos e integración institucional. Un nivel institucional no debe convertirse implícitamente en una suscripción ni en un rol administrativo. Cada proceso nuevo requiere reglas, límites, errores, idempotencia cuando corresponda y pruebas por nivel.
+
+
+## Catálogo editorial y correo pospuesto
+
+Catalog sólo contiene fichas y sinopsis públicas en texto plano. La API pública filtra por published; draft y archived devuelven 404. No existen URLs multimedia, claves de objetos AWS ni obras completas en sus DTO. Las seis categorías y los assets de cubierta permitidos son enumeraciones explícitas; no se aceptan URLs arbitrarias. La búsqueda literal por título/resumen usa índices GIN y la extensión pg_trgm existente. Los listados tienen orden determinista y paginación en SQL. Las respuestas no se almacenan en caché para que la retirada de una publicación surta efecto en nuevas consultas.
+
+Content.Manage se concede y revoca por CLI para una cuenta exacta confirmada; es independiente de Users.Manage y de los niveles institucionales. Cada cambio editorial usa versión de concurrencia y auditoría en la misma transacción de persistencia. El slug queda estable después de la primera publicación. Se archiva sin DELETE físico y el rol runtime no puede borrar contenidos ni reescribir auditoría.
+
+Identity.EmailEnabled=true sigue siendo el valor por defecto de código para conservar el comportamiento existente. El ejemplo de configuración declara false explícitamente mientras SMTP permanece pospuesto. Ese modo elimina nuevas operaciones HTTP de emisión de correo y detiene el dispatcher/worker; no modifica confirmaciones, contraseñas, MFA, claves persistentes ni sesiones existentes. Al habilitarlo se vuelven a exigir credenciales SMTP y TLS; los mensajes anteriores sólo se procesan si su flujo continúa vigente. /identity/capabilities expone únicamente el booleano necesario para la interfaz.

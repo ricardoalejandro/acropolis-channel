@@ -10,9 +10,12 @@ import {
   ForgotPassword,
   EmailAction,
 } from './features/accounts/Accounts';
+import { MfaSecurity } from './features/accounts/Mfa';
 import { Profile } from './features/accounts/Profile';
 import { UserDetail, UserList } from './features/admin/Admin';
 import { Home } from './features/home/Home';
+import { Explore, ContentPage } from './features/catalog/Catalog';
+import { ContentAdminList, ContentEditor } from './features/catalog/ContentAdmin';
 function RouteFocus() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -25,7 +28,15 @@ function RouteFocus() {
   }, [pathname]);
   return null;
 }
-export function Protected({ children, admin = false }: { children: ReactNode; admin?: boolean }) {
+export function Protected({
+  children,
+  admin = false,
+  permission,
+}: {
+  children: ReactNode;
+  admin?: boolean;
+  permission?: string;
+}) {
   const { user, loading } = useSession();
   if (loading)
     return (
@@ -34,7 +45,7 @@ export function Protected({ children, admin = false }: { children: ReactNode; ad
       </p>
     );
   if (!user) return <Navigate to="/login" replace />;
-  if (admin && !user.permissions.includes('Users.Manage'))
+  if ((admin || permission) && !user.permissions.includes(permission ?? 'Users.Manage'))
     return (
       <div className="workspace">
         <p className="eyebrow">Acceso restringido</p>
@@ -53,12 +64,39 @@ export function AppRoutes() {
       <RouteFocus />
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/explore" element={<Explore />} />
+        <Route path="/content/:slug" element={<ContentPage />} />
+        <Route
+          path="/admin/content"
+          element={
+            <Protected permission="Content.Manage">
+              <ContentAdminList />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/content/new"
+          element={
+            <Protected permission="Content.Manage">
+              <ContentEditor />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/content/:id"
+          element={
+            <Protected permission="Content.Manage">
+              <ContentEditor />
+            </Protected>
+          }
+        />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/email-pending" element={<EmailPending />} />
         <Route path="/confirm-email" element={<EmailAction key="confirm" />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<EmailAction key="reset" reset />} />
+        <Route path="/profile/security" element={<MfaSecurity />} />
         <Route
           path="/profile"
           element={

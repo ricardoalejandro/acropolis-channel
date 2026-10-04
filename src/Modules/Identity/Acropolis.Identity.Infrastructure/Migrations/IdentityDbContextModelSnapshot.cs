@@ -54,6 +54,9 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<bool>("ContentManage")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -175,6 +178,99 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                     b.HasIndex("UserId", "Purpose");
 
                     b.ToTable("Flows", "identity");
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaChallenge", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("ConsumedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProtectedKey")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("SecurityVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresUtc");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("MfaChallenges", "identity");
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaCredential", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProtectedKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("MfaCredentials", "identity");
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaProof", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Hash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId", "Hash");
+
+                    b.HasIndex("ExpiresUtc");
+
+                    b.ToTable("MfaProofs", "identity");
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaRecoveryCode", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Hash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("UserId", "Hash");
+
+                    b.ToTable("MfaRecoveryCodes", "identity");
                 });
 
             modelBuilder.Entity("Acropolis.Identity.Infrastructure.OutboxMessage", b =>
@@ -362,6 +458,42 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                 });
 
             modelBuilder.Entity("Acropolis.Identity.Infrastructure.IdentityFlow", b =>
+                {
+                    b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaChallenge", b =>
+                {
+                    b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaCredential", b =>
+                {
+                    b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaProof", b =>
+                {
+                    b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.MfaRecoveryCode", b =>
                 {
                     b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
                         .WithMany()

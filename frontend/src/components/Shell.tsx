@@ -40,12 +40,16 @@ export function Shell({ children }: { children: ReactNode }) {
             <NavLink className="nav-home" to="/">
               Inicio
             </NavLink>
+            <NavLink to="/explore">Explorar</NavLink>
             {!loading &&
               (user ? (
                 <>
                   <NavLink to="/profile">Mi perfil</NavLink>
                   {user.permissions.includes('Users.Manage') && (
                     <NavLink to="/admin/users">Administración</NavLink>
+                  )}
+                  {user.permissions.includes('Content.Manage') && (
+                    <NavLink to="/admin/content">Gestionar contenidos</NavLink>
                   )}
                   <button className="link-button" disabled={busy} onClick={() => void logout()}>
                     {busy ? 'Cerrando…' : 'Cerrar sesión'}

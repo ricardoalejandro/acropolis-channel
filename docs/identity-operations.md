@@ -4,7 +4,7 @@ Este documento describe la preparación y los procedimientos. No acredita un des
 
 ## Configuración privada
 
-Trabajar por SSH estricto en /root/proyect/acropolis-channel. Configurar en .env los valores IDENTITY_SMTP_HOST, IDENTITY_SMTP_PORT, IDENTITY_SMTP_SECURITY, IDENTITY_SMTP_USERNAME, IDENTITY_SMTP_PASSWORD, IDENTITY_SMTP_FROM_EMAIL e IDENTITY_SMTP_FROM_NAME. El transporte productivo exige starttls o ssl con validación de certificado. La configuración productiva exige autenticación SMTP: usuario y contraseña deben estar presentes; no se admite un proveedor sin autenticación.
+Trabajar por SSH estricto en /root/proyect/acropolis-channel. El propietario pospuso SMTP; usar IDENTITY_EMAIL_ENABLED=false para una publicación autorizada sin correo. Cuando retome la integración, establecer true y configurar en .env los valores IDENTITY_SMTP_HOST, IDENTITY_SMTP_PORT, IDENTITY_SMTP_SECURITY, IDENTITY_SMTP_USERNAME, IDENTITY_SMTP_PASSWORD, IDENTITY_SMTP_FROM_EMAIL e IDENTITY_SMTP_FROM_NAME. El transporte productivo exige starttls o ssl con validación de certificado. La configuración productiva exige autenticación SMTP: usuario y contraseña deben estar presentes; no se admite un proveedor sin autenticación.
 
 La identidad del remitente y el correo del primer administrador siguen pendientes del propietario. No enviar contraseñas por chat ni registrar las conexiones o los enlaces completos.
 
@@ -23,7 +23,7 @@ Si Traefik cambia de dirección, repetir la preparación para actualizar las dir
 
 ## Despliegue
 
-El flujo exige un commit limpio, QA aprobado y las imágenes exactas. El preflight valida configuración privada, protector y direcciones del proxy, y ejecuta smtp-check para negociar TLS y autenticar con el proveedor sin enviar correo.
+El flujo exige un commit limpio, QA aprobado y las imágenes exactas. El preflight valida configuración privada, protector y direcciones del proxy, y, únicamente con correo habilitado, ejecuta smtp-check para negociar TLS y autenticar con el proveedor sin enviar correo.
 
 ```bash
 bash scripts/verify.sh
@@ -44,7 +44,7 @@ docker compose -p acropolis-channel --profile migration run --rm migrations boot
 
 La operación concede Users.Manage sólo al usuario exacto, confirmado y activo, bajo un bloqueo que impide dos inicializaciones simultáneas. Rechaza la operación si ya existe un administrador. No crea contraseñas ni constituye un mecanismo de recuperación administrativa.
 
-La administración web permite gestionar estado y niveles institucionales, pero no otorgar permisos administrativos. El último administrador activo no puede deshabilitarse.
+La administración requiere MFA después de conceder Users.Manage. La web permite gestionar estado y niveles institucionales, pero no otorgar permisos administrativos. El último administrador activo no puede deshabilitarse.
 
 ## Sesiones, correo y observación
 
@@ -68,7 +68,7 @@ Para una cuenta revisada:
 docker compose -p acropolis-channel --profile migration run --rm migrations recovery-revalidate --email CORREO_EXACTO --maintenance
 ```
 
-La revalidación elimina la contraseña y confirmación antiguas, retira Users.Manage y deja únicamente Externo. Después de permitir el acceso público, el usuario solicita un nuevo correo de confirmación, lo confirma y solicita restablecer su contraseña. Sólo entonces puede iniciar una sesión nueva. Volver a asignar niveles únicamente después de revisarlos. El comando de bootstrap inicial no puede utilizarse para evadir este proceso. Para recuperar una cuenta administradora cuya autoridad haya verificado el operador, el comando separado es recover-admin --email CORREO_EXACTO --maintenance. También elimina la contraseña y confirmación antiguas y exige completar de nuevo confirmación y reset antes de admitir una sesión con Users.Manage. No concede acceso a una cuenta que no estuviera en cuarentena.
+La revalidación elimina la contraseña y confirmación antiguas, retira Users.Manage y Content.Manage, elimina MFA y deja únicamente Externo. Después de permitir el acceso público, el usuario solicita un nuevo correo de confirmación, lo confirma y solicita restablecer su contraseña. Sólo entonces puede iniciar una sesión nueva. Volver a asignar niveles únicamente después de revisarlos. El comando de bootstrap inicial no puede utilizarse para evadir este proceso. Para recuperar una cuenta administradora cuya autoridad haya verificado el operador, el comando separado es recover-admin --email CORREO_EXACTO --maintenance. También elimina la contraseña y confirmación antiguas y exige completar de nuevo confirmación y reset antes de admitir una sesión con Users.Manage. No concede acceso a una cuenta que no estuviera en cuarentena.
 
 Las operaciones administrativas del CLI admiten hasta 30 segundos por comando de PostgreSQL dentro de su plazo total acotado; el host HTTP mantiene su límite de tres segundos. La invalidación de una base poblada debe verificarse en QA con el volumen esperado de cuentas antes de recuperar una publicación.
 
@@ -84,4 +84,15 @@ Ejecutar periódicamente como tarea administrativa, cuando corresponda:
 docker compose -p acropolis-channel --profile migration run --rm migrations prune-identity
 ```
 
-Cada ejecución elimina como máximo 1.000 sesiones vencidas y 1.000 flujos cuyo vencimiento ocurrió hace más de siete días, junto con su outbox asociado. No elimina cuentas, auditorías ni flujos vigentes. El comando es manual; esta fase no instala un programador externo. Revisar el volumen de datos y definir la frecuencia antes del lanzamiento operativo.
+Cada ejecución elimina como máximo 1.000 sesiones vencidas y 1.000 flujos cuyo vencimiento ocurrió hace más de siete días, junto con su outbox asociado. También retira como máximo 1.000 desafíos MFA vencidos o consumidos y 1.000 pruebas contra repetición vencidas. No elimina cuentas, auditorías, credenciales MFA, códigos de recuperación activos ni flujos vigentes. El comando es manual; esta fase no instala un programador externo. Revisar el volumen de datos y definir la frecuencia antes del lanzamiento operativo.
+
+
+## Correo pospuesto por decisión del propietario
+
+El 4 de octubre de 2026 el propietario indicó que SMTP queda para después. No solicitar nuevamente cuentas SMTP hasta que retome esa integración. En una publicación autorizada se puede establecer IDENTITY_EMAIL_ENABLED=false en la configuración privada; .env.example ya documenta esta elección. No cambia por sí sola el servicio actualmente desplegado.
+
+El modo deshabilita registro, reenvío de confirmación y solicitud de recuperación con HTTP503/email_unavailable; no responde fingiendo entrega ni confirma cuentas automáticamente. El worker y dispatcher no envían mensajes. Las cuentas previamente confirmadas pueden ingresar y los administradores siguen obligados a completar MFA. La portada y el catálogo público permanecen disponibles. Protector PFX, key ring persistente, TLS, proxy exacto y base privada siguen siendo requisitos.
+
+Para retomar correo, configurar privadamente host/puerto/remitente/usuario/contraseña y STARTTLS o TLS, establecer IDENTITY_EMAIL_ENABLED=true y validar con el flujo normal. El deploy comprueba SMTP sólo cuando está habilitado. Comprobar un correo real controlado antes de declarar entrega operativa. No usar un servidor de QA como proveedor productivo.
+
+La seguridad administrativa se completa con [MFA](mfa-operations.md). El permiso editorial Content.Manage se concede por CLI separado según [catálogo](catalog-operations.md); bootstrap de usuarios no lo concede implícitamente. La revalidación tras restaurar retira permisos editoriales y exige renovar también la configuración MFA conforme al procedimiento.

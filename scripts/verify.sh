@@ -56,6 +56,9 @@ import re,sys
 from pathlib import Path
 p=Path(sys.argv[1]); text=p.read_text(errors="replace")
 text=re.sub(r"(?i)(token=|token%3D|password=|Cookie:|Set-Cookie:)\S+",r"\1[redacted]",text)
+text=re.sub(r'(?i)otpauth://[^\s"<>]+', '[redacted-authenticator-uri]', text)
+text=re.sub(r'(?i)("(?:secret|sharedKey|recoveryCode|challenge)"\s*:\s*")[^"]*', r'\1[redacted]', text)
+text=re.sub(r'(?i)("recoveryCodes"\s*:\s*)\[[^\]]*\]', r'\1["redacted"]', text)
 p.write_text(text)
 PY_REDACT
 }
@@ -186,12 +189,16 @@ run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$int
   dotnet test tests/backend/Acropolis.Platform.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/platform-integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Platform.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
   dotnet test tests/backend/Acropolis.Identity.UnitTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/identity-unit -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Identity.Application]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Acropolis.Identity.Application/Contracts.cs"
   dotnet test tests/backend/Acropolis.Identity.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/identity-integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Identity.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
+  dotnet test tests/backend/Acropolis.Catalog.UnitTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/catalog-unit -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Catalog.Application]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Acropolis.Catalog.Application/Contracts.cs"
+  dotnet test tests/backend/Acropolis.Catalog.IntegrationTests -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory /artifacts/backend/catalog-integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[Acropolis.Catalog.Infrastructure]*" DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
 '
 run_step backend_audit compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs dotnet-audit /artifacts/dotnet-audit.json'
 run_step backend_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/platform-unit 80 Acropolis.Platform.Application'
 run_step integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/platform-integration 80 Acropolis.Platform.Infrastructure'
 run_step identity_unit_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/identity-unit 80 Acropolis.Identity.Application'
 run_step identity_integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/identity-integration 80 Acropolis.Identity.Infrastructure'
+run_step catalog_unit_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/catalog-unit 80 Acropolis.Catalog.Application'
+run_step catalog_integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/catalog-integration 80 Acropolis.Catalog.Infrastructure'
 run_step integration_database_cleanup safe_cleanup_project "$integration_project" "$integration_database"
 run_step frontend_quality compose run --rm --no-deps node '
   mkdir -p /workspace && cp -a /source/frontend/. /workspace/ && cd /workspace
@@ -214,7 +221,8 @@ history_json() {
   compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 SELECT json_build_object(
  'platform', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM platform."__EFMigrationsHistory"),
- 'identity', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM identity."__EFMigrationsHistory"));
+ 'identity', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM identity."__EFMigrationsHistory"),
+ 'catalog', (SELECT json_agg(json_build_object('id', "MigrationId", 'version', "ProductVersion") ORDER BY "MigrationId") FROM catalog."__EFMigrationsHistory"));
 SQL
 }
 history_digest() { history_json | sha256sum | cut -d ' ' -f 1; }
@@ -222,7 +230,7 @@ python3 - "$QA_ARTIFACTS/expected-migrations.json" <<'PY_MIGRATIONS'
 import json,re,sys
 from pathlib import Path
 manifest={}
-for module in ("Platform","Identity"):
+for module in ("Platform","Identity","Catalog"):
     ids=[]
     for source in Path("src/Modules/"+module).glob("**/Migrations/*.cs"):
         ids.extend(re.findall(r'\[Migration\("([^"]+)"\)\]',source.read_text()))
@@ -241,6 +249,12 @@ stage=migrations_idempotence
 run_step application_start compose up -d web
 run_step preview_start compose --profile preview up -d preview
 run_step readiness_initial compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step email_deferred_start env QA_EMAIL_ENABLED=false docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$QA_PROJECT" up -d --no-deps --force-recreate web
+run_step email_deferred_readiness compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
+run_step email_deferred_http compose run --rm --no-deps node 'node /qa-tools/email-deferred.mjs'
+run_step email_deferred_browser compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/email-deferred -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/email-deferred playwright 'cd /source/frontend && npm run test:e2e -- --grep @email-deferred'
+run_step email_enabled_start compose up -d --no-deps --force-recreate web
+run_step email_enabled_readiness compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
 run_step public_asset_efficiency compose run --rm --no-deps node 'node /qa-tools/http-assets.mjs'
 run_step synthetic_accounts compose run --rm --no-deps migrations qa-seed --count 100000
 synthetic_account_count() {
@@ -253,17 +267,24 @@ SQL
 }
 run_step synthetic_account_count synthetic_account_count
 run_step bootstrap_qa_admin compose run --rm --no-deps migrations bootstrap-admin --email qa-load-000000@example.test
+run_step grant_qa_editor compose run --rm --no-deps migrations grant-content-manager --email qa-load-000080@example.test
 run_step playwright_desktop compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/desktop -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/desktop playwright '
   cd /source/frontend
   node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"
-  npm run test:e2e -- --project desktop-chromium --grep-invert @preview
+  npm run test:e2e -- --project desktop-chromium --grep-invert "@preview|@email-deferred|@catalog|@mfa"
 '
 # Public register/confirmation/login/reset endpoints retain their Production rate limit.
 run_step browser_rate_window sleep 61
 run_step playwright_mobile compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/mobile -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/mobile playwright '
   cd /source/frontend
-  npm run test:e2e -- --project mobile-chromium --grep-invert @preview
+  npm run test:e2e -- --project mobile-chromium --grep-invert "@preview|@email-deferred|@catalog|@mfa"
 '
+run_step catalog_browser_rate_window sleep 61
+run_step catalog_e2e compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/catalog -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/catalog playwright 'cd /source/frontend && npm run test:e2e -- --grep @catalog'
+run_step mfa_browser_rate_window sleep 61
+run_step mfa_desktop_e2e compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/mfa-desktop -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/mfa-desktop playwright 'cd /source/frontend && npm run test:e2e -- --project desktop-chromium --grep @mfa'
+run_step mfa_mobile_rate_window sleep 61
+run_step mfa_mobile_e2e compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/mfa-mobile -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/mfa-mobile playwright 'cd /source/frontend && npm run test:e2e -- --project mobile-chromium --grep @mfa'
 run_step preview_e2e compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/preview -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/preview playwright '
   cd /source/frontend
   npm run test:e2e -- --grep @preview
@@ -300,6 +321,23 @@ run_step persistence_restart compose restart db web
 run_step readiness_after_restart compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
 stage=persistence_consistency
 [[ "$(schema_digest)" == "$schema_before" && "$(history_digest)" == "$history_before" ]] || { echo 'Database schema or migration state did not persist after restart.' >&2; exit 1; }
+run_step synthetic_catalog compose run --rm --no-deps migrations qa-seed-catalog --count 10000
+catalog_fixture_count() {
+  local result
+  result="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT CASE WHEN count(*) = 10000
+ AND count(*) FILTER (WHERE "Status"='published') = 8000
+ AND count(*) FILTER (WHERE "Status"='draft') = 1000
+ AND count(*) FILTER (WHERE "Status"='archived') = 1000
+ THEN 'ok' ELSE 'failed' END FROM catalog."Contents" WHERE left("Slug",11)='qa-catalog-';
+SQL
+)"
+  [[ "$result" == ok ]] || { echo 'Synthetic catalogue must contain 10000 persisted entries with the expected publication boundaries.' >&2; return 1; }
+}
+run_step synthetic_catalog_count catalog_fixture_count
+run_step synthetic_catalog_repeat compose run --rm --no-deps migrations qa-seed-catalog --count 10000
+run_step synthetic_catalog_count_repeat catalog_fixture_count
+run_step catalog_load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-catalog-summary.json /qa-tools/catalog.js
 run_step identity_load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-identity-summary.json /qa-tools/identity.js
 synthetic_session_count() {
   local count
@@ -311,6 +349,14 @@ SQL
 }
 run_step synthetic_session_count synthetic_session_count
 run_step load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-summary.json /qa-tools/smoke.js
+catalog_digest() {
+  compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL' | sha256sum | cut -d ' ' -f 1
+SELECT row_to_json(c)::text FROM catalog."Contents" c ORDER BY "Id";
+SELECT row_to_json(a)::text FROM catalog."Audit" a ORDER BY "Id";
+SQL
+}
+catalog_before="$(catalog_digest)"
+run_step catalog_public_boundaries compose run --rm --no-deps node 'node /qa-tools/catalog-state.mjs'
 run_step keyring_backup compose run --rm --no-deps pki backup-keyring
 run_step private_ca_backup compose run --rm --no-deps pki backup-caddy
 run_step backup bash scripts/backup-db.sh --project "$QA_PROJECT" --database "$QA_DATABASE" --output "$QA_ARTIFACTS/database.dump"
@@ -333,6 +379,14 @@ SELECT CASE WHEN
   AND NOT has_table_privilege('acropolis_app', 'identity."Audit"', 'DELETE')
   AND NOT has_table_privilege('acropolis_app', 'identity."Bootstrap"', 'INSERT')
   AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'identity') = 'acropolis_migrator'
+  AND has_schema_privilege('acropolis_app', 'catalog', 'USAGE')
+  AND NOT has_schema_privilege('acropolis_app', 'catalog', 'CREATE')
+  AND has_table_privilege('acropolis_app', 'catalog."Contents"', 'SELECT')
+  AND has_table_privilege('acropolis_app', 'catalog."__EFMigrationsHistory"', 'SELECT')
+  AND NOT has_table_privilege('acropolis_app', 'catalog."__EFMigrationsHistory"', 'INSERT')
+  AND NOT has_table_privilege('acropolis_app', 'catalog."Audit"', 'UPDATE')
+  AND NOT has_table_privilege('acropolis_app', 'catalog."Audit"', 'DELETE')
+  AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') = 'acropolis_migrator'
   AND NOT has_schema_privilege('acropolis_app', 'platform', 'CREATE')
   AND has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'SELECT')
   AND NOT has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'INSERT')
@@ -360,6 +414,11 @@ recovery_accounts() {
 SELECT CASE WHEN
  NOT EXISTS (SELECT 1 FROM identity."Users" WHERE NOT "RevalidationRequired")
  AND NOT EXISTS (SELECT 1 FROM identity."Sessions")
+ AND NOT EXISTS (SELECT 1 FROM identity."Users" WHERE "TwoFactorEnabled")
+ AND NOT EXISTS (SELECT 1 FROM identity."MfaCredentials")
+ AND NOT EXISTS (SELECT 1 FROM identity."MfaChallenges")
+ AND NOT EXISTS (SELECT 1 FROM identity."MfaRecoveryCodes")
+ AND NOT EXISTS (SELECT 1 FROM identity."MfaProofs")
  AND NOT EXISTS (SELECT 1 FROM identity."Flows" WHERE "ConsumedUtc" IS NULL)
  AND NOT EXISTS (SELECT 1 FROM identity."Outbox" WHERE "Status" <> 'cancelled' OR "Payload" <> '')
 THEN 'ok' ELSE 'failed' END;
@@ -376,7 +435,7 @@ revalidated_permissions() {
   local result
   result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 SELECT CASE WHEN
- (SELECT count(*) FROM identity."Users" WHERE "Email" = 'qa-load-000000@example.test' AND NOT "RevalidationRequired" AND NOT "EmailConfirmed" AND NOT "UsersManage" AND "PasswordHash" IS NULL AND "RevalidatedUtc" IS NOT NULL) = 1
+ (SELECT count(*) FROM identity."Users" WHERE "Email" = 'qa-load-000000@example.test' AND NOT "RevalidationRequired" AND NOT "EmailConfirmed" AND NOT "UsersManage" AND NOT "ContentManage" AND NOT "TwoFactorEnabled" AND "PasswordHash" IS NULL AND "RevalidatedUtc" IS NOT NULL) = 1
  AND (SELECT array_agg(l."Level"::text ORDER BY l."Level") FROM identity."UserLevels" l JOIN identity."Users" u ON u."Id" = l."UserId" WHERE u."Email" = 'qa-load-000000@example.test') = ARRAY['Externo']
 THEN 'ok' ELSE 'failed' END;
 SQL
@@ -388,6 +447,9 @@ run_step restored_revalidation_start restore_compose up -d web
 run_step restored_revalidation_readiness restore_compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 200 ok'
 run_step restored_fresh_account_flow restore_compose run --rm --no-deps node 'node /qa-tools/identity-recovery.mjs revalidated'
 
+run_step restored_catalog_boundaries restore_compose run --rm --no-deps node 'node /qa-tools/catalog-state.mjs'
+stage=restored_catalog_consistency
+[[ "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" catalog_digest)" == "$catalog_before" ]] || { echo 'Restored editorial content or audit differs from the backup source.' >&2; exit 1; }
 run_step restored_greeting restore_compose run --rm --no-deps node 'node --input-type=module -e "const r = await fetch(process.env.BASE_URL + \"/api/v1/greeting\", { signal: AbortSignal.timeout(5000) }); const body = await r.json(); if (r.status !== 200 || body.message !== \"Hola mundo\") process.exit(1);"'
 run_step restored_migrations env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" run --rm --no-deps migrations
 stage=restore_consistency

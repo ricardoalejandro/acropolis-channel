@@ -12,6 +12,7 @@ public static class IdentityEndpoints
     {
         var identity = app.MapGroup("/api/v1/identity");
         identity.AddEndpointFilter<CsrfFilter>();
+        identity.MapGet("/capabilities", (IOptions<IdentitySettings> settings) => Results.Ok(new { emailEnabled = settings.Value.EmailEnabled }));
         identity.MapGet("/csrf", (HttpContext context, IAntiforgery antiforgery) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -21,22 +22,17 @@ public static class IdentityEndpoints
         {
             var result = await service.RegisterAsync(request, token);
             return result.Succeeded ? Accepted() : Failure(result);
-        }).RequireRateLimiting("identity-public");
-        identity.MapPost("/login", async (LoginRequest request, IIdentityService service, HttpContext context, TimeProvider clock, CancellationToken token) =>
+        }).AddEndpointFilter<EmailAvailabilityFilter>().RequireRateLimiting("identity-public");
+        identity.MapPost("/login", async (LoginRequest request, IIdentityService service, IMfaService mfa, HttpContext context, TimeProvider clock, CancellationToken token) =>
         {
             var result = await service.LoginAsync(request, token);
             if (!result.Succeeded) return Failure(result);
-            var login = result.Value!;
-            var claims = new List<Claim>
-            {
-                new(ClaimTypes.NameIdentifier, login.User.Id.ToString()),
-                new(ClaimTypes.Name, login.User.DisplayName),
-                new("auth_version", login.SecurityVersion)
-            };
-            claims.AddRange(login.User.Permissions.Select(permission => new Claim("permission", permission)));
-            await context.SignInAsync(IdentityConstants.ApplicationScheme, new ClaimsPrincipal(new ClaimsIdentity(claims, IdentityConstants.ApplicationScheme)),
-                new AuthenticationProperties { IssuedUtc = clock.GetUtcNow(), ExpiresUtc = clock.GetUtcNow() + IdentityRules.SessionLifetime, IsPersistent = false, AllowRefresh = false });
-            return Results.Ok(login.User);
+            var authentication = result.Value!;
+            var challenge = await mfa.BeginLoginAsync(authentication, token);
+            if (!challenge.Succeeded) return Failure(challenge);
+            if (challenge.Value is not null) return Results.Json(challenge.Value, statusCode: 202);
+            await SignInUser(context, authentication, clock, false);
+            return Results.Ok(authentication.User);
         }).RequireRateLimiting("identity-public");
         identity.MapPost("/logout", async (HttpContext context) => { await context.SignOutAsync(IdentityConstants.ApplicationScheme); return Results.NoContent(); }).RequireAuthorization();
         identity.MapGet("/me", async (HttpContext context, IIdentityService service, CancellationToken token) =>
@@ -59,12 +55,12 @@ public static class IdentityEndpoints
         {
             await service.RequestEmailAsync(request.Email, "confirm", token);
             return Accepted();
-        }).RequireRateLimiting("identity-public");
+        }).AddEndpointFilter<EmailAvailabilityFilter>().RequireRateLimiting("identity-public");
         identity.MapPost("/forgot-password", async (EmailRequest request, IIdentityService service, CancellationToken token) =>
         {
             await service.RequestEmailAsync(request.Email, "reset", token);
             return Accepted();
-        }).RequireRateLimiting("identity-public");
+        }).AddEndpointFilter<EmailAvailabilityFilter>().RequireRateLimiting("identity-public");
         identity.MapPost("/reset-password", async (ResetPasswordRequest request, IIdentityService service, CancellationToken token) =>
         {
             var result = await service.ResetPasswordAsync(request, token);
@@ -78,13 +74,15 @@ public static class IdentityEndpoints
             return Results.NoContent();
         }).RequireAuthorization();
 
+        app.MapChannelMfa();
+
         var admin = app.MapGroup("/api/v1/admin/users").RequireAuthorization(IdentityRules.ManageUsers);
         admin.AddEndpointFilter<CsrfFilter>();
         admin.MapGet("/", async (string? search, string? status, string? level, int? page, int? pageSize, IIdentityService service, CancellationToken token) =>
         {
             var number = page ?? 1;
             var size = pageSize ?? 20;
-            if (number < 1 || number > 1000000 || size is < 1 or > 100 || search?.Length > 100 || (status is not null && status is not ("active" or "disabled" or "pending")) || (level is not null && !IdentityRules.Levels.Contains(level))) return Problem("validation_error", 400);
+            if (number < 1 || number > 1000000 || size is < 1 or > 100 || (search?.Length > 100 || search?.Any(char.IsControl) == true) || (status is not null && status is not ("active" or "disabled" or "pending")) || (level is not null && !IdentityRules.Levels.Contains(level))) return Problem("validation_error", 400);
             return Results.Ok(await service.ListUsersAsync(search, status, level, number, size, token));
         });
         admin.MapGet("/{id:guid}", async (Guid id, IIdentityService service, CancellationToken token) =>
@@ -98,6 +96,19 @@ public static class IdentityEndpoints
             return result.Succeeded ? Results.Ok(result.Value) : Failure(result);
         });
     }
+    internal static async Task SignInUser(HttpContext context, AuthenticatedUser authentication, TimeProvider clock, bool mfa)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, authentication.User.Id.ToString()),
+            new(ClaimTypes.Name, authentication.User.DisplayName),
+            new("auth_version", authentication.SecurityVersion),
+            new("amr", mfa ? "mfa" : "pwd")
+        };
+        claims.AddRange(authentication.User.Permissions.Select(permission => new Claim("permission", permission)));
+        await context.SignInAsync(IdentityConstants.ApplicationScheme, new ClaimsPrincipal(new ClaimsIdentity(claims, IdentityConstants.ApplicationScheme)),
+            new AuthenticationProperties { IssuedUtc = clock.GetUtcNow(), ExpiresUtc = clock.GetUtcNow() + IdentityRules.SessionLifetime, IsPersistent = false, AllowRefresh = false });
+    }
     public static IResult Problem(string code, int status, Dictionary<string, string[]>? fields = null) =>
         Results.Problem(statusCode: status, title: "No se pudo completar la solicitud.", extensions:
             new Dictionary<string, object?> { ["code"] = code, ["fieldErrors"] = fields });
@@ -109,7 +120,8 @@ public sealed class CsrfFilter(IAntiforgery antiforgery, IOptions<IdentitySettin
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        if (HttpMethods.IsPost(context.HttpContext.Request.Method) || HttpMethods.IsPatch(context.HttpContext.Request.Method))
+        if (HttpMethods.IsPost(context.HttpContext.Request.Method) || HttpMethods.IsPatch(context.HttpContext.Request.Method)
+            || HttpMethods.IsPut(context.HttpContext.Request.Method) || HttpMethods.IsDelete(context.HttpContext.Request.Method))
         {
             var request = context.HttpContext.Request;
             var origin = request.Headers.Origin.ToString();

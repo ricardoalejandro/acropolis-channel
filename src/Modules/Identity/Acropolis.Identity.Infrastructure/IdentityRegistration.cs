@@ -14,7 +14,15 @@ public static class IdentityRegistration
 {
     public static IServiceCollection AddChannelIdentity(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<IdentitySettings>(configuration.GetSection("Identity"));
+        services.Configure<IdentitySettings>(options =>
+        {
+            var configured = IdentitySettings.BindFrom(configuration);
+            options.EmailEnabled = configured.EmailEnabled;
+            options.PublicOrigin = configured.PublicOrigin;
+            options.KnownProxies = configured.KnownProxies;
+            options.DataProtection = configured.DataProtection;
+            options.Smtp = configured.Smtp;
+        });
         services.AddSingleton(TimeProvider.System);
         services.AddDbContextFactory<IdentityDbContext>((provider, options) =>
             ConfigureDatabase(options, provider.GetRequiredService<IConfiguration>().GetConnectionString("Database")!));
@@ -31,9 +39,13 @@ public static class IdentityRegistration
             options.SignIn.RequireConfirmedEmail = true;
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
-        }).AddEntityFrameworkStores<IdentityDbContext>();
+        }).AddEntityFrameworkStores<IdentityDbContext>()
+            .AddUserStore<MfaUserStore>()
+            .AddTokenProvider<AuthenticatorTokenProvider<ChannelUser>>(TokenOptions.DefaultAuthenticatorProvider);
+        services.AddScoped<MfaVerificationKey>();
+        services.AddScoped<IMfaService, MfaService>();
         var protection = services.AddDataProtection().SetApplicationName("AcropolisChannel");
-        var settings = configuration.GetSection("Identity").Get<IdentitySettings>() ?? new();
+        var settings = IdentitySettings.BindFrom(configuration);
         if (!string.IsNullOrWhiteSpace(settings.DataProtection.KeyRingPath))
         {
             protection.PersistKeysToFileSystem(new DirectoryInfo(settings.DataProtection.KeyRingPath));
@@ -58,6 +70,8 @@ public static class IdentityRegistration
         {
             options.SessionStore = store;
             options.TimeProvider = clock;
+            options.Events.OnSigningIn = SessionRotation.BeginAsync;
+            options.Events.OnSignedIn = SessionRotation.CompleteAsync;
         });
         services.AddScoped<IIdentityService, IdentityService>();
         services.AddScoped<IIdentityMailer, SmtpIdentityMailer>();

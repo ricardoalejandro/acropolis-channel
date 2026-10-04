@@ -38,6 +38,7 @@ public sealed class SmtpIdentityMailer(IOptions<IdentitySettings> configuration)
     }
     private async Task ConnectAsync(SmtpClient client, CancellationToken token)
     {
+        if (!configuration.Value.EmailEnabled) throw new InvalidOperationException("Identity email is disabled.");
         var settings = configuration.Value.Smtp;
         if (settings.Security is not ("ssl" or "starttls") && !(settings.Security == "none" && Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Testing"))
             throw new InvalidOperationException("SMTP requires an explicit secure transport.");
@@ -47,11 +48,12 @@ public sealed class SmtpIdentityMailer(IOptions<IdentitySettings> configuration)
         if (!string.IsNullOrEmpty(settings.Username)) await client.AuthenticateAsync(settings.Username, settings.Password, token);
     }
 }
-public sealed class OutboxDispatcher(IdentityDbContext database, IDataProtectionProvider protection, IIdentityMailer mailer, TimeProvider clock)
+public sealed class OutboxDispatcher(IdentityDbContext database, IDataProtectionProvider protection, IIdentityMailer mailer, TimeProvider clock, IOptions<IdentitySettings> settings)
 {
     private readonly IDataProtector protector = protection.CreateProtector("Acropolis.Identity.Outbox.v1");
     public async Task<bool> DispatchAsync(CancellationToken token)
     {
+        if (!settings.Value.EmailEnabled) return false;
         var now = clock.GetUtcNow();
         OutboxMessage? message;
         var owner = Guid.NewGuid().ToString("N");
@@ -102,10 +104,11 @@ public sealed class OutboxDispatcher(IdentityDbContext database, IDataProtection
         return true;
     }
 }
-public sealed class OutboxWorker(IServiceScopeFactory scopes, ILogger<OutboxWorker> logger) : BackgroundService
+public sealed class OutboxWorker(IServiceScopeFactory scopes, ILogger<OutboxWorker> logger, IOptions<IdentitySettings> settings) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!settings.Value.EmailEnabled) return;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {

@@ -1,3 +1,4 @@
+using Acropolis.Catalog.Infrastructure;
 using Acropolis.Identity.Infrastructure;
 using Acropolis.Platform.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,7 @@ public sealed class ChannelMigrationRunner
                 """, connection, privileges);
             await restrict.ExecuteNonQueryAsync(token);
             await privileges.CommitAsync(token);
+            await ApplyCatalogAsync(connection, token);
         }
         finally
         {
@@ -61,6 +63,42 @@ public sealed class ChannelMigrationRunner
             }
         }
     }
+    private static async Task ApplyCatalogAsync(NpgsqlConnection connection, CancellationToken token)
+    {
+        await using (var owner = new NpgsqlCommand("SELECT pg_has_role(current_user,nspowner,'USAGE') FROM pg_namespace WHERE nspname='catalog'", connection))
+            if (await owner.ExecuteScalarAsync(token) is bool permitted && !permitted)
+                throw new InvalidOperationException("The migration role does not own the catalog schema.");
+        await using (var collision = new NpgsqlCommand("""
+            SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='catalog' AND c.relkind IN ('r','p','v','m','S','f'))
+            AND to_regclass('catalog."__EFMigrationsHistory"') IS NULL
+            """, connection))
+            if ((bool)(await collision.ExecuteScalarAsync(token))!) throw new InvalidOperationException("The catalog schema contains objects without migration history.");
+        await using (var grants = new NpgsqlCommand("""
+            CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION acropolis_migrator;
+            GRANT USAGE ON SCHEMA catalog TO acropolis_app;
+            ALTER DEFAULT PRIVILEGES FOR ROLE acropolis_migrator IN SCHEMA catalog GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO acropolis_app;
+            ALTER DEFAULT PRIVILEGES FOR ROLE acropolis_migrator IN SCHEMA catalog GRANT USAGE,SELECT ON SEQUENCES TO acropolis_app;
+            """, connection))
+            await grants.ExecuteNonQueryAsync(token);
+        var options = new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql(connection, provider => provider.MigrationsHistoryTable(CatalogDbContext.HistoryTable, CatalogDbContext.Schema));
+        await using var context = new CatalogDbContext(options.Options);
+        var expected = context.Database.GetMigrations().ToHashSet(StringComparer.Ordinal);
+        if ((await context.Database.GetAppliedMigrationsAsync(token)).Any(id => !expected.Contains(id)))
+            throw new InvalidOperationException("The catalog schema contains unsupported migrations.");
+        await context.Database.MigrateAsync(token);
+        await using var privileges = await connection.BeginTransactionAsync(token);
+        await using var restrict = new NpgsqlCommand("""
+            GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA catalog TO acropolis_app;
+            GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA catalog TO acropolis_app;
+            REVOKE ALL ON TABLE catalog."__EFMigrationsHistory" FROM acropolis_app;
+            GRANT SELECT ON TABLE catalog."__EFMigrationsHistory" TO acropolis_app;
+            REVOKE UPDATE,DELETE ON TABLE catalog."Audit" FROM acropolis_app;
+            REVOKE DELETE ON TABLE catalog."Contents" FROM acropolis_app;
+            """, connection, privileges);
+        await restrict.ExecuteNonQueryAsync(token);
+        await privileges.CommitAsync(token);
+    }
+
     private static async Task ValidateIdentitySchemaAsync(NpgsqlConnection connection, CancellationToken token)
     {
         await using var owner = new NpgsqlCommand("SELECT pg_has_role(current_user,nspowner,'USAGE') FROM pg_namespace WHERE nspname='identity'", connection);

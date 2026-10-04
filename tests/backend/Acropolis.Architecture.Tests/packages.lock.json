@@ -315,11 +315,23 @@
       "acropolis.api": {
         "type": "Project",
         "dependencies": {
+          "Acropolis.Catalog.Application": "[1.0.0, )",
+          "Acropolis.Catalog.Infrastructure": "[1.0.0, )",
           "Acropolis.Identity.Application": "[1.0.0, )",
           "Acropolis.Identity.Infrastructure": "[1.0.0, )",
           "Acropolis.Platform.Application": "[1.0.0, )",
           "Acropolis.Platform.Infrastructure": "[1.0.0, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.12, )"
+        }
+      },
+      "acropolis.catalog.application": {
+        "type": "Project"
+      },
+      "acropolis.catalog.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "Acropolis.Catalog.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
       "acropolis.identity.application": {
@@ -337,6 +349,7 @@
       "acropolis.migrations": {
         "type": "Project",
         "dependencies": {
+          "Acropolis.Catalog.Infrastructure": "[1.0.0, )",
           "Acropolis.Identity.Infrastructure": "[1.0.0, )",
           "Acropolis.Platform.Infrastructure": "[1.0.0, )"
         }

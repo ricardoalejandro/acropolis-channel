@@ -237,6 +237,42 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual((destination / "identity/keyring/key.xml").stat().st_mode & 0o777, 0o600)
         self.assertEqual((destination / "identity").stat().st_mode & 0o777, 0o700)
 
+    def test_explicit_email_disabled_skips_smtp_but_runs_normal_verified_deployment(self):
+        self.seed_previous_deployment()
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=false\n")
+        self.execute()
+        self.assertEqual(self.running_image, WEB_ID)
+        self.assertFalse(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
+        self.assertTrue(any(kind == "compose" and args == ("--profile", "migration", "run", "--rm", "migrations") for kind, args in self.operations))
+        self.smoke.assert_called_once_with()
+
+    def test_exported_email_mode_cannot_override_validated_candidate_or_recovery(self):
+        self.seed_previous_deployment()
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=false\n")
+        self.smoke.side_effect = RuntimeError("simulated public failure")
+        with patch.dict(os.environ, {"IDENTITY_EMAIL_ENABLED": "true"}):
+            with self.assertRaisesRegex(RuntimeError, "Public HTTPS"):
+                self.execute()
+        mutations = [entry for entry in self.compose.call_args_list if entry.args[0] in ("up", "--profile", "config")]
+        self.assertTrue(mutations)
+        for entry in mutations:
+            self.assertEqual(entry.kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "false")
+        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"]]
+        self.assertEqual(len(rollback), 1)
+        self.assertEqual(rollback[0].kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "true")
+        self.assertEqual(self.running_image, OLD_ID)
+
+    def test_invalid_email_mode_never_activates_candidate(self):
+        self.seed_previous_deployment()
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=disabled\n")
+        with self.assertRaisesRegex(RuntimeError, "true or false"):
+            self.execute()
+        self.assertEqual(self.running_image, OLD_ID)
+        self.assertFalse(any(kind == "compose" and args[0] == "up" for kind, args in self.operations))
+
     def test_smtp_failure_stops_before_database_or_web_activation(self):
         self.seed_previous_deployment()
         original = self.compose.side_effect

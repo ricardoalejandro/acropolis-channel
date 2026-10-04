@@ -37,6 +37,7 @@ services:
     environment:
       ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_migrator;Password=${DB_MIGRATION_PASSWORD};Timeout=5;Command
         Timeout=30
+      Identity__EmailEnabled: ${IDENTITY_EMAIL_ENABLED:-true}
       Identity__PublicOrigin: ${IDENTITY_PUBLIC_ORIGIN:-https://acropolischannel.naperu.cloud}
       Identity__KnownProxies: ${IDENTITY_KNOWN_PROXIES:-}
       Identity__DataProtection__KeyRingPath: /var/acropolis/keys
@@ -82,6 +83,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_app;Password=${DB_APP_PASSWORD};Timeout=3;Command
         Timeout=3
+      Identity__EmailEnabled: ${IDENTITY_EMAIL_ENABLED:-true}
       Identity__PublicOrigin: ${IDENTITY_PUBLIC_ORIGIN:-https://acropolischannel.naperu.cloud}
       Identity__KnownProxies: ${IDENTITY_KNOWN_PROXIES:-}
       Identity__DataProtection__KeyRingPath: /var/acropolis/keys

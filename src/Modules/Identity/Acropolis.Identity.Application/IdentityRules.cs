@@ -5,6 +5,7 @@ namespace Acropolis.Identity.Application;
 public static class IdentityRules
 {
     public const string ManageUsers = "Users.Manage";
+    public const string ManageContent = "Content.Manage";
     public static IReadOnlyList<string> Levels { get; } = Array.AsReadOnly(new[] { "Externo", "Probacionista", "Miembro", "FFVV", "Instructor", "Hachado" });
     public static TimeSpan SessionLifetime => TimeSpan.FromHours(8);
     public static TimeSpan ConfirmationLifetime => TimeSpan.FromHours(24);

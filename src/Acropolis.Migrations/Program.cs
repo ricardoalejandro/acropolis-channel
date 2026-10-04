@@ -13,7 +13,7 @@ internal static class EntryPoint
         {
             try
             {
-                var settings = new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Identity").Get<IdentitySettings>() ?? new();
+                var settings = IdentitySettings.BindFrom(new ConfigurationBuilder().AddEnvironmentVariables().Build());
                 using var smtpDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 await new SmtpIdentityMailer(Options.Create(settings)).CheckAsync(smtpDeadline.Token);
                 Console.WriteLine("{\"status\":\"smtp_ready\"}");
@@ -31,7 +31,7 @@ internal static class EntryPoint
             Console.Error.WriteLine("{\"error\":\"database_configuration_missing\"}");
             return 1;
         }
-        using var deadline = new CancellationTokenSource(args.FirstOrDefault() == "qa-seed" ? TimeSpan.FromMinutes(15) : TimeSpan.FromSeconds(30));
+        using var deadline = new CancellationTokenSource(args.FirstOrDefault() is "qa-seed" or "qa-seed-catalog" ? TimeSpan.FromMinutes(15) : TimeSpan.FromSeconds(30));
         try
         {
             if (args.Length == 0)
@@ -51,12 +51,25 @@ internal static class EntryPoint
                     await operations.PruneAsync(deadline.Token); break;
                 case ["bootstrap-admin", "--email", var email]:
                     await operations.BootstrapAsync(email, deadline.Token); break;
+                case ["grant-content-manager", "--email", var email]:
+                    await operations.SetContentManagerAsync(email, true, deadline.Token); break;
+                case ["revoke-content-manager", "--email", var email]:
+                    await operations.SetContentManagerAsync(email, false, deadline.Token); break;
                 case ["recovery-invalidate", "--maintenance"]:
                     await operations.InvalidateRecoveryAsync(deadline.Token); break;
                 case ["recovery-revalidate", "--email", var email, "--maintenance"]:
                     await operations.RevalidateAsync(email, false, deadline.Token); break;
                 case ["recover-admin", "--email", var email, "--maintenance"]:
                     await operations.RevalidateAsync(email, true, deadline.Token); break;
+                case ["qa-seed-catalog", "--count", var catalogRaw] when int.TryParse(catalogRaw, out var catalogCount):
+                    var catalogOptions = new DbContextOptionsBuilder<Acropolis.Catalog.Infrastructure.CatalogDbContext>();
+                    Acropolis.Catalog.Infrastructure.CatalogRegistration.ConfigureDatabase(catalogOptions, connection);
+                    await using (var catalogDatabase = new Acropolis.Catalog.Infrastructure.CatalogDbContext(catalogOptions.Options))
+                    {
+                        catalogDatabase.Database.SetCommandTimeout(30);
+                        await new CatalogOperations(catalogDatabase).SeedQaAsync(catalogCount, deadline.Token);
+                    }
+                    break;
                 case ["qa-seed", "--count", var raw] when int.TryParse(raw, out var count):
                     await operations.SeedQaAsync(count, Environment.GetEnvironmentVariable("QA_SEED_PASSWORD") ?? "", deadline.Token); break;
                 default: throw new InvalidOperationException("Invalid administrative command.");

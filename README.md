@@ -10,13 +10,15 @@ Checkout canónico: `/root/proyect/acropolis-channel`, rama `main`, remoto HTTPS
 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps
 ```
 
-La fase de identidad incorpora registro con confirmación de correo, acceso, recuperación y cambio de contraseña, perfil y administración de usuarios. Los niveles institucionales pueden coexistir y se gestionan por separado del permiso administrativo `Users.Manage`. El correo utiliza el SMTP existente, configurado privadamente.
+La fase de identidad incorpora registro con confirmación de correo, acceso, recuperación y cambio de contraseña, perfil y administración de usuarios. Los niveles institucionales pueden coexistir y se gestionan por separado del permiso administrativo `Users.Manage`. El correo puede permanecer deshabilitado explícitamente mientras su integración está pospuesta. Al habilitarlo utiliza SMTP autenticado y TLS, configurado privadamente.
 
-La portada tiene una dirección editorial inspirada en Acrópolis Channel Perú. El prototipo del catálogo se construye aparte: no contiene reproducción, pagos ni suscripciones operativas. Los precios y condiciones del sitio anterior son referencias pendientes de validación comercial. No se migra WordPress ni se crean recursos AWS en esta fase. MFA queda pendiente antes del lanzamiento operativo.
+La portada y el catálogo editorial real conservan la dirección visual de Acrópolis Channel Perú: seis categorías, búsqueda, filtros, paginación y fichas públicas. El panel permite borradores, publicación, retirada y archivo con el permiso separado Content.Manage. Las fichas contienen sinopsis públicas; no obras completas ni multimedia restringida. MFA con aplicación autenticadora es obligatorio para administrar usuarios o contenidos. Reproducción, pagos, suscripciones, migración WordPress y recursos AWS siguen pendientes de sus contratos e integraciones; las pantallas correspondientes del prototipo siguen siendo demostrativas.
 
 - [Arquitectura y límites](docs/architecture.md).
 - [Diseño, estructura y procedencia de imágenes](docs/design.md).
 - [Identidad: correo, administración y recuperación](docs/identity-operations.md).
+- [Catálogo editorial y pendientes funcionales](docs/catalog-operations.md).
+- [MFA y recuperación](docs/mfa-operations.md).
 - [Validación y criterios de calidad](docs/quality.md).
 
 ## Contratos y aplicación
@@ -27,10 +29,14 @@ React y API comparten origen. Las API desconocidas devuelven 404, sin ocultarse 
 | --- | --- |
 | `/api/v1/identity/csrf` | Token antifalsificación para operaciones que modifican estado |
 | `/api/v1/identity/*` | Registro, confirmación, sesión, recuperación y perfil |
+| `/api/v1/catalog/categories` | Seis categorías oficiales |
+| `/api/v1/catalog/content` | Listado paginado y fichas de contenidos publicados |
+| `/api/v1/admin/content` | Gestión editorial con Content.Manage y MFA |
+| `/api/v1/identity/capabilities` | Disponibilidad explícita del correo, sin secretos |
 | `/api/v1/admin/users` | Búsqueda, filtros y gestión paginada con autorización |
 | `/api/v1/greeting` | Contrato de diagnóstico `{"message":"Hola mundo"}` |
 | `/health` | Liveness sin dependencia de PostgreSQL |
-| `/health/ready` | Conexión y migraciones esperadas de Platform e Identity |
+| `/health/ready` | Conexión y migraciones esperadas de Platform, Identity y Catalog |
 
 El servidor guarda sesiones revocables y aplica un máximo absoluto de ocho horas. Los enlaces de correo se consumen una sola vez; registro y recuperación evitan revelar si una cuenta existe. La administración aplica control de concurrencia y auditoría. Los niveles no conceden permisos administrativos por sí mismos.
 
@@ -58,7 +64,7 @@ El prototipo usa `npm run build:preview` y genera `frontend/dist-preview/`, aisl
 
 La URL objetivo es **https://acropolischannel.naperu.cloud**. Configurar `.env` exclusivamente en el VPS, a partir de `.env.example`, con permisos 600. Nunca versionar secretos, dumps, reportes privados, el protector PFX ni el key ring.
 
-Seguir [la operación de identidad](docs/identity-operations.md) para configurar SMTP, preparar el protector cifrado y registrar las direcciones exactas de Traefik. El remitente real y el primer administrador deben quedar definidos antes de habilitar cuentas.
+Seguir [la operación de identidad](docs/identity-operations.md) para preparar el protector cifrado y las direcciones exactas de Traefik. Con IDENTITY_EMAIL_ENABLED=false, el catálogo público puede funcionar sin SMTP; registro, reenvío y solicitud de recuperación quedan deshabilitados, sin crear cuentas automáticamente confirmadas. Las cuentas ya confirmadas conservan acceso sujeto a MFA cuando corresponde. Para habilitar el correo se necesita configurar y comprobar el SMTP real y su remitente.
 
 Sólo cuando el despliegue esté solicitado:
 
@@ -66,11 +72,11 @@ Sólo cuando el despliegue esté solicitado:
 bash scripts/deploy.sh --expected-sha SHA_VALIDADO
 ```
 
-El script exige main limpio, coincidencia con origin y QA aprobado para las imágenes exactas; comprueba configuración y conexión SMTP, respalda datos y material de identidad, ejecuta migraciones y cambia la aplicación. No aplica migraciones descendentes ni reconstruye.
+El script exige main limpio, coincidencia con origin y QA aprobado para las imágenes exactas; comprueba configuración y, cuando el correo está habilitado, conexión SMTP, respalda datos y material de identidad, ejecuta migraciones y cambia la aplicación. No aplica migraciones descendentes ni reconstruye.
 
 Compose mantiene el proyecto `acropolis-channel`, web interna 8080, alias `acropolis-channel-web` y red externa `dokploy-network`. PostgreSQL tiene una red privada y roles separados para administración, migración y aplicación. Sólo se modifica el routing propio `/etc/dokploy/traefik/dynamic/acropolis-channel.yml`; se preservan Traefik global y los demás proyectos.
 
-Verificar DNS público, certificado válido, redirección HTTP, interfaz, API y entrega real del correo. Un build o una prueba interna no acreditan publicación. La preparación de código o QA no autoriza desplegar.
+Verificar DNS público, certificado válido, redirección HTTP, interfaz, API y, si se habilitó el correo, su entrega real. Un build o una prueba interna no acreditan publicación. La preparación de código o QA no autoriza desplegar.
 
 ## Respaldo y capacidad
 

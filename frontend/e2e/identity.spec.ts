@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
+import { loginQa } from './helpers/mfa';
+
 const api = '/api/v1/identity';
 const password = process.env['QA_IDENTITY_PASSWORD'];
 const mailpit = process.env['MAILPIT_URL'];
@@ -267,12 +269,8 @@ test.describe('Identity on the real Production candidate', () => {
       const targetLogin = await write(userContext.request, 'login', { email, password });
       expect(targetLogin.status()).toBe(200);
       const target = (await targetLogin.json()) as { id: string };
-      await page.goto('/login');
-      await page
-        .getByLabel('Correo electrónico', { exact: true })
-        .fill('qa-load-000000@example.test');
-      await page.getByLabel('Contraseña', { exact: true }).fill(password);
-      await page.getByRole('button', { name: 'Ingresar', exact: true }).click();
+      await loginQa(page.request, 'qa-load-000000@example.test', password);
+      await page.goto('/profile');
       await page.getByRole('link', { name: 'Administración', exact: true }).click();
       await expect(page.getByRole('heading', { level: 1 })).toHaveText('Personas que conectan.');
       await page.getByLabel('Buscar usuarios', { exact: true }).fill(email);

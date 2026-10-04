@@ -27,7 +27,7 @@ public sealed class IdentityTests(IdentityFixture database)
     [Fact]
     public async Task UpgradeRequiresBothHistoriesPreservesPlatformAndRestrictsRuntime()
     {
-        await database.ExecuteAsync("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app", Token);
+        await database.ExecuteAsync("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app", Token);
         await new PlatformMigrationRunner().RunAsync(database.MigrationConnection, Token);
         await using var api = new IdentityApiFactory(database);
         using var client = api.Client();
@@ -169,11 +169,12 @@ public sealed class IdentityTests(IdentityFixture database)
             await new IdentityOperations(context, api.Clock).BootstrapAsync("admin@example.test", Token);
             await Assert.ThrowsAsync<InvalidOperationException>(() => new IdentityOperations(context, api.Clock).BootstrapAsync("user@example.test", Token));
         }
-        await Write(admin, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("admin@example.test", Password));
+        await Acropolis.TestSupport.MfaTestClient.Login(admin, "admin@example.test", Password, Token);
         await Write(member, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("user@example.test", Password));
         var page = await admin.GetFromJsonAsync<UserPage>("/api/v1/admin/users?search=user&status=active&level=Externo&page=1&pageSize=10", Token);
         Assert.Equal(1, page!.Total);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/v1/admin/users?pageSize=101", Token)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/v1/admin/users?search=%00", Token)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/v1/admin/users/" + Guid.NewGuid(), Token)).StatusCode);
         var user = await admin.GetFromJsonAsync<UserView>("/api/v1/admin/users/" + memberId, Token);
         Assert.Equal(HttpStatusCode.Conflict, (await Write(admin, HttpMethod.Patch, "/api/v1/admin/users/" + memberId, new AdminUserRequest("stale", Levels: ["Instructor"]))).StatusCode);
@@ -188,7 +189,8 @@ public sealed class IdentityTests(IdentityFixture database)
         var own = await admin.GetFromJsonAsync<UserView>("/api/v1/identity/me", Token);
         Assert.Equal(HttpStatusCode.Conflict, (await Write(admin, HttpMethod.Patch, "/api/v1/admin/users/" + adminId, new AdminUserRequest(own!.Version, Status: "disabled"))).StatusCode);
         await using var audit = database.Context();
-        Assert.Equal(4, await audit.Audit.CountAsync(Token));
+        Assert.Equal(4, await audit.Audit.CountAsync(x => !x.Action.StartsWith("mfa."), Token));
+        Assert.Equal(1, await audit.Audit.CountAsync(x => x.Action == "mfa.enabled", Token));
         Assert.False((await audit.Users.SingleAsync(x => x.Id == memberId, Token)).UsersManage);
     }
 
@@ -326,8 +328,8 @@ public sealed class IdentityTests(IdentityFixture database)
             foreach (var user in users) user.UsersManage = true; // Synthetic second administrator for the concurrency invariant.
             await context.SaveChangesAsync(Token);
         }
-        await Write(one, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("one@example.test", Password));
-        await Write(two, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("two@example.test", Password));
+        await Acropolis.TestSupport.MfaTestClient.Login(one, "one@example.test", Password, Token);
+        await Acropolis.TestSupport.MfaTestClient.Login(two, "two@example.test", Password, Token);
         var a = await one.GetFromJsonAsync<UserView>("/api/v1/identity/me", Token);
         var b = await two.GetFromJsonAsync<UserView>("/api/v1/identity/me", Token);
         var results = await Task.WhenAll(Write(one, HttpMethod.Patch, "/api/v1/admin/users/" + first, new AdminUserRequest(a!.Version, Status: "disabled")), Write(two, HttpMethod.Patch, "/api/v1/admin/users/" + second, new AdminUserRequest(b!.Version, Status: "disabled")));
@@ -380,7 +382,7 @@ public sealed class IdentityTests(IdentityFixture database)
         var reset = api.Mailer.Messages.Last();
         Assert.Equal(HttpStatusCode.NoContent, (await Write(client, HttpMethod.Post, "/api/v1/identity/reset-password", new ResetPasswordRequest(id, reset.Token, ChangedPassword))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("limits@example.test", Password))).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("limits@example.test", ChangedPassword))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Acropolis.TestSupport.MfaTestClient.Login(client, "limits@example.test", ChangedPassword, Token)).StatusCode);
     }
 
     [Fact]
@@ -401,7 +403,7 @@ public sealed class IdentityTests(IdentityFixture database)
         }
         api.Mailer.Fail = false;
         await Write(client, HttpMethod.Post, "/api/v1/identity/resend-confirmation", new EmailRequest("failed@example.test"));
-        using (var worker = new OutboxWorker(api.Services.GetRequiredService<IServiceScopeFactory>(), Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxWorker>.Instance))
+        using (var worker = new OutboxWorker(api.Services.GetRequiredService<IServiceScopeFactory>(), Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxWorker>.Instance, Microsoft.Extensions.Options.Options.Create(new IdentitySettings())))
         {
             await worker.StartAsync(Token);
             await Task.Delay(TimeSpan.FromSeconds(3), Token);
@@ -424,7 +426,7 @@ public sealed class IdentityTests(IdentityFixture database)
         await RegisterConfirmed(api, admin, "pending-admin@example.test");
         await using (var context = database.Context(true))
             await new IdentityOperations(context, api.Clock).BootstrapAsync("pending-admin@example.test", Token);
-        await Write(admin, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("pending-admin@example.test", Password));
+        await Acropolis.TestSupport.MfaTestClient.Login(admin, "pending-admin@example.test", Password, Token);
         using var pending = api.Client();
         await Write(pending, HttpMethod.Post, "/api/v1/identity/register", new RegisterRequest("Persona", "pending-user@example.test", Password));
         await using var lookup = database.Context();
@@ -532,7 +534,7 @@ public sealed class IdentityTests(IdentityFixture database)
         await RegisterConfirmed(api, admin, "search-admin@example.test");
         await using (var context = database.Context(true))
             await new IdentityOperations(context, api.Clock).BootstrapAsync("search-admin@example.test", Token);
-        await Write(admin, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("search-admin@example.test", Password));
+        await Acropolis.TestSupport.MfaTestClient.Login(admin, "search-admin@example.test", Password, Token);
         using var member = api.Client();
         foreach (var entry in new[] { (Name: @"Cultura 100%_REAL\ruta", Email: "literal-one@example.test"), (Name: "Cultura 100XAREALruta", Email: "literal-two@example.test"), (Name: "Ágora", Email: "literal-three@example.test") })
             Assert.Equal(HttpStatusCode.Accepted, (await Write(member, HttpMethod.Post, "/api/v1/identity/register", new RegisterRequest(entry.Name, entry.Email, Password))).StatusCode);
@@ -559,7 +561,7 @@ public sealed class IdentityTests(IdentityFixture database)
     [Fact]
     public async Task SearchMigrationUpgradesOneHundredThousandUsersAndRemainsRepeatable()
     {
-        await database.ExecuteAsync("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app", Token);
+        await database.ExecuteAsync("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app", Token);
         await new PlatformMigrationRunner().RunAsync(database.MigrationConnection, Token);
         await using (var previous = database.Context(true))
         {

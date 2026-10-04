@@ -52,6 +52,50 @@ public sealed class IdentityConfigurationTests
     }
 
     [Fact]
+    public async Task ExplicitEmailDeferralDoesNotWeakenKeysOriginOrProxyValidation()
+    {
+        using var temporary = new TemporaryKeys();
+        var settings = temporary.Settings();
+        settings.EmailEnabled = false;
+        settings.Smtp = new();
+        await Validator(settings).StartAsync(Token);
+        settings.EmailEnabled = true;
+        Assert.Equal("Identity mail configuration is invalid.", (await Assert.ThrowsAsync<InvalidOperationException>(() => Validator(settings).StartAsync(Token))).Message);
+        settings.EmailEnabled = false;
+        settings.KnownProxies = "";
+        Assert.Equal("Identity proxy configuration is invalid.", (await Assert.ThrowsAsync<InvalidOperationException>(() => Validator(settings).StartAsync(Token))).Message);
+        settings.KnownProxies = "127.0.0.1";
+        settings.DataProtection.CertificatePassword = "";
+        Assert.Equal("Identity key protection configuration is required.", (await Assert.ThrowsAsync<InvalidOperationException>(() => Validator(settings).StartAsync(Token))).Message);
+    }
+
+    [Fact]
+    public void DeferredEmailIgnoresUnusedSmtpConfigurationButEnabledEmailStillValidatesBinding()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Identity:EmailEnabled"] = "false",
+            ["Identity:PublicOrigin"] = "https://localhost",
+            ["Identity:KnownProxies"] = "127.0.0.1",
+            ["Identity:Smtp:Port"] = "unused-not-a-number"
+        }).Build();
+        var services = new ServiceCollection().AddLogging();
+        services.AddChannelIdentity(configuration);
+        using var provider = services.BuildServiceProvider();
+        var settings = provider.GetRequiredService<IOptions<IdentitySettings>>().Value;
+        Assert.False(settings.EmailEnabled);
+        Assert.Equal("https://localhost", settings.PublicOrigin);
+        Assert.Equal("127.0.0.1", settings.KnownProxies);
+        Assert.Equal(587, settings.Smtp.Port);
+        configuration["Identity:EmailEnabled"] = "true";
+        Assert.Throws<InvalidOperationException>(() => IdentitySettings.BindFrom(configuration));
+        configuration["Identity:Smtp:Port"] = "465";
+        Assert.Equal(465, IdentitySettings.BindFrom(configuration).Smtp.Port);
+        configuration["Identity:EmailEnabled"] = "not-a-boolean";
+        Assert.Throws<InvalidOperationException>(() => IdentitySettings.BindFrom(configuration));
+    }
+
+    [Fact]
     public void KeyRingSurvivesAProviderRestartAndStoredKeysAreEncrypted()
     {
         using var temporary = new TemporaryKeys();
