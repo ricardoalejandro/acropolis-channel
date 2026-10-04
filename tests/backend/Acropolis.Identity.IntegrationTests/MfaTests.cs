@@ -62,7 +62,8 @@ public sealed class MfaTests(IdentityFixture database)
         await database.ResetAsync(Token); await using var api = new IdentityApiFactory(database); using var client = api.Client();
         var id = await User(api, "mfa-admin@example.test", true);
         var enrollment = await Enrollment(client, "mfa-admin@example.test", true);
-        Assert.True(enrollment.AuthenticatorUri.StartsWith("otpauth://totp/", StringComparison.Ordinal)); Assert.True(enrollment.AuthenticatorUri.Contains("digits=6&period=30", StringComparison.Ordinal));
+        var hasAuthenticatorScheme = enrollment.AuthenticatorUri.StartsWith("otpauth://totp/", StringComparison.Ordinal);
+        Assert.True(hasAuthenticatorScheme); Assert.True(enrollment.AuthenticatorUri.Contains("digits=6&period=30", StringComparison.Ordinal));
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/admin/users", Token)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/identity/mfa/enable", new MfaEnableRequest(enrollment.ChallengeToken, "123456"), Token)).StatusCode);
         var enabled = await Enable(client, enrollment);
@@ -141,7 +142,8 @@ public sealed class MfaTests(IdentityFixture database)
         Assert.Equal(HttpStatusCode.BadRequest, (await Write(client, "mfa/recovery-codes", new MfaReauthenticateRequest(Password, "invalid"))).StatusCode);
         using var rotated = await Write(client, "mfa/recovery-codes", new MfaReauthenticateRequest(Password, RecoveryCode: enabled.Codes[0])); Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
         var codes = (await rotated.Content.ReadFromJsonAsync<JsonElement>(Token)).GetProperty("recoveryCodes").Deserialize<string[]>()!;
-        Assert.Equal(10, codes.Length); Assert.False(codes.Any(code => enabled.Codes.Contains(code)));
+        Assert.Equal(10, codes.Length); var containsPreviousRecoveryCode = codes.Any(code => enabled.Codes.Contains(code));
+        Assert.False(containsPreviousRecoveryCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
         using var login = await Write(client, "login", new LoginRequest("mfa-settings@example.test", Password)); var challenge = (await login.Content.ReadFromJsonAsync<MfaChallengeView>(Token))!;
         Assert.Equal(HttpStatusCode.BadRequest, (await Write(client, "mfa/challenge", new MfaVerifyRequest(challenge.ChallengeToken, RecoveryCode: enabled.Codes[1]))).StatusCode);
