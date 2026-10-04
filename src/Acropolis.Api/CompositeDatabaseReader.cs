@@ -1,25 +1,71 @@
+using System.Collections.Frozen;
+using Acropolis.Api;
 using Acropolis.Catalog.Infrastructure;
 using Acropolis.Identity.Infrastructure;
 using Acropolis.Platform.Application;
 using Acropolis.Platform.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
-internal sealed class CompositeDatabaseReader(string connectionString) : IPlatformStateReader
+internal sealed class CompositeDatabaseReader : IPlatformStateReader
 {
+    private const string HistoryQuery = """
+        SELECT 'platform', "MigrationId" FROM platform."__EFMigrationsHistory"
+        UNION ALL
+        SELECT 'identity', "MigrationId" FROM identity."__EFMigrationsHistory"
+        UNION ALL
+        SELECT 'catalog', "MigrationId" FROM catalog."__EFMigrationsHistory"
+        """;
+    private readonly NpgsqlDataSource dataSource;
+    private readonly ReadinessDiagnostics diagnostics;
+    private readonly FrozenSet<(string Module, string Migration)> expected;
+    private readonly bool completeMetadata;
+
+    public CompositeDatabaseReader(NpgsqlDataSource dataSource, ReadinessDiagnostics diagnostics)
+    {
+        this.dataSource = dataSource;
+        this.diagnostics = diagnostics;
+        var platformOptions = new DbContextOptionsBuilder<PlatformDbContext>().UseNpgsql(dataSource,
+            provider => provider.MigrationsHistoryTable(PlatformDbContext.HistoryTable, PlatformDbContext.Schema));
+        using var platform = new PlatformDbContext(platformOptions.Options);
+        var identityOptions = new DbContextOptionsBuilder<IdentityDbContext>();
+        IdentityRegistration.ConfigureDatabase(identityOptions, dataSource);
+        using var identity = new IdentityDbContext(identityOptions.Options);
+        var catalogOptions = new DbContextOptionsBuilder<CatalogDbContext>();
+        CatalogRegistration.ConfigureDatabase(catalogOptions, dataSource);
+        using var catalog = new CatalogDbContext(catalogOptions.Options);
+        var histories = new[]
+        {
+            (Module: PlatformDbContext.Schema, Ids: platform.Database.GetMigrations().ToArray()),
+            (Module: IdentityDbContext.Schema, Ids: identity.Database.GetMigrations().ToArray()),
+            (Module: CatalogDbContext.Schema, Ids: catalog.Database.GetMigrations().ToArray())
+        };
+        completeMetadata = histories.All(history => history.Ids.Length > 0);
+        expected = histories.SelectMany(history => history.Ids.Select(id => (history.Module, id))).ToFrozenSet();
+    }
+
     public async Task<bool> IsCurrentAsync(CancellationToken cancellationToken)
     {
-        if (!await new PostgresPlatformStateReader(connectionString).IsCurrentAsync(cancellationToken)) return false;
-        var options = new DbContextOptionsBuilder<IdentityDbContext>();
-        IdentityRegistration.ConfigureDatabase(options, connectionString);
-        await using var identity = new IdentityDbContext(options.Options);
-        var expected = identity.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray();
-        var applied = (await identity.Database.GetAppliedMigrationsAsync(cancellationToken)).Order(StringComparer.Ordinal).ToArray();
-        if (expected.Length == 0 || !expected.SequenceEqual(applied, StringComparer.Ordinal)) return false;
-        var catalogOptions = new DbContextOptionsBuilder<CatalogDbContext>();
-        CatalogRegistration.ConfigureDatabase(catalogOptions, connectionString);
-        await using var catalog = new CatalogDbContext(catalogOptions.Options);
-        var catalogExpected = catalog.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray();
-        var catalogApplied = (await catalog.Database.GetAppliedMigrationsAsync(cancellationToken)).Order(StringComparer.Ordinal).ToArray();
-        return catalogExpected.Length > 0 && catalogExpected.SequenceEqual(catalogApplied, StringComparer.Ordinal);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!completeMetadata)
+        {
+            diagnostics.HistoryMismatch();
+            return false;
+        }
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(HistoryQuery, connection);
+        await using var rows = await command.ExecuteReaderAsync(cancellationToken);
+        var applied = new HashSet<(string Module, string Migration)>();
+        while (await rows.ReadAsync(cancellationToken))
+        {
+            if (!applied.Add((rows.GetString(0), rows.GetString(1))))
+            {
+                diagnostics.HistoryMismatch();
+                return false;
+            }
+        }
+        if (applied.SetEquals(expected)) return true;
+        diagnostics.HistoryMismatch();
+        return false;
     }
 }

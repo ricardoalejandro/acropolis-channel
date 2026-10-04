@@ -52,12 +52,26 @@ public sealed class PlatformTests
     {
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
+        var failures = 0;
         var service = new ReadinessService(new Reader(async token =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return true;
-        }), TimeSpan.FromSeconds(1));
+        }), TimeSpan.FromSeconds(1), _ => failures++);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CheckAsync(cancelled.Token));
+        Assert.Equal(0, failures);
+    }
+
+    [Fact]
+    public async Task ClientCancellationTakesPrecedenceOverAnAlreadyFaultedProbe()
+    {
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var failures = 0;
+        var service = new ReadinessService(new Reader(_ => Task.FromException<bool>(new InvalidOperationException("private failure"))),
+            TimeSpan.FromSeconds(1), _ => failures++);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CheckAsync(cancelled.Token));
+        Assert.Equal(0, failures);
     }
 
     [Fact]

@@ -57,6 +57,10 @@ La cobertura de Application mide decisiones de la capa sin infraestructura. Se e
 
 La carga de identidad utiliza 100.000 cuentas sintéticas, sesiones obtenidas mediante acceso real, consultas de perfil/readiness y búsqueda administrativa. El setup respeta el límite de acceso por IP. El umbral describe una concurrencia acotada y no acredita 1.000 usuarios simultáneos ni reproducción multimedia. El resumen contiene mediciones observadas. El runner utiliza la [imagen oficial de k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) con una versión fijada en Compose.
 
+Readiness utiliza una fuente de conexiones Npgsql compartida por Identity y Catalog y una consulta viva de los tres historiales EF. Los identificadores esperados se calculan desde las migraciones del binario; no se almacena en caché la disponibilidad de la base. PostgreSQL real comprueba historias faltantes, adicionales o desajustadas, tablas/permisos ausentes, bloqueo con plazo de dos segundos y recuperación posterior. La cancelación del cliente se distingue de una caída de la base.
+
+`scripts/qa-diagnostics.py` guarda capturas privadas antes/después de las cargas y antes del cleanup: presión del host, límites/contadores de contenedores propios y conexiones agregadas. Conserva únicamente campos permitidos del evento `DatabaseReadinessFailure`, sin cuerpos, SQL de usuarios, excepciones completas, configuración o credenciales. Los logs son una muestra acotada y no prueban ausencia ni conteo total de errores; k6 conserva ese conteo. Un fallo del diagnóstico se registra como parcial y no cambia el resultado de la prueba ni evita limpiar recursos propios.
+
 ## Backups manuales y restauración de prueba
 
 El respaldo manual usa la identidad ya configurada dentro del contenedor PostgreSQL. No muestra su contraseña ni requiere copiarla al shell. Escribe un archivo nuevo dentro de `.local/backups/` o `.local/qa/` y se niega a sobrescribirlo.

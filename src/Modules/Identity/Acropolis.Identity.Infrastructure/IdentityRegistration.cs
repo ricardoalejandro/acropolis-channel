@@ -1,3 +1,4 @@
+using Npgsql;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Acropolis.Identity.Application;
@@ -25,7 +26,7 @@ public static class IdentityRegistration
         });
         services.AddSingleton(TimeProvider.System);
         services.AddDbContextFactory<IdentityDbContext>((provider, options) =>
-            ConfigureDatabase(options, provider.GetRequiredService<IConfiguration>().GetConnectionString("Database")!));
+            ConfigureDatabase(options, provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddIdentityCore<ChannelUser>(options =>
         {
             options.Password.RequiredLength = 15;
@@ -81,4 +82,6 @@ public static class IdentityRegistration
     }
     public static void ConfigureDatabase(DbContextOptionsBuilder options, string connectionString) =>
         options.UseNpgsql(connectionString, provider => provider.MigrationsHistoryTable(IdentityDbContext.HistoryTable, IdentityDbContext.Schema).CommandTimeout(3));
+    public static void ConfigureDatabase(DbContextOptionsBuilder options, NpgsqlDataSource dataSource) =>
+        options.UseNpgsql(dataSource, provider => provider.MigrationsHistoryTable(IdentityDbContext.HistoryTable, IdentityDbContext.Schema).CommandTimeout(3));
 }

@@ -1,3 +1,5 @@
+using Acropolis.Api;
+using Npgsql;
 using Acropolis.Catalog.Infrastructure;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
@@ -37,6 +39,8 @@ builder.Services.Configure<BrotliCompressionProviderOptions>(options => options.
 builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.AddExceptionHandler<SafeExceptionHandler>();
+builder.Services.AddSingleton(services => DatabaseDataSource.Create(services.GetRequiredService<IConfiguration>().GetConnectionString("Database")));
+builder.Services.AddSingleton<ReadinessDiagnostics>();
 builder.Services.AddChannelIdentity(builder.Configuration);
 builder.Services.AddChannelCatalog(builder.Configuration);
 builder.Services.AddHostedService<IdentityConfigurationValidator>();
@@ -85,10 +89,11 @@ builder.Services.AddRateLimiter(options =>
 
 builder.Services.AddHostedService<DatabaseConfigurationValidator>();
 builder.Services.AddSingleton<GreetingService>();
-builder.Services.AddScoped<IPlatformStateReader>(services =>
-    new CompositeDatabaseReader(services.GetRequiredService<IConfiguration>().GetConnectionString("Database")!));
+builder.Services.AddSingleton<IPlatformStateReader>(services =>
+    new CompositeDatabaseReader(services.GetRequiredService<NpgsqlDataSource>(), services.GetRequiredService<ReadinessDiagnostics>()));
 builder.Services.AddScoped<ReadinessService>(services =>
-    new ReadinessService(services.GetRequiredService<IPlatformStateReader>(), TimeSpan.FromSeconds(2)));
+    new ReadinessService(services.GetRequiredService<IPlatformStateReader>(), TimeSpan.FromSeconds(2),
+        services.GetRequiredService<ReadinessDiagnostics>().Failure));
 
 var app = builder.Build();
 app.UseForwardedHeaders();

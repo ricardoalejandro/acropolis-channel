@@ -10,7 +10,7 @@ public sealed record ReadinessResult(bool IsReady)
     public string Status => IsReady ? "ok" : "not_ready";
 }
 
-public sealed class ReadinessService(IPlatformStateReader stateReader, TimeSpan timeout)
+public sealed class ReadinessService(IPlatformStateReader stateReader, TimeSpan timeout, Action<Exception>? diagnoseFailure = null)
 {
     public async Task<ReadinessResult> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -31,9 +31,11 @@ public sealed class ReadinessService(IPlatformStateReader stateReader, TimeSpan 
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception error)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             await deadline.CancelAsync();
+            diagnoseFailure?.Invoke(error);
             return new ReadinessResult(false);
         }
     }

@@ -94,9 +94,19 @@ safe_cleanup_project() {
   done
   ! docker network inspect "$network" >/dev/null 2>&1
 }
+capture_diagnostics() {
+  local diagnostic_stage="$1"
+  if ! python3 scripts/qa-diagnostics.py --project "$QA_PROJECT" \
+    --output "$QA_ARTIFACTS/diagnostics-$diagnostic_stage.json" \
+    --stage "$diagnostic_stage" --since "$started_at" \
+    > "$QA_ARTIFACTS/diagnostics-$diagnostic_stage.log" 2>&1; then
+    echo "QA diagnostics partial or unavailable: $diagnostic_stage" >&2
+  fi
+}
 cleanup() {
   local exit_code=$? cleanup_failed=false status=failed eligible=false
   trap - EXIT INT TERM
+  capture_diagnostics "cleanup-$stage"
   : > "$QA_ARTIFACTS/cleanup.log"
   if [[ "$reference_created" == true ]] && ! drop_schema_reference >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   if ! safe_cleanup_project "$QA_PROJECT" "$QA_DATABASE" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
@@ -375,8 +385,12 @@ SQL
 run_step synthetic_catalog_count catalog_fixture_count
 run_step synthetic_catalog_repeat compose run --rm --no-deps migrations qa-seed-catalog --count 10000
 run_step synthetic_catalog_count_repeat catalog_fixture_count
+capture_diagnostics catalog-load-before
 run_step catalog_load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-catalog-summary.json /qa-tools/catalog.js
+capture_diagnostics catalog-load-after
+capture_diagnostics identity-load-before
 run_step identity_load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-identity-summary.json /qa-tools/identity.js
+capture_diagnostics identity-load-after
 synthetic_session_count() {
   local count
   count="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
