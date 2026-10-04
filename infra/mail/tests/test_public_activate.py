@@ -58,6 +58,7 @@ class ActivationTests(unittest.TestCase):
             locked=Mock(side_effect=lambda root: nullcontext()),
             check_ptr_public=Mock(return_value=PTR),
             check_public=Mock(return_value={'verified': True, **DNS}),
+            check_smtp_network=Mock(return_value={'owner_verified': True}),
             export_cert=Mock(return_value={'serving_verified': True}),
             container_state=Mock(return_value=True),
         )
@@ -141,6 +142,26 @@ class ActivationTests(unittest.TestCase):
             self.invoke('publish')
         self.ops.export_cert.assert_not_called()
         self.mocks['compose'].assert_not_called()
+
+    def test_missing_or_unowned_smtp_network_blocks_before_certificate_or_mutation(self):
+        self.prepare()
+        self.ops.check_smtp_network.side_effect = act.ActivationError('unowned SMTP network')
+        with self.assertRaisesRegex(act.ActivationError, 'unowned SMTP'):
+            self.invoke('publish')
+        self.ops.check_public.assert_not_called()
+        self.ops.export_cert.assert_not_called()
+        self.mocks['compose'].assert_not_called()
+        self.assertFalse(act.route_active(self.route, self.source))
+
+    def test_active_retry_rejects_old_public_submission_without_enabling_delivery(self):
+        self.active()
+        self.ops.check_public.side_effect = [ {'verified': True}, act.ActivationError('public465 forbidden') ]
+        before = (self.root / 'config/postfix-main.cf').read_bytes()
+        with self.assertRaisesRegex(act.ActivationError, 'public465 forbidden'):
+            self.invoke('publish')
+        self.assertEqual((self.root / 'config/postfix-main.cf').read_bytes(), before)
+        self.mocks['compose'].assert_not_called()
+        self.assertEqual(self.route.read_bytes(), self.candidate)
 
     def test_publish_requires_prepared_router(self):
         with self.assertRaisesRegex(act.ActivationError, 'Prepare'):

@@ -26,6 +26,19 @@ def command(args, capture=False, env=None, check=True):
 def compose(*args, env=None, capture=False, check=True):
     return command(['docker', 'compose', '-p', PROJECT, *args], capture=capture, env=env, check=check)
 
+def validate_compose_smtp_network(settings):
+    # Compose attaches this network even when email flows are disabled.
+    own_mail = (settings.get('IDENTITY_EMAIL_ENABLED', 'true').lower() == 'true'
+                and settings.get('IDENTITY_SMTP_HOST') == 'mail.naperu.cloud')
+    arguments = ['python3', str(ROOT / 'infra/mail/scripts/mail-ops.py'), 'check-smtp-network']
+    if not own_mail:
+        arguments.append('--allow-empty')
+    try:
+        command(arguments, capture=True)
+    except (OSError, subprocess.CalledProcessError):
+        raise RuntimeError('Private SMTP network is unavailable or outside the owned topology; private output suppressed') from None
+
+
 def image_id(ref):
     return command(['docker', 'image', 'inspect', ref, '--format', '{{.Id}}'], capture=True)
 
@@ -165,6 +178,7 @@ def main():
         email_mode = settings.get('IDENTITY_EMAIL_ENABLED', 'true').lower()
         if email_mode not in ('true', 'false'):
             raise RuntimeError('IDENTITY_EMAIL_ENABLED must be true or false')
+        validate_compose_smtp_network(settings)
         expected_ip = settings.get('PUBLIC_VPS_IPV4')
         if not expected_ip:
             raise RuntimeError('Configure PUBLIC_VPS_IPV4 privately')

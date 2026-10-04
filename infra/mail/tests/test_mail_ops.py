@@ -270,10 +270,9 @@ class MailOpsTests(unittest.TestCase):
         self.assertEqual(len(list((self.root / "certs/versions").iterdir())), 1)
         self.assertEqual(json.loads(statefile.read_bytes())["status"], "passed")
 
-    def test_mail_tls_endpoint_allows_only_own_stage_or_exact_public_binding(self):
+    def test_mail_tls_endpoint_allows_only_single_own_loopback_binding(self):
         valid = (("127.0.0.1", 2465, ("127.0.0.1", 2465)),
-                 ("0.0.0.0", 465, ("127.0.0.1", 465)),
-                 (ops.IP, 465, (ops.IP, 465)))
+                 ("127.0.0.1", 465, ("127.0.0.1", 465)))
         for address, port, endpoint in valid:
             payload = json.dumps([{"HostIp": address, "HostPort": str(port)}]).encode()
             with mock.patch.object(ops, "container_state", return_value=True), \
@@ -281,6 +280,10 @@ class MailOpsTests(unittest.TestCase):
                 self.assertEqual(ops.mail_tls_endpoint(), endpoint)
                 self.assertEqual(ops.loopback_tls_port(), port)
         for bindings in (None, [], [{"HostIp": "192.0.2.1", "HostPort": "465"}],
+                         [{"HostIp": ops.IP, "HostPort": "465"}],
+                         [{"HostIp": "0.0.0.0", "HostPort": "465"}],
+                         [{"HostIp": "", "HostPort": "465"}],
+                         [{"HostIp": "::1", "HostPort": "465"}],
                          [{"HostIp": "127.0.0.1", "HostPort": "444"}],
                          [{"HostIp": ops.IP, "HostPort": "2465"}],
                          [{"HostIp": "0.0.0.0", "HostPort": "2465"}],
@@ -297,7 +300,7 @@ class MailOpsTests(unittest.TestCase):
                 ops.mail_tls_endpoint()
             runner.assert_not_called()
 
-    def test_public_bound_certificate_check_uses_exact_endpoint_sni_and_trust(self):
+    def test_loopback_certificate_check_uses_exact_endpoint_sni_and_normal_trust(self):
         secure = mock.MagicMock()
         secure.getpeercert.return_value = b"synthetic certificate DER"
         context = mock.MagicMock()
@@ -305,12 +308,13 @@ class MailOpsTests(unittest.TestCase):
         with mock.patch.object(ops.ssl, "create_default_context", return_value=context) as factory, \
              mock.patch.object(ops.socket, "create_connection") as connect:
             expected = ops.hashlib.sha256(b"synthetic certificate DER").hexdigest()
-            self.assertEqual(ops.served_certificate_fingerprint((ops.IP, 465)), expected)
-            connect.assert_called_once_with((ops.IP, 465), timeout=10)
+            self.assertEqual(ops.served_certificate_fingerprint(("127.0.0.1", 465)), expected)
+            connect.assert_called_once_with(("127.0.0.1", 465), timeout=10)
             factory.assert_called_once_with(cafile=None)
             self.assertEqual(context.wrap_socket.call_args.kwargs["server_hostname"], ops.HOST)
-        with self.assertRaises(ops.OpsError):
-            ops.served_certificate_fingerprint(("192.0.2.1", 465))
+        for endpoint in (("192.0.2.1", 465), (ops.IP, 465), ("0.0.0.0", 465)):
+            with self.assertRaises(ops.OpsError):
+                ops.served_certificate_fingerprint(endpoint)
 
     def test_restore_preserves_uid_gid_of_mail_webmail_and_certificate_symlinks(self):
         self.snapshot_source()

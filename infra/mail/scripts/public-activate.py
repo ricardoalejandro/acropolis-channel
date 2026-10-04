@@ -373,6 +373,7 @@ def activate(operation, *, root=ROOT, route=ROUTE, source=SOURCE, ops=None):
             raise ActivationError('Prepare the certificate router before publishing.')
         check_source(root, source)
         inspect_services(root)  # No action may target an unowned container.
+        ops.check_smtp_network(require_mail=False)
         ops.check_public()
         ops.export_cert(root=root)
         if operation == 'publish' and active:

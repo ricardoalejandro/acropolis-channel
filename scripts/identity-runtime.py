@@ -92,6 +92,16 @@ def validate_settings(settings):
     sender = settings["IDENTITY_SMTP_FROM_EMAIL"]
     if sender.count("@") != 1 or any(character.isspace() for character in sender):
         raise RuntimeError("SMTP sender must be an email address")
+    if settings.get("IDENTITY_SMTP_HOST", "").strip().rstrip(".").lower() == "mail.naperu.cloud":
+        if settings["IDENTITY_SMTP_HOST"] != "mail.naperu.cloud" or port != 465 or settings.get("IDENTITY_SMTP_SECURITY") != "ssl":
+            raise RuntimeError("Own SMTP requires its private canonical hostname, port 465 and implicit TLS")
+
+
+def validate_smtp_network(settings):
+    if (settings.get("IDENTITY_EMAIL_ENABLED", "true").lower() == "true"
+            and settings.get("IDENTITY_SMTP_HOST") == "mail.naperu.cloud"):
+        # This helper is read-only; creation is an explicit mail maintenance operation.
+        command(["python3", str(ROOT / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"])
 
 
 def prepare():
@@ -172,6 +182,7 @@ def check():
                                  for value in settings["IDENTITY_KNOWN_PROXIES"].split(",")))
     if configured != actual:
         raise RuntimeError("Trusted proxy addresses changed; run identity-runtime.py --prepare")
+    validate_smtp_network(settings)
     if settings.get("IDENTITY_EMAIL_ENABLED", "true").lower() == "false":
         print("Identity runtime validated with email flows explicitly disabled.")
     else:

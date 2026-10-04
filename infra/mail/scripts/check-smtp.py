@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Controlled mail smoke checks. Credentials and message bodies never enter output."""
-import argparse, email, imaplib, json, smtplib, socket, ssl, subprocess, time, uuid
+import argparse, email, imaplib, importlib.util, json, smtplib, socket, ssl, time, uuid
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from pathlib import Path
 ROOT=Path('/root/proyect/naperu-mail')
 HOST='mail.naperu.cloud'
+IP='72.61.37.46'
+def production_contract():
+    spec=importlib.util.spec_from_file_location('smtp_probe_mail_ops',Path(__file__).with_name('mail-ops.py'))
+    ops=importlib.util.module_from_spec(spec);spec.loader.exec_module(ops)
+    return {'exposure':ops.check_public_ports(),'smtp_network':ops.check_smtp_network(require_mail=True)}
+def probe_endpoints(public):
+    # Browser HTTPS is public; authenticated mail endpoints remain private.
+    return {'smtp':('127.0.0.1',465 if public else 2465),
+            'imap':('127.0.0.1',993 if public else 2993),
+            'transfer':(IP if public else '127.0.0.1',25 if public else 2525)}
 class SMTP(smtplib.SMTP_SSL):
     def _get_socket(self, host, port, timeout):
         raw=socket.create_connection((host,port),timeout)
@@ -18,17 +28,18 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--public',action='store_true');parser.add_argument('--recipient');args=parser.parse_args()
     creds=json.loads((ROOT/'.local/credentials.json').read_text())
     context=ssl.create_default_context() if args.public else ssl.create_default_context(cafile=str(ROOT/'certs/fullchain.pem'))
-    endpoint=HOST if args.public else '127.0.0.1'; smtpport=465 if args.public else 2465;imapport=993 if args.public else 2993;transferport=25 if args.public else 2525
+    endpoints=probe_endpoints(args.public);endpoint,smtpport=endpoints['smtp'];imapport=endpoints['imap'][1];transferhost,transferport=endpoints['transfer']
     result=[]
     def good(name): result.append({'check':name,'passed':True})
     try:
+        contract=production_contract() if args.public else None
         with SMTP(endpoint,smtpport,context=context,timeout=10) as client:
             client.login('notificaciones@naperu.cloud',creds['notificaciones@naperu.cloud']);good('tls_authentication')
         with SMTP(endpoint,smtpport,context=context,timeout=10) as client:
             try: client.login('notificaciones@naperu.cloud','invalid-password-for-negative-test')
             except smtplib.SMTPAuthenticationError: good('invalid_password_rejected')
             else: raise RuntimeError('invalid password accepted')
-        with smtplib.SMTP(endpoint,transferport,timeout=15) as client:
+        with smtplib.SMTP(transferhost,transferport,timeout=15) as client:
             client.ehlo('probe.naperu.cloud');client.mail('outside@example.com');code,_=client.rcpt('outside@example.net')
             if code<400: raise RuntimeError('unauthenticated relay accepted')
             good('unauthenticated_external_relay_rejected')
@@ -69,7 +80,7 @@ def main():
             with SMTP(endpoint,smtpport,context=context,timeout=30) as client:
                 client.login('notificaciones@naperu.cloud',creds['notificaciones@naperu.cloud']);client.send_message(message)
             good('designated_external_message_queued_not_yet_delivered')
-        report={'status':'passed','public':args.public,'checks':result,'created_at_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
+        report={'status':'passed','public':args.public,'connection_contract':contract,'checks':result,'created_at_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
         target=ROOT/'.local'/('smtp-public-report.json' if args.public else 'smtp-stage-report.json');target.write_text(json.dumps(report,indent=2));target.chmod(0o600)
         print(json.dumps(report))
     except Exception as error:

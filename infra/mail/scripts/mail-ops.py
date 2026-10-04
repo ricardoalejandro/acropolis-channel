@@ -14,7 +14,6 @@ import posixpath
 import re
 import secrets
 import shutil
-import smtplib
 import socket
 import ssl
 import stat
@@ -33,6 +32,10 @@ RESOLVERS = ("8.8.8.8", "1.1.1.1")
 PTR_LEGACY = "srv1095953.hstgr.cloud"
 PTR_ZONE = "37.61.72.in-addr.arpa"
 PTR_AUTHORITIES = ("rdns1.hostinger.com", "rdns2.hostinger.com")
+SMTP_NETWORK = "naperu-mail-smtp"
+SMTP_NETWORK_LABELS = {"com.naperu.mail.owner": "naperu-mail",
+                       "com.naperu.mail.role": "application-smtp"}
+APP_ROOT = Path("/root/proyect/acropolis-channel")
 CONTAINER = "naperu-mail-mailserver-1"
 CONTAINERS = ("naperu-mail-mailserver-1", "naperu-mail-roundcube-1")
 COMPONENTS = ("config", "certs", "mail-data", "mail-state", "roundcube-db",
@@ -218,22 +221,147 @@ def mail_tls_endpoint():
                   '{{json (index .NetworkSettings.Ports "465/tcp")}}', CONTAINER])
     try:
         bindings = json.loads(output)
-        endpoints = set()
-        for item in bindings:
-            address, port = item["HostIp"], int(item["HostPort"])
-            if (address, port) == ("127.0.0.1", 2465):
-                endpoints.add(("127.0.0.1", 2465))
-            elif port == 465 and address in ("", "0.0.0.0", "127.0.0.1"):
-                endpoints.add(("127.0.0.1", 465))
-            elif (address, port) == (IP, 465):
-                endpoints.add((IP, 465))
-            else:
-                raise ValueError("binding")
-        if len(endpoints) != 1:
+        if not isinstance(bindings, list) or len(bindings) != 1:
             raise ValueError("binding count")
-        return endpoints.pop()
+        item = bindings[0]
+        endpoint = (item["HostIp"], int(item["HostPort"]))
+        if endpoint not in {("127.0.0.1", 2465), ("127.0.0.1", 465)}:
+            raise ValueError("binding")
+        return endpoint
     except (TypeError, ValueError, KeyError) as exc:
-        raise OpsError("El binding TLS no es el endpoint propio esperado de staging o publicación.") from exc
+        raise OpsError("TLS operativo requiere un único binding loopback propio de staging o producción.") from exc
+
+
+def validate_public_ports(bindings):
+    """No broad binding, IPv6 alias, alternate port or published submission is allowed."""
+    expected = {"25/tcp": [{"HostIp": IP, "HostPort": "25"}],
+                "465/tcp": [{"HostIp": "127.0.0.1", "HostPort": "465"}],
+                "993/tcp": [{"HostIp": "127.0.0.1", "HostPort": "993"}]}
+    if not isinstance(bindings, dict):
+        raise OpsError("No se pudo demostrar la exposición mínima del correo.")
+    # NetworkSettings.Ports may contain image EXPOSE entries with no host binding.
+    actual = {name: items for name, items in bindings.items() if items is not None and items != []}
+    if actual != expected:
+        raise OpsError("Correo público requiere sólo TCP25 en IPv4 propio y 465/993 exclusivamente loopback.")
+    return {"public_tcp_ports": [25], "loopback_tcp_ports": [465, 993],
+            "submission_587_published": False}
+
+
+def check_public_ports():
+    for name in CONTAINERS:
+        container_state(name)
+        output = run(["docker", "inspect", "--format", "{{json .HostConfig.PortBindings}}", name])
+        try:
+            bindings = json.loads(output)
+        except (ValueError, TypeError) as exc:
+            raise OpsError("Bindings propios de correo inválidos.") from exc
+        if name == CONTAINER:
+            proof = validate_public_ports(bindings)
+        elif not isinstance(bindings, (dict, type(None))) or (bindings and any(items for items in bindings.values())):
+            raise OpsError("Webmail debe publicarse sólo por el router HTTPS propio, sin puerto del host.")
+    return proof
+
+
+def read_smtp_network(*, missing_ok=False):
+    # No environment, credential, unrelated network or container metadata is read.
+    template = "\n".join("{{json ." + key + "}}" for key in
+                         ("Name", "Id", "Driver", "Scope", "Internal", "EnableIPv6", "Options", "Labels", "Containers"))
+    try:
+        result = subprocess.run(["docker", "network", "inspect", "--format", template, SMTP_NETWORK],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OpsError("No se pudo comprobar la red SMTP propia.") from exc
+    if result.returncode:
+        if missing_ok and ("network " + SMTP_NETWORK + " not found").encode() in result.stderr:
+            return None
+        raise OpsError("No se pudo comprobar la red SMTP propia.")
+    keys = ("Name", "Id", "Driver", "Scope", "Internal", "EnableIPv6", "Options", "Labels", "Containers")
+    try:
+        values = [json.loads(line) for line in result.stdout.decode().splitlines()]
+        if len(values) != len(keys):
+            raise ValueError("shape")
+        return dict(zip(keys, values))
+    except (ValueError, TypeError) as exc:
+        raise OpsError("Metadatos de la red SMTP propia inválidos.") from exc
+
+
+def validate_smtp_network(network, members, *, require_mail=False):
+    """Validate an explicitly owned internal bridge and every attached workload."""
+    if (not isinstance(network, dict) or network.get("Name") != SMTP_NETWORK
+            or network.get("Driver") != "bridge" or network.get("Scope") != "local"
+            or network.get("Internal") is not True or network.get("EnableIPv6") is not False
+            or network.get("Options") not in (None, {})
+            or network.get("Labels") != SMTP_NETWORK_LABELS
+            or not re.fullmatch(r"[a-f0-9]{64}", str(network.get("Id", "")))):
+        raise OpsError("La red SMTP debe ser el bridge interno propio con etiquetas exactas.")
+    attached = network.get("Containers")
+    if not isinstance(attached, dict) or not isinstance(members, dict) or set(attached) != set(members):
+        raise OpsError("No se pudo demostrar cada miembro de la red SMTP propia.")
+    mail_count = 0
+    for identifier, member in members.items():
+        labels = member.get("labels", {}) if isinstance(member, dict) else {}
+        if not isinstance(labels, dict):
+            raise OpsError("Etiquetas de miembro SMTP inválidas.")
+        project = labels.get("com.docker.compose.project")
+        service = labels.get("com.docker.compose.service")
+        allowed_mail = project == "naperu-mail" and service == "mailserver"
+        allowed_app = project == "acropolis-channel" and service in ("web", "migrations")
+        directory = str(ROOT if allowed_mail else APP_ROOT)
+        if (not (allowed_mail or allowed_app)
+                or labels.get("com.docker.compose.project.working_dir") != directory):
+            raise OpsError("La red SMTP contiene un servicio fuera de los proyectos y roles autorizados.")
+        networks = member.get("networks", {})
+        endpoint = networks.get(SMTP_NETWORK, {}) if isinstance(networks, dict) else {}
+        if not isinstance(endpoint, dict):
+            raise OpsError("Endpoint de miembro SMTP inválido.")
+        aliases = endpoint.get("Aliases") or []
+        if (endpoint.get("NetworkID") != network["Id"] or not isinstance(aliases, list)
+                or any(not isinstance(alias, str) for alias in aliases)):
+            raise OpsError("El miembro SMTP no corresponde a la red propia comprobada.")
+        normalized_aliases = [alias.casefold().rstrip(".") for alias in aliases]
+        if allowed_mail:
+            mail_count += 1
+            if (set(networks) != {"naperu-mail-private", SMTP_NETWORK}
+                    or aliases.count(HOST) != 1 or normalized_aliases.count(HOST) != 1):
+                raise OpsError("DMS requiere sólo sus dos redes privadas y el alias TLS exacto.")
+        elif HOST in normalized_aliases:
+            raise OpsError("El alias SMTP exacto sólo puede pertenecer al mailserver propio.")
+    if mail_count > 1 or (require_mail and mail_count != 1):
+        raise OpsError("La red SMTP requiere exactamente un mailserver propio activo.")
+    return {"name": SMTP_NETWORK, "internal": True, "owner_verified": True,
+            "members_verified": len(members), "mailserver_attached": mail_count == 1}
+
+
+def check_smtp_network(*, require_mail=False):
+    network = read_smtp_network()
+    attached = network.get("Containers")
+    if not isinstance(attached, dict):
+        raise OpsError("Miembros de la red SMTP no disponibles.")
+    members = {}
+    for identifier in attached:
+        if not re.fullmatch(r"[a-f0-9]{64}", identifier):
+            raise OpsError("Identidad de miembro SMTP inválida.")
+        output = run(["docker", "inspect", "--format",
+                      "{{json .Config.Labels}}\n{{json .NetworkSettings.Networks}}", identifier], timeout=15)
+        try:
+            labels, networks = [json.loads(line) for line in output.decode().splitlines()]
+            members[identifier] = {"labels": labels, "networks": networks}
+        except (ValueError, TypeError) as exc:
+            raise OpsError("No se pudo verificar el miembro SMTP propio.") from exc
+    proof = validate_smtp_network(network, members, require_mail=require_mail)
+    if read_smtp_network() != network:
+        raise OpsError("La red SMTP cambió durante la verificación; reintentar sin modificarla.")
+    return proof
+
+
+def prepare_smtp_network():
+    """Create only the absent scoped bridge; never adopt or reconfigure another network."""
+    if read_smtp_network(missing_ok=True) is None:
+        args = ["docker", "network", "create", "--driver", "bridge", "--internal"]
+        for key, value in SMTP_NETWORK_LABELS.items():
+            args += ["--label", key + "=" + value]
+        run(args + [SMTP_NETWORK], timeout=30)
+    return check_smtp_network()
 
 
 def loopback_tls_port():
@@ -242,7 +370,7 @@ def loopback_tls_port():
 
 
 def served_certificate_fingerprint(endpoint, *, cafile=None, timeout=10):
-    if endpoint not in {("127.0.0.1", 2465), ("127.0.0.1", 465), (IP, 465)}:
+    if endpoint not in {("127.0.0.1", 2465), ("127.0.0.1", 465)}:
         raise OpsError("Endpoint TLS fuera del ámbito propio.")
     # SNI and hostname validation remain exact even before public DNS is available.
     context = ssl.create_default_context(cafile=str(cafile) if cafile else None)
@@ -793,10 +921,16 @@ def check_ptr_public():
 
 
 def tls_socket(host, port):
+    if (host, port) in {(HOST, 443), (WEBMAIL, 443)}:
+        address = IP
+    elif host == HOST and port in (465, 993):
+        address = "127.0.0.1"
+    else:
+        raise OpsError("Endpoint TLS fuera del contrato de correo propio.")
     context = ssl.create_default_context()
-    with socket.create_connection((IP, port), timeout=12) as raw:
+    with socket.create_connection((address, port), timeout=12) as raw:
         with context.wrap_socket(raw, server_hostname=host) as secure:
-            secure.getpeercert()  # Normal system trust and hostname verification are mandatory.
+            secure.getpeercert()  # Exact SNI and normal system trust, including private connections.
 
 
 def check_public(*, mail_tls=False):
@@ -807,22 +941,21 @@ def check_public(*, mail_tls=False):
                 raise OpsError("DNS público pendiente: A exacto y ausencia de AAAA requeridos en ambos resolvers.")
             checks.append(resolver + "/" + host)
     ptr_report = check_ptr_public()
+    exposure = check_public_ports() if mail_tls else None
+    network = check_smtp_network(require_mail=True) if mail_tls else None
     try:
         for host in (HOST, WEBMAIL):
             tls_socket(host, 443)
         if mail_tls:
             for port in (465, 993):
                 tls_socket(HOST, port)
-            with smtplib.SMTP(HOST, 587, timeout=12) as client:
-                client.ehlo()
-                client.starttls(context=ssl.create_default_context())
-                client.ehlo()
-    except (OSError, ssl.SSLError, smtplib.SMTPException) as exc:
-        raise OpsError("La comprobación TLS pública con confianza normal no pasó.") from exc
+    except (OSError, ssl.SSLError) as exc:
+        raise OpsError("La comprobación TLS con confianza normal no pasó.") from exc
     return {"verified": True, "dns_checks": len(checks) * 2 + ptr_report["dns_queries"],
-
             "ptr": ptr_report, "propagation_pending": ptr_report["propagation_pending"],
-            "tls": ["mail:443", "webmail:443"] + (["mail:465", "mail:993", "mail:587"] if mail_tls else [])}
+            "exposure": exposure, "smtp_network": network,
+            "tls": ["mail:443", "webmail:443"] +
+                   (["loopback:465/sni=mail.naperu.cloud", "loopback:993/sni=mail.naperu.cloud"] if mail_tls else [])}
 
 
 def main():
@@ -830,6 +963,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("export-cert")
     commands.add_parser("init-backup-key")
+    commands.add_parser("prepare-smtp-network")
+    network_check = commands.add_parser("check-smtp-network")
+    network_check.add_argument("--allow-empty", action="store_true",
+                               help="Valida propiedad y miembros sin exigir DMS; sólo para correo de app deshabilitado o externo.")
     backup_command = commands.add_parser("backup")
     backup_command.add_argument("--offline", action="store_true",
                                 help="Exige ambos contenedores propios detenidos o ausentes.")
@@ -847,6 +984,9 @@ def main():
             raise OpsError("Esta utilidad administrativa exige root.")
         if args.command == "check-public":
             result = check_public(mail_tls=args.mail_tls)
+        elif args.command in ("prepare-smtp-network", "check-smtp-network"):
+            with locked(ROOT):
+                result = prepare_smtp_network() if args.command == "prepare-smtp-network" else check_smtp_network(require_mail=not args.allow_empty)
         else:
             with locked(ROOT):
                 if args.command == "export-cert":

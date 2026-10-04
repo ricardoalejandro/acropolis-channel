@@ -53,6 +53,7 @@ services:
     networks:
     - private
     - egress
+    - application_smtp
     read_only: true
     tmpfs:
     - /tmp:size=64m,mode=1777
@@ -109,6 +110,7 @@ services:
       publication:
         aliases:
         - acropolis-channel-web
+      application_smtp: {}
     depends_on:
       db:
         condition: service_healthy
@@ -126,6 +128,9 @@ networks:
     name: ${TRAEFIK_NETWORK:?Configure TRAEFIK_NETWORK}
   egress:
     driver: bridge
+  application_smtp:
+    external: true
+    name: naperu-mail-smtp
 volumes:
   database: null
   data_protection: null
