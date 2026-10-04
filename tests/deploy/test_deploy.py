@@ -132,6 +132,10 @@ class DeploymentTests(unittest.TestCase):
             return 0
         if args == ["python3", "scripts/identity-runtime.py", "--check"]:
             return 0
+        smtp_network = ["python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"]
+        if args in (smtp_network, smtp_network + ["--allow-empty"]):
+            self.assertTrue(capture, "Topology helper output must stay private")
+            return "{}"
         if args[:2] == ["bash", "scripts/backup-db.sh"]:
             output = Path(args[args.index("--output") + 1])
             self.assertTrue(output.is_relative_to(self.local / "backups"))
@@ -214,6 +218,83 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.execute()
         self.assert_not_activated()
+
+    def smtp_network_calls(self):
+        expected = ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network")
+        return [args for kind, args in self.operations if kind == "command" and args[:3] == expected]
+
+    def assert_network_verified_before_mutation(self):
+        calls = self.smtp_network_calls()
+        self.assertEqual(len(calls), 1)
+        guard_index = self.operations.index(("command", calls[0]))
+        mutations = [index for index, (kind, args) in enumerate(self.operations)
+                     if (kind == "compose" and args[0] in ("up", "--profile", "stop"))
+                     or (kind == "command" and args[:2] == ("bash", "scripts/backup-db.sh"))]
+        self.assertTrue(mutations, "Fixture must exercise a real deployment sequence")
+        self.assertTrue(all(index > guard_index for index in mutations))
+
+    def test_owned_smtp_requires_attached_mailserver_before_backup_runner_and_web(self):
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=true\nIDENTITY_SMTP_HOST=mail.naperu.cloud\n")
+        self.assertEqual(self.execute(), 0)
+        self.assertEqual(self.smtp_network_calls(), [
+            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network")])
+        self.assert_network_verified_before_mutation()
+        self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
+
+    def test_disabled_owned_smtp_still_validates_network_and_allows_no_mailserver(self):
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=false\nIDENTITY_SMTP_HOST=mail.naperu.cloud\n")
+        self.assertEqual(self.execute(), 0)
+        self.assertEqual(self.smtp_network_calls(), [
+            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network", "--allow-empty")])
+        self.assert_network_verified_before_mutation()
+        self.assertFalse(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
+
+    def test_external_smtp_still_validates_attached_network_before_activation(self):
+        with (self.root / ".env").open("a") as handle:
+            handle.write("IDENTITY_EMAIL_ENABLED=true\nIDENTITY_SMTP_HOST=smtp.acropolis.test\n")
+        self.assertEqual(self.execute(), 0)
+        self.assertEqual(self.smtp_network_calls(), [
+            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network", "--allow-empty")])
+        self.assert_network_verified_before_mutation()
+        self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
+
+    def test_invalid_private_network_blocks_enabled_and_disabled_deployments_without_mutation(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        original = self.command.side_effect
+        network_prefix = ["python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"]
+
+        def unavailable_network(args, **kwargs):
+            if args[:3] == network_prefix:
+                self.operations.append(("command", tuple(args)))
+                self.assertTrue(kwargs.get("capture"))
+                raise subprocess.CalledProcessError(1, args, output="synthetic-private-response")
+            return original(args, **kwargs)
+
+        self.command.side_effect = unavailable_network
+        for mode in ("true", "false"):
+            with self.subTest(email_enabled=mode):
+                self.operations.clear()
+                self.compose.reset_mock()
+                self.ready.reset_mock()
+                self.smoke.reset_mock()
+                candidate = previous_env + "IDENTITY_EMAIL_ENABLED=" + mode + "\nIDENTITY_SMTP_HOST=mail.naperu.cloud\n"
+                (self.root / ".env").write_text(candidate)
+                with self.assertRaisesRegex(RuntimeError, "Private SMTP network.*private output suppressed") as error:
+                    self.execute()
+                expected = tuple(network_prefix + ([] if mode == "true" else ["--allow-empty"]))
+                self.assertEqual(self.smtp_network_calls(), [expected])
+                self.assert_not_activated()
+                self.assertEqual(self.running_image, OLD_ID)
+                self.assertEqual((self.root / ".env").read_text(), candidate)
+                self.assertEqual(self.route.read_text(), self.previous_route)
+                self.assertEqual((self.local / "last-active-deployment").read_text().strip(), str(previous))
+                self.assertEqual((self.local / "last-deployment").read_text().strip(), str(previous))
+                self.assertEqual([entry.name for entry in (self.local / "deployments").iterdir()], ["previous"])
+                self.assertFalse((self.local / "backups").exists())
+                self.assertNotIn("synthetic-private-response", str(error.exception))
+                self.assertNotIn("synthetic-private-response", self.stdout.getvalue())
 
     def test_identity_backup_preserves_protector_and_keyring_in_private_directory(self):
         source = self.local / "identity/key-protector.pfx"
