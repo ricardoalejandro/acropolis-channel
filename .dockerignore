@@ -18,3 +18,7 @@ work/
 /artifacts/
 
 **/dist-preview/
+
+# Local code-analysis artifacts
+.graphify/
+.graphifyignore
