@@ -329,6 +329,9 @@ SELECT CASE WHEN
   AND NOT has_schema_privilege('acropolis_app', 'identity', 'CREATE')
   AND has_table_privilege('acropolis_app', 'identity."__EFMigrationsHistory"', 'SELECT')
   AND NOT has_table_privilege('acropolis_app', 'identity."__EFMigrationsHistory"', 'INSERT')
+  AND NOT has_table_privilege('acropolis_app', 'identity."Audit"', 'UPDATE')
+  AND NOT has_table_privilege('acropolis_app', 'identity."Audit"', 'DELETE')
+  AND NOT has_table_privilege('acropolis_app', 'identity."Bootstrap"', 'INSERT')
   AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'identity') = 'acropolis_migrator'
   AND NOT has_schema_privilege('acropolis_app', 'platform', 'CREATE')
   AND has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'SELECT')

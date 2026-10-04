@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,7 +37,7 @@ public sealed class IdentityTests(IdentityFixture database)
         await Task.WhenAll(new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token), new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token));
         await using var context = database.Context();
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Single(await context.Database.GetAppliedMigrationsAsync(Token));
+        Assert.Equal(context.Database.GetMigrations(), await context.Database.GetAppliedMigrationsAsync(Token));
         foreach (var sql in new[] { "CREATE TABLE identity.forbidden(id int)", "INSERT INTO identity.\"__EFMigrationsHistory\" VALUES ('forbidden','10')", "DELETE FROM identity.\"Audit\"", "INSERT INTO identity.\"Bootstrap\" VALUES (1,true)" })
         {
             await Assert.ThrowsAsync<Npgsql.PostgresException>(() => context.Database.ExecuteSqlRawAsync(sql, Token));
@@ -489,6 +491,112 @@ public sealed class IdentityTests(IdentityFixture database)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(value => value.ConcurrencyStamp, Guid.NewGuid().ToString("N")), Token);
             return Microsoft.AspNetCore.Identity.IdentityResult.Success;
         }
+    }
+
+    [Fact]
+    public async Task DatabaseUnavailableDuringCookieAuthenticationReturns503AndPreservesTheSession()
+    {
+        await database.ResetAsync(Token);
+        var tickets = new MutableTicketDatabase(database);
+        await using var api = new IdentityApiFactory(database, tickets);
+        using var client = api.Client();
+        await RegisterConfirmed(api, client, "db-outage@example.test");
+        Assert.Equal(HttpStatusCode.OK, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("db-outage@example.test", Password))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
+        tickets.Unavailable = true;
+        await using (var context = tickets.CreateDbContext())
+        {
+            var error = await Record.ExceptionAsync(async () => await context.Sessions.CountAsync(Token));
+            Assert.IsType<InvalidOperationException>(error);
+            Assert.IsType<Npgsql.NpgsqlException>(error.InnerException);
+        }
+        using var unavailable = await client.GetAsync("/api/v1/identity/me", Token);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        Assert.Equal("service_unavailable", (await unavailable.Content.ReadFromJsonAsync<JsonElement>(Token)).GetProperty("code").GetString());
+        Assert.Contains("no-store", unavailable.Headers.CacheControl!.ToString(), StringComparison.Ordinal);
+        Assert.False(unavailable.Headers.TryGetValues("Set-Cookie", out _));
+        tickets.Unavailable = false;
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
+        tickets.UnexpectedFailure = true;
+        Assert.Equal(HttpStatusCode.InternalServerError, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
+        tickets.UnexpectedFailure = false;
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminSearchPreservesLiteralSubstringsCaseFiltersAndPagination()
+    {
+        await database.ResetAsync(Token);
+        await using var api = new IdentityApiFactory(database);
+        using var admin = api.Client();
+        await RegisterConfirmed(api, admin, "search-admin@example.test");
+        await using (var context = database.Context(true))
+            await new IdentityOperations(context, api.Clock).BootstrapAsync("search-admin@example.test", Token);
+        await Write(admin, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("search-admin@example.test", Password));
+        using var member = api.Client();
+        foreach (var entry in new[] { (Name: @"Cultura 100%_REAL\ruta", Email: "literal-one@example.test"), (Name: "Cultura 100XAREALruta", Email: "literal-two@example.test"), (Name: "Ágora", Email: "literal-three@example.test") })
+            Assert.Equal(HttpStatusCode.Accepted, (await Write(member, HttpMethod.Post, "/api/v1/identity/register", new RegisterRequest(entry.Name, entry.Email, Password))).StatusCode);
+        async Task<UserPage> Find(string search, int page = 1, int pageSize = 20) =>
+            (await admin.GetFromJsonAsync<UserPage>("/api/v1/admin/users?search=" + Uri.EscapeDataString(search) + "&status=pending&level=Externo&page=" + page + "&pageSize=" + pageSize, Token))!;
+        foreach (var search in new[] { "100%", "_", @"\ruta", "00%_", "gOr" })
+            Assert.Equal(1, (await Find(search)).Total);
+        Assert.Equal(2, (await Find("rEaL")).Total);
+        Assert.Equal(3, (await Find("literal-")).Total);
+        Assert.Equal(0, (await Find("unknown-fragment")).Total);
+        var first = await Find("Cultura", 1, 1);
+        var second = await Find("Cultura", 2, 1);
+        Assert.Equal(2, first.Total);
+        Assert.Single(first.Items);
+        Assert.Single(second.Items);
+        Assert.NotEqual(first.Items[0].Id, second.Items[0].Id);
+        await using var schema = database.Context();
+        Assert.False(schema.Database.HasPendingModelChanges());
+        var indexes = await schema.Database.SqlQueryRaw<string>("SELECT indexname AS \"Value\" FROM pg_indexes WHERE schemaname='identity' AND indexdef LIKE '%USING gin%'").ToArrayAsync(Token);
+        Assert.Contains("IX_Users_SearchEmail", indexes);
+        Assert.Contains("IX_Users_SearchName", indexes);
+    }
+
+    [Fact]
+    public async Task SearchMigrationUpgradesOneHundredThousandUsersAndRemainsRepeatable()
+    {
+        await database.ExecuteAsync("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app", Token);
+        await new PlatformMigrationRunner().RunAsync(database.MigrationConnection, Token);
+        await using (var previous = database.Context(true))
+        {
+            previous.Database.SetCommandTimeout(30);
+            await previous.Database.GetService<IMigrator>().MigrateAsync(previous.Database.GetMigrations().First(), Token);
+            await previous.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO identity."Users" ("Id","DisplayName","IsDisabled","UsersManage","RevalidationRequired","SecurityVersion","UserName","NormalizedUserName","Email","NormalizedEmail","EmailConfirmed","ConcurrencyStamp","PhoneNumberConfirmed","TwoFactorEnabled","LockoutEnabled","AccessFailedCount")
+                SELECT gen_random_uuid(),'QA User '||number,false,false,false,md5(number::text),
+                'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
+                'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
+                true,md5('version-'||number),false,false,true,0
+                FROM generate_series(0,99999) number;
+                INSERT INTO identity."UserLevels" ("UserId","Level") SELECT "Id",'Externo' FROM identity."Users";
+                """, Token);
+        }
+        await new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token);
+        await new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token);
+        await using var api = new IdentityApiFactory(database);
+        await using var scope = api.Services.CreateAsyncScope();
+        var page = await scope.ServiceProvider.GetRequiredService<IIdentityService>().ListUsersAsync("qa-load-0999", "active", "Externo", 1, 20, Token);
+        Assert.Equal(100, page.Total);
+        Assert.Equal(20, page.Items.Length);
+        await using var current = database.Context();
+        Assert.Equal(100000, await current.Users.CountAsync(Token));
+        Assert.False(current.Database.HasPendingModelChanges());
+        var extension = await current.Database.SqlQueryRaw<string>("SELECT n.nspname AS \"Value\" FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'").SingleAsync(Token);
+        Assert.Equal("identity", extension);
+        Assert.False(await current.Database.SqlQueryRaw<bool>("SELECT has_database_privilege(current_user,current_database(),'CREATE') AS \"Value\"").SingleAsync(Token));
+        foreach (var sql in new[] { "CREATE TABLE identity.forbidden_upgrade(id int)", "INSERT INTO identity.\"__EFMigrationsHistory\" VALUES ('forbidden','10')", "DELETE FROM identity.\"Audit\"", "INSERT INTO identity.\"Bootstrap\" VALUES (1,true)" })
+            await Assert.ThrowsAsync<Npgsql.PostgresException>(() => current.Database.ExecuteSqlRawAsync(sql, Token));
+        await using var maintenance = database.Context(true);
+        maintenance.Database.SetCommandTimeout(30);
+        await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(Token);
+        Assert.Equal(100000, await maintenance.Users.CountAsync(user => user.RevalidationRequired, Token));
+        await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(Token);
+        Assert.Equal(100000, await maintenance.Users.CountAsync(user => user.RevalidationRequired, Token));
     }
 
     private static async Task<Guid> RegisterConfirmed(IdentityApiFactory api, HttpClient client, string email)

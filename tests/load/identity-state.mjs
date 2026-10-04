@@ -10,7 +10,8 @@ async function verify(name, expected) {
     headers: { Cookie: cookies.map((cookie) => cookie.name + '=' + cookie.value).join('; ') },
     redirect: 'manual', signal: AbortSignal.timeout(5000),
   });
-  if (response.status !== expected) throw new Error('Session state does not match its expected authorization boundary.');
+  if (response.status !== expected) throw new Error(`Session boundary ${mode}/${name}: expected HTTP ${expected}, received ${response.status}.`);
+  if (mode === 'database-down' && response.headers.has('Set-Cookie')) throw new Error('Database unavailability must not erase or replace the valid browser session.');
 }
 if (mode === 'persistence') {
   await verify('active', 200);

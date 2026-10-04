@@ -43,6 +43,7 @@ internal static class EntryPoint
             var options = new DbContextOptionsBuilder<IdentityDbContext>();
             IdentityRegistration.ConfigureDatabase(options, connection);
             await using var database = new IdentityDbContext(options.Options);
+            database.Database.SetCommandTimeout(30);
             var operations = new IdentityOperations(database, TimeProvider.System);
             switch (args)
             {

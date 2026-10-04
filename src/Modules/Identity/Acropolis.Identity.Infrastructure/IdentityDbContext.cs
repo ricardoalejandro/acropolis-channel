@@ -77,6 +77,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     {
         base.OnModelCreating(builder);
         builder.HasDefaultSchema(Schema);
+        builder.HasPostgresExtension(Schema, "pg_trgm");
         builder.Entity<ChannelUser>(entity =>
         {
             entity.ToTable("Users");
@@ -84,6 +85,10 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             entity.Property(x => x.SecurityVersion).HasMaxLength(32);
             entity.Property(x => x.ConcurrencyStamp).HasMaxLength(64);
             entity.HasIndex(x => x.NormalizedEmail).IsUnique();
+            entity.HasIndex(x => x.NormalizedEmail, "IX_Users_SearchEmail")
+                .HasMethod("gin").HasOperators("identity.gin_trgm_ops");
+            entity.HasIndex(x => x.DisplayName, "IX_Users_SearchName")
+                .HasMethod("gin").HasOperators("identity.gin_trgm_ops");
             entity.HasMany(x => x.Levels).WithOne().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<IdentityUserClaim<Guid>>().ToTable("UserClaims");

@@ -45,6 +45,8 @@ Platform e Identity son propietarios de sus schemas e historiales de EF. El runn
 
 PostgreSQL conserva sus datos en /var/lib/postgresql. acropolis_admin se limita a inicialización y respaldo; acropolis_migrator es propietario de schemas; acropolis_app tiene permisos de ejecución sin DDL ni escritura de historiales. El runner configura privilegios de Identity también sobre una base ya existente, no sólo durante la inicialización de un volumen nuevo.
 
+La búsqueda administrativa conserva coincidencias por fragmento de correo o nombre, sin distinguir mayúsculas; %, _ y barra invertida son caracteres literales. PostgreSQL utiliza índices GIN de pg_trgm, separados del índice único del correo normalizado. El migrador instala esta extensión trusted únicamente en el schema identity de la base del proyecto; el runtime no crea extensiones ni índices.
+
 Las migraciones deben ser compatibles con la recuperación de imagen prevista. No ejecutar descensos automáticos ni compartir transacciones entre módulos sin un contrato y una necesidad explícitos.
 
 ## Construcción, ejecución y crecimiento

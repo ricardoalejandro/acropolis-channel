@@ -30,6 +30,8 @@ bash scripts/verify.sh
 bash scripts/deploy.sh --expected-sha SHA_VALIDADO
 ```
 
+La migración de búsqueda instala pg_trgm en identity y crea dos índices GIN dentro de PostgreSQL; no instala herramientas en el host ni cambia otras bases. Requiere CREATE en la base propia para acropolis_migrator, ya previsto para el propietario de la base; acropolis_app conserva sus permisos sin DDL. La construcción normal de índices puede bloquear escrituras brevemente en una tabla poblada, por lo que debe medirse en QA antes de aplicar. Un respaldo conserva la extensión y los índices; tras restaurarlo, ejecutar el migrador de la imagen correspondiente antes de abrir tráfico.
+
 No ejecutar el segundo comando hasta que el despliegue esté solicitado. La conexión SMTP correcta no prueba entrega en bandeja de entrada: comprobar la confirmación y recuperación con un correo controlado por el propietario al habilitar el sistema.
 
 ## Primer administrador
@@ -67,6 +69,8 @@ docker compose -p acropolis-channel --profile migration run --rm migrations reco
 ```
 
 La revalidación elimina la contraseña y confirmación antiguas, retira Users.Manage y deja únicamente Externo. Después de permitir el acceso público, el usuario solicita un nuevo correo de confirmación, lo confirma y solicita restablecer su contraseña. Sólo entonces puede iniciar una sesión nueva. Volver a asignar niveles únicamente después de revisarlos. El comando de bootstrap inicial no puede utilizarse para evadir este proceso. Para recuperar una cuenta administradora cuya autoridad haya verificado el operador, el comando separado es recover-admin --email CORREO_EXACTO --maintenance. También elimina la contraseña y confirmación antiguas y exige completar de nuevo confirmación y reset antes de admitir una sesión con Users.Manage. No concede acceso a una cuenta que no estuviera en cuarentena.
+
+Las operaciones administrativas del CLI admiten hasta 30 segundos por comando de PostgreSQL dentro de su plazo total acotado; el host HTTP mantiene su límite de tres segundos. La invalidación de una base poblada debe verificarse en QA con el volumen esperado de cuentas antes de recuperar una publicación.
 
 El parámetro --maintenance acredita una acción del operador; no detiene por sí mismo contenedores ni protege contra tráfico activo. Verificar que web está parado antes de usarlo.
 

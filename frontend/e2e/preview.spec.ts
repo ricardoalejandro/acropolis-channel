@@ -58,7 +58,10 @@ test('@preview isolated catalogue is accessible, responsive and explicit about u
       );
     }
   }
+  // A hash transition keeps the previous document and focus; verify a fresh keyboard entry.
+  await page.goto('about:blank');
   await page.goto(origin + '/preview.html#/');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: 'Saltar al contenido', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');

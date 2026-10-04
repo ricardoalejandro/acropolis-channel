@@ -1,4 +1,6 @@
 using Acropolis.Identity.Infrastructure;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Acropolis.Migrations;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -66,7 +68,7 @@ public sealed class CaptureMailer : IIdentityMailer
         return Task.CompletedTask;
     }
 }
-public sealed class IdentityApiFactory(IdentityFixture fixture) : WebApplicationFactory<Program>
+public sealed class IdentityApiFactory(IdentityFixture fixture, MutableTicketDatabase? ticketDatabase = null) : WebApplicationFactory<Program>
 {
     public TestClock Clock { get; } = new();
     public CaptureMailer Mailer { get; } = new();
@@ -82,6 +84,12 @@ public sealed class IdentityApiFactory(IdentityFixture fixture) : WebApplication
             services.AddSingleton<TimeProvider>(Clock);
             services.RemoveAll<IIdentityMailer>();
             services.AddSingleton<IIdentityMailer>(Mailer);
+            if (ticketDatabase is not null)
+            {
+                services.RemoveAll<ITicketStore>();
+                services.AddSingleton<ITicketStore>(provider => new PostgresTicketStore(ticketDatabase,
+                    provider.GetRequiredService<IDataProtectionProvider>(), Clock));
+            }
         });
     }
     public HttpClient Client() => CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
@@ -89,5 +97,27 @@ public sealed class IdentityApiFactory(IdentityFixture fixture) : WebApplication
     {
         await using var scope = Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<OutboxDispatcher>().DispatchAsync(TestContext.Current.CancellationToken);
+    }
+}
+
+
+public sealed class MutableTicketDatabase(IdentityFixture fixture) : IDbContextFactory<IdentityDbContext>
+{
+    public bool Unavailable { get; set; }
+    public bool UnexpectedFailure { get; set; }
+    public IdentityDbContext CreateDbContext()
+    {
+        if (UnexpectedFailure) throw new InvalidOperationException("Synthetic failure outside PostgreSQL.");
+        var connection = new NpgsqlConnectionStringBuilder(fixture.RuntimeConnection);
+        if (Unavailable)
+        {
+            connection.Host = "127.0.0.1";
+            connection.Port = 1;
+            connection.Timeout = 1;
+            connection.CommandTimeout = 1;
+        }
+        var options = new DbContextOptionsBuilder<IdentityDbContext>();
+        IdentityRegistration.ConfigureDatabase(options, connection.ConnectionString);
+        return new IdentityDbContext(options.Options);
     }
 }

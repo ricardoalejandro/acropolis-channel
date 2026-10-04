@@ -160,8 +160,10 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         var query = database.Users.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var term = search.Trim().ToUpperInvariant();
-            query = query.Where(x => x.NormalizedEmail!.Contains(term) || x.DisplayName.ToUpper().Contains(term));
+            var pattern = "%" + search.Trim().Replace(@"\", @"\\", StringComparison.Ordinal)
+                .Replace("%", @"\%", StringComparison.Ordinal).Replace("_", @"\_", StringComparison.Ordinal) + "%";
+            query = query.Where(x => EF.Functions.ILike(x.NormalizedEmail!, pattern, @"\")
+                || EF.Functions.ILike(x.DisplayName, pattern, @"\"));
         }
         if (status == "active") query = query.Where(x => x.EmailConfirmed && !x.IsDisabled && !x.RevalidationRequired);
         if (status == "pending") query = query.Where(x => !x.EmailConfirmed && !x.IsDisabled && !x.RevalidationRequired);

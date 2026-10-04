@@ -58,9 +58,9 @@ async function mailLink(request: APIRequestContext, email: string, route: string
   return link;
 }
 
-test.describe('Identity on the real Production candidate', () => {
-  test.use({ trace: 'off' });
+test.use({ trace: 'off' });
 
+test.describe('Identity on the real Production candidate', () => {
   test('registration, confirmation, secure login, own profile, reset and logout', async ({
     page,
     context,

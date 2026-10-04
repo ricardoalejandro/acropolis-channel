@@ -38,14 +38,18 @@ public sealed class ChannelMigrationRunner
             if ((await context.Database.GetAppliedMigrationsAsync(token)).Any(id => !expected.Contains(id)))
                 throw new InvalidOperationException("The identity schema contains unsupported migrations.");
             await context.Database.MigrateAsync(token);
+            await using var privileges = await connection.BeginTransactionAsync(token);
             await using var restrict = new NpgsqlCommand(
                 """
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity TO acropolis_app;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identity TO acropolis_app;
                 REVOKE ALL ON TABLE identity."__EFMigrationsHistory" FROM acropolis_app;
                 GRANT SELECT ON TABLE identity."__EFMigrationsHistory" TO acropolis_app;
                 REVOKE UPDATE, DELETE ON TABLE identity."Audit" FROM acropolis_app;
                 REVOKE INSERT, UPDATE, DELETE ON TABLE identity."Bootstrap" FROM acropolis_app;
-                """, connection);
+                """, connection, privileges);
             await restrict.ExecuteNonQueryAsync(token);
+            await privileges.CommitAsync(token);
         }
         finally
         {
