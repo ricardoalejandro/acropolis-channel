@@ -74,7 +74,7 @@ public sealed class CatalogTests(CatalogFixture database)
             ("tema-cuatro", "Filosofía privada", "cursos", "draft"),
             ("tema-cinco", "Filosofía archivada", "cursos", "archived")
         };
-        foreach (var (slug,title,category,status) in data)
+        foreach (var (slug, title, category, status) in data)
             context.Contents.Add(new EditorialContent { Id = Guid.NewGuid(), Slug = slug, Title = title, Summary = slug == "tema-tres" ? "Resumen FILOSOFÍA" : "Resumen", Body = "Sinopsis", Category = category, Status = status, CreatedUtc = clock.GetUtcNow(), UpdatedUtc = clock.GetUtcNow(), PublishedUtc = status == "draft" ? null : clock.GetUtcNow() });
         await context.SaveChangesAsync(Token);
         var service = new CatalogService(context, clock);
