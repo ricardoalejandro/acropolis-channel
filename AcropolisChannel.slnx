@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="src/Modules/Platform/Acropolis.Platform.Application/Acropolis.Platform.Application.csproj" />
+  <Project Path="src/Modules/Platform/Acropolis.Platform.Infrastructure/Acropolis.Platform.Infrastructure.csproj" />
+  <Project Path="src/Acropolis.Api/Acropolis.Api.csproj" />
+  <Project Path="src/Acropolis.Migrations/Acropolis.Migrations.csproj" />
+  <Project Path="tests/backend/Acropolis.Platform.UnitTests/Acropolis.Platform.UnitTests.csproj" />
+  <Project Path="tests/backend/Acropolis.Api.Tests/Acropolis.Api.Tests.csproj" />
+  <Project Path="tests/backend/Acropolis.Architecture.Tests/Acropolis.Architecture.Tests.csproj" />
+  <Project Path="tests/backend/Acropolis.Platform.IntegrationTests/Acropolis.Platform.IntegrationTests.csproj" />
+</Solution>

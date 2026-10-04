@@ -1,65 +1,76 @@
-# acropolis-channel
+# Acrópolis Channel
 
-Repositorio: [ricardoalejandro/acropolis-channel](https://github.com/ricardoalejandro/acropolis-channel). Rama de trabajo: `main`.
+Base técnica del monolito modular: ASP.NET Core / .NET 10 LTS, React 19 con TypeScript y Vite, PostgreSQL 18. La aplicación y la base de datos se ejecutan en el VPS; la distribución multimedia futura estará en AWS.
 
-Aplicación inicial de Acropolis Channel: una página de presentación en español y un servidor HTTP Node.js sin dependencias. La página está en `public/index.html`, el servidor en `server.mjs` y `/health` devuelve el estado del servicio.
+## Trabajo y alcance inicial
 
-## Trabajo directamente en el VPS
+El checkout canónico está en `/root/proyect/acropolis-channel`; rama `main`, remoto HTTPS `https://github.com/ricardoalejandro/acropolis-channel`. La carpeta Windows contiene instrucciones, nunca otra copia del código. Conectar con el alias existente:
 
-El código fuente se modifica en el checkout del VPS. La carpeta canónica, el acceso administrativo y los detalles de infraestructura están documentados en `.local/vps-deployment.md` del servidor. Esa documentación es privada, está excluida de Git y no se descarga al clonar el repositorio.
+```powershell
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps
+```
 
-Conectarse mediante la identidad administrativa existente y entrar en la carpeta indicada en esa documentación. Antes de editar:
+La entrega inicial muestra «Hola mundo» obtenido de una API real. Identidad, contenidos, suscripciones, pagos, facturación e integraciones son módulos posteriores; no hay registro, cobros ni migración de WordPress implementados.
+
+- Backend y migraciones: `src/`.
+- Interfaz, componentes y navegador: `frontend/`.
+- Pruebas backend: `tests/backend/`; carga: `tests/load/`.
+- Límites de módulos: [arquitectura](docs/architecture.md).
+- Pruebas y criterios de calidad: [QA](docs/quality.md).
+
+## Contratos HTTP
+
+| Ruta | Resultado |
+| --- | --- |
+| `/` | Interfaz React responsive con carga, saludo, error y reintento |
+| `/api/v1/greeting` | `200 {"message":"Hola mundo"}` |
+| `/health` | Liveness `200 {"status":"ok"}`; independiente de PostgreSQL |
+| `/health/ready` | `200 {"status":"ok"}` cuando PostgreSQL y migraciones están listos; `503` en caso contrario |
+
+Las API desconocidas devuelven 404; el fallback de SPA no las oculta. Los errores no exponen excepciones ni credenciales. OpenAPI se limita a desarrollo. React y API comparten origen: las solicitudes usan rutas relativas.
+
+## Calidad desde el VPS
+
+No hay GitHub Actions. Todo se valida con contenedores, sin instalar SDK .NET ni cambiar Node.js del host. El frontend se construye con Node.js 22 en Docker; el servidor de producción es ASP.NET Core en el puerto interno 8080.
+
+Durante desarrollo puede ejecutarse `bash scripts/verify.sh --working-tree`. Su informe no autoriza desplegar una copia sin commit. Para una entrega:
 
 ```bash
+cd /root/proyect/acropolis-channel
 git status --short --branch
-git remote -v
 git fetch origin
+# Sincronizar por fast-forward antes de editar, conservando trabajo previo.
+# Crear el commit local candidato cuando el cambio esté completo.
+bash scripts/verify.sh
+# Publicar main únicamente si todas las comprobaciones pasan.
+git push origin main
+bash scripts/deploy.sh --expected-sha "$(git rev-parse HEAD)"
 ```
 
-Confirmar `main` y el repositorio correcto. Sincronizar con `git pull --ff-only origin main` cuando el estado del checkout lo permita. Conservar cambios locales, archivos privados y commits anteriores; resolver cualquier divergencia sin descartar trabajo. Revisar y publicar los cambios del código en `main` desde el VPS.
+QA utiliza PostgreSQL real y datos sintéticos en proyecto, red y volúmenes propios; no carga `.env` de producción ni monta sus volúmenes o el socket Docker. Los informes privados quedan en `.local/qa/<sha>/<run>/`. Cada proceso nuevo requiere pruebas de reglas, casos de uso, persistencia, acceso, fallos y recorrido funcional; no agregar pruebas vacías.
 
-GitHub Actions está desactivado y los workflows y credenciales dedicados a su despliegue se retiraron. Se conserva el historial de ejecuciones existente. Las operaciones de despliegue se realizan directamente desde el VPS.
+## Configuración y publicación
 
-## Entorno de desarrollo y preparación
+Crear `.env` exclusivamente en el VPS, siguiendo `.env.example`, con contraseñas distintas y permisos 600. Nunca publicar `.env`, `.local/`, dumps, informes con datos privados ni secretos. `PUBLIC_VPS_IPV4` se configura privadamente para comprobar DNS.
 
-Para desarrollo en un entorno con Node.js 22 o superior, ejecutar `npm start` y abrir `http://localhost:3000`. No hay dependencias npm adicionales.
+Compose conserva proyecto `acropolis-channel`, servicio `web`, alias `acropolis-channel-web` y red externa `dokploy-network`. PostgreSQL está en una red privada sin puerto publicado. La aplicación usa un rol sin DDL; las migraciones usan otro rol limitado a esta base. Las migraciones se ejecutan por separado, con exclusión mutua.
 
-El `Dockerfile` proporciona Node.js 22 y ejecuta la aplicación como un usuario sin privilegios. En el VPS se utiliza ese entorno Docker; no es necesario cambiar la versión de Node.js compartida del host.
+El script de despliegue requiere checkout limpio en main, SHA esperado, coincidencia con origin y un informe QA aprobado que corresponda a los identificadores exactos de ambas imágenes. No reconstruye después de QA. Guarda una recuperación privada, respalda la base, ejecuta migraciones, arranca la aplicación y verifica readiness.
 
-Definir `TRAEFIK_NETWORK` en el archivo privado `.env` del VPS con el nombre de la red externa de publicación existente. Consultar `.local/vps-deployment.md` para el valor concreto. Compose conecta el servicio `web` a esa red con el alias `acropolis-channel-web`, sin publicar un puerto del host directamente.
+La URL objetivo es **https://acropolischannel.naperu.cloud**. La publicación usa exclusivamente `/etc/dokploy/traefik/dynamic/acropolis-channel.yml`, a partir del asset propio `infra/traefik/acropolis-channel.yml`. No modificar Traefik global, otros routers ni DNS como parte del despliegue. DNS incorrecto pospone una nueva publicación ACME; el resultado interno se informa por separado.
 
-Preparar y comprobar la imagen:
+La publicación requiere certificado válido, redirección HTTP, interfaz y contratos públicos correctos. No aceptar TLS con `-k`. Una construcción exitosa no equivale a un despliegue verificado.
+
+## Recuperación y datos
+
+Los manifiestos y snapshots están en `.local/deployments/`; `.local/last-deployment` indica la última publicación completada. Preservar imágenes anteriores y su routing compatible. El rollback no ejecuta migraciones descendentes ni elimina datos. Si una versión anterior no admite el esquema actual, detener y aplicar el procedimiento documentado de recuperación.
+
+Para una copia manual:
 
 ```bash
-docker compose -p acropolis-channel config --quiet
-docker compose -p acropolis-channel build web
+bash scripts/backup-db.sh --project acropolis-channel --database acropolis --output /root/proyect/acropolis-channel/.local/backups/acropolis.dump
 ```
 
-Los archivos `.env` y la carpeta `.local/` están excluidos de Git y del contexto de construcción Docker. No incluir claves, tokens, contraseñas ni detalles administrativos privados en archivos versionados o imágenes.
+La restauración automatizada está restringida a proyectos y bases de pruebas `acropolis_test_*`. Verificar primero allí una recuperación; no restaurar producción ni borrar volúmenes como operación rutinaria.
 
-## Despliegue manual
-
-Ejecutar únicamente cuando la tarea requiera desplegar, desde el checkout del VPS:
-
-```bash
-bash scripts/deploy.sh
-```
-
-El script actualiza `main` con `git pull --ff-only origin main` y ejecuta `docker compose -p acropolis-channel up -d --build`. Conservar el nombre de proyecto Compose `acropolis-channel`. Revisar y publicar primero cualquier cambio pendiente que afecte al despliegue.
-
-El dominio, routing y HTTPS deben configurarse en la infraestructura de publicación existente antes de considerar accesible la aplicación. Consultar la documentación privada y comprobar el estado real antes de modificar esa configuración.
-
-Después de un despliegue solicitado:
-
-```bash
-docker compose -p acropolis-channel ps
-docker compose -p acropolis-channel logs --tail=100
-```
-
-Comprobar también `/health` y la URL publicada. Una construcción correcta no demuestra que la aplicación esté desplegada o disponible públicamente.
-
-## Reglas de operación
-
-Preservar acceso administrativo, autenticación GitHub, datos, volúmenes, archivos privados, configuración de publicación y servicios de otros proyectos. No usar actualizaciones destructivas de Git, purgas Docker ni eliminación de volúmenes para preparar o desplegar este proyecto.
-
-Mantener estas instrucciones y `.local/vps-deployment.md` actualizadas cuando cambien el proceso o la infraestructura. La preparación del 4 de octubre de 2026 deja el código y la imagen disponibles; el arranque y la publicación se realizarán en una tarea posterior.
+Los 100.000 usuarios registrados y aproximadamente 1.000 conectados son un objetivo del producto. La carga limitada de esta base es una referencia técnica, no una acreditación de capacidad para los procesos futuros.

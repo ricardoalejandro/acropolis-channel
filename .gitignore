@@ -1,9 +1,19 @@
+# Private VPS state and credentials.
 .env
 .env.*
 !.env.example
-
-# Información y configuración local del VPS; nunca publicar en Git.
 /.local/
-
 node_modules/
+**/bin/
+**/obj/
+**/dist/
+**/coverage/
+**/test-results/
+**/playwright-report/
+TestResults/
 /work/
+
+**/__pycache__/
+**/*.pyc
+
+/artifacts/

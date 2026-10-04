@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Infrastructure/Acropolis.Platform.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

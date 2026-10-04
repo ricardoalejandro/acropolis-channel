@@ -1,0 +1,33 @@
+# Managed exclusively by Acropolis Channel.
+http:
+  routers:
+    acropolis-channel-http:
+      rule: "Host(`acropolischannel.naperu.cloud`)"
+      entryPoints: [web]
+      middlewares: [acropolis-channel-redirect-https]
+      service: acropolis-channel-web
+    acropolis-channel-https:
+      rule: "Host(`acropolischannel.naperu.cloud`)"
+      entryPoints: [websecure]
+      middlewares: [acropolis-channel-security-headers]
+      service: acropolis-channel-web
+      tls:
+        certResolver: letsencrypt
+  services:
+    acropolis-channel-web:
+      loadBalancer:
+        servers:
+          - url: "http://acropolis-channel-web:8080"
+  middlewares:
+    acropolis-channel-redirect-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    acropolis-channel-security-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+        contentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"

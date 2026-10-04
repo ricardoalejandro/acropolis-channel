@@ -1,0 +1,13 @@
+# Acropolis Channel: desarrollo en el VPS
+
+- Código canónico exclusivamente en `/root/proyect/acropolis-channel`; SSH desde Windows `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps`.
+- Repositorio HTTPS `https://github.com/ricardoalejandro/acropolis-channel`, rama main. Revisar git status, remoto y estas instrucciones antes de editar; sincronizar ff-only antes de modificar si el estado lo permite. Preservar cambios y commits previos; nunca reset hard, clean ni push forzado.
+- Arquitectura: ASP.NET Core10/EFCore10/Npgsql backend modular, React19/TypeScript/Vite frontend, PostgreSQL18 real. Usar SDK/runtime .NET10 y Node22 sólo en Docker; no instalar SDK ni alterar Node20 del host. Leer docs/architecture.md y docs/quality.md.
+- El código Node anterior fue sustituido. No restaurar su servidor/landing ni GitHub Actions o credenciales dedicadas. Conservar el historial.
+- Cada proceso exige pruebas útiles en sus niveles: reglas, aplicación, integración con PostgreSQL real, HTTP, componentes/navegador, autorización y fallos. No generar módulos de negocio vacíos ni pruebas ficticias. Ejecutar scripts/verify.sh; modo --working-tree no produce una aprobación de despliegue. Nunca apuntar QA a producción.
+- Revisar antes de desplegar la skill local de Windows `.agents/skills/acropolis-vps-deploy/SKILL.md` y la skill acropolis-quality. Desplegar solo cuando solicitado; la autorización de la conversación basta.
+- Publicación: https://acropolischannel.naperu.cloud, Compose acropolis-channel, web8080, alias acropolis-channel-web, red dokploy-network. PostgreSQL privado con roles separados; migraciones sólo runner. scripts/deploy.sh --expected-sha SHA exige informe QA de las imágenes exactas y no vuelve a construir.
+- Sólo editar routing propio /etc/dokploy/traefik/dynamic/acropolis-channel.yml; preservar Traefik global y otros proyectos. Verificar DNS, TLS sin -k, HTTP redirect y navegador/API antes de declarar éxito.
+- Multimedia futura AWS; no crear recursos, claves ni políticas cloud sin petición. Las funciones de negocio aún no están implementadas.
+- `.env` y `.local/` son privados: no imprimir secretos ni copiar a Git, imágenes o informes. Consultar .local/vps-deployment.md. Preservar SSH administrativo, GitHub, datos y volúmenes. Nunca purgar Docker ni down-v producción.
+- Conservar backups/imagen previa, aplicar migraciones compatibles y validar restauración únicamente en QA. No ejecutar migraciones descendentes automáticamente. Actualizar README/AGENTS/skills si cambia el flujo y distinguir preparación, QA y publicación comprobada.

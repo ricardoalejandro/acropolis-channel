@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Application/Acropolis.Platform.Application.csproj" />
+    <ProjectReference Include="../Modules/Platform/Acropolis.Platform.Infrastructure/Acropolis.Platform.Infrastructure.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+</Project>

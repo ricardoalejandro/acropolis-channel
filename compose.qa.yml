@@ -1,0 +1,125 @@
+# Every value is supplied by verify.sh; this file never reads production .env.
+services:
+  db:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: ${QA_DATABASE:?QA database required}
+      POSTGRES_USER: acropolis_admin
+      POSTGRES_PASSWORD: ${QA_PASSWORD:?QA admin password required}
+      DB_APP_PASSWORD: ${QA_APP_PASSWORD:?QA app password required}
+      DB_MIGRATION_PASSWORD: ${QA_MIGRATION_PASSWORD:?QA migrator password required}
+    volumes:
+      - database:/var/lib/postgresql
+      - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+  web:
+    image: ${QA_IMAGE:?Candidate image required}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      AllowedHosts: web;localhost;127.0.0.1
+      ConnectionStrings__Database: Host=db;Port=5432;Database=${QA_DATABASE};Username=acropolis_app;Password=${QA_APP_PASSWORD};Timeout=3;Command Timeout=3;Pooling=true
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs: [/tmp:size=64m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 128
+  migrations:
+    image: ${QA_MIGRATION_IMAGE:?Migration image required}
+    profiles: [tools]
+    environment:
+      DOTNET_ENVIRONMENT: Testing
+      ConnectionStrings__Database: Host=db;Port=5432;Database=${QA_DATABASE};Username=acropolis_migrator;Password=${QA_MIGRATION_PASSWORD};Timeout=3;Command Timeout=30
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+  sdk:
+    image: ${QA_SDK_IMAGE:?SDK QA image required}
+    profiles: [tools]
+    entrypoint: [/bin/bash, -euc]
+    environment:
+      DOTNET_ENVIRONMENT: Testing
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_PROCESSOR_COUNT: '1'
+      TEST_DATABASE_CONNECTION: Host=db;Port=5432;Database=${QA_DATABASE};Username=acropolis_admin;Password=${QA_PASSWORD};Timeout=3;Command Timeout=30
+    volumes:
+      - ${QA_ARTIFACTS:?QA artifacts required}:/artifacts
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1536m
+    cpus: 1
+    pids_limit: 256
+  node:
+    image: ${QA_NODE_IMAGE:?Node QA image required}
+    profiles: [tools]
+    entrypoint: [/bin/sh, -euc]
+    environment:
+      NODE_OPTIONS: --max-old-space-size=768
+    volumes:
+      - ${QA_ARTIFACTS}:/artifacts
+      - ./tests/load:/qa-tools:ro
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1024m
+    cpus: 1
+    pids_limit: 256
+  playwright:
+    image: ${QA_PLAYWRIGHT_IMAGE:?Playwright image required}
+    profiles: [tools]
+    entrypoint: [/bin/sh, -euc]
+    environment:
+      BASE_URL: http://web:8080
+      PLAYWRIGHT_OUTPUT_DIR: /artifacts/playwright
+      PLAYWRIGHT_HTML_REPORT: /artifacts/playwright-report
+      NODE_OPTIONS: --max-old-space-size=768
+      CI: '1'
+    volumes:
+      - ${QA_ARTIFACTS}:/artifacts
+    init: true
+    shm_size: 256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1280m
+    cpus: 1
+    pids_limit: 256
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: [tools]
+    user: '0:0'
+    environment:
+      BASE_URL: http://web:8080
+    volumes:
+      - ./tests/load:/qa-tools:ro
+      - ${QA_ARTIFACTS}:/artifacts
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+networks:
+  default:
+    name: ${QA_PROJECT:?Unique QA project required}_network
+    labels:
+      acropolis.qa.run: ${QA_PROJECT}
+volumes:
+  database:
+    name: ${QA_PROJECT}_postgres
+    labels:
+      acropolis.qa.run: ${QA_PROJECT}
