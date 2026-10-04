@@ -124,9 +124,14 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         if (!IdentityRules.ValidPassword(request.NewPassword) || !IdentityRules.ValidPassword(request.CurrentPassword)) return IdentityResult<bool>.Fail("validation_error");
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         var user = await users.FindByIdAsync(userId.ToString());
-        if (user is null || user.IsDisabled || user.RevalidationRequired || !await users.CheckPasswordAsync(user, request.CurrentPassword)) return IdentityResult<bool>.Fail("invalid_credentials", 401);
+        if (user is null || user.IsDisabled || user.RevalidationRequired || !user.EmailConfirmed) return IdentityResult<bool>.Fail("invalid_credentials", 401);
         var result = await users.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
-        if (!result.Succeeded) return IdentityResult<bool>.Fail("invalid_credentials", 401);
+        if (!result.Succeeded)
+        {
+            if (result.Errors.Any(error => error.Code == "PasswordMismatch")) return InvalidCurrentPassword();
+            if (result.Errors.Any(error => error.Code == "ConcurrencyFailure")) return IdentityResult<bool>.Fail("concurrency_conflict", 409);
+            return IdentityResult<bool>.Fail("validation_error");
+        }
         await InvalidateUserAsync(user, token);
         await database.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
@@ -202,6 +207,9 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         await transaction.CommitAsync(token);
         return new(View(user));
     }
+
+    private static IdentityResult<bool> InvalidCurrentPassword() => IdentityResult<bool>.Fail("current_password_invalid", 400,
+        fields: new() { ["currentPassword"] = ["La contraseña actual no es correcta."] });
 
     private async Task QueueFlowAsync(ChannelUser user, string purpose, CancellationToken token)
     {

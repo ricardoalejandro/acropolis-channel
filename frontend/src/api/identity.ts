@@ -31,6 +31,7 @@ export class ApiError extends Error {
 export function errorMessage(code: string): string {
   const messages: Record<string, string> = {
     invalid_credentials: 'No pudimos ingresar con esos datos. Revisa tu correo y contraseña.',
+    current_password_invalid: 'La contraseña actual no es correcta. Revísala e inténtalo de nuevo.',
     validation_error: 'Revisa los campos indicados e inténtalo de nuevo.',
     csrf_invalid: 'La sesión de seguridad ha caducado. Recarga la página e inténtalo de nuevo.',
     forbidden: 'Tu cuenta no tiene permiso para realizar esta acción.',

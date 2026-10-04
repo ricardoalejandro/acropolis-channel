@@ -165,9 +165,32 @@ test.describe('Identity on the real Production candidate', () => {
     await page.getByLabel('Contraseña', { exact: true }).fill(password + 'N');
     await page.getByRole('button', { name: 'Ingresar', exact: true }).click();
     await expect(page).toHaveURL(/\/profile/);
-    await page.getByLabel('Contraseña actual', { exact: true }).fill(password + 'N');
+    const currentPassword = page.getByLabel('Contraseña actual', { exact: true });
+    await currentPassword.fill(password + 'incorrect');
     await page.getByLabel('Nueva contraseña', { exact: true }).fill(password + 'NN');
     await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password + 'NN');
+    const rejectedPasswordChange = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/identity/change-password') &&
+        response.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Cambiar contraseña', exact: true }).click();
+    const rejectedChange = await rejectedPasswordChange;
+    expect(rejectedChange.status()).toBe(400);
+    expect(await rejectedChange.json()).toMatchObject({
+      code: 'current_password_invalid',
+      fieldErrors: { currentPassword: expect.any(Array) },
+    });
+    await expect(
+      page.getByText('La contraseña actual no es correcta. Revísala e inténtalo de nuevo.', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(currentPassword).toHaveAttribute('aria-invalid', 'true');
+    await expect(currentPassword).toHaveAccessibleDescription('Revisa el valor de este campo.');
+    await expect(page).toHaveURL(/\/profile/);
+    expect((await page.request.get(`${api}/me`)).status()).toBe(200);
+    await currentPassword.fill(password + 'N');
     await page.getByRole('button', { name: 'Cambiar contraseña', exact: true }).click();
     await expect(page).toHaveURL(/\/login/);
     expect((await page.request.get(`${api}/me`)).status()).toBe(401);

@@ -4,7 +4,7 @@ Este documento describe la preparación y los procedimientos. No acredita un des
 
 ## Configuración privada
 
-Trabajar por SSH estricto en /root/proyect/acropolis-channel. Configurar en .env los valores IDENTITY_SMTP_HOST, IDENTITY_SMTP_PORT, IDENTITY_SMTP_SECURITY, IDENTITY_SMTP_USERNAME, IDENTITY_SMTP_PASSWORD, IDENTITY_SMTP_FROM_EMAIL e IDENTITY_SMTP_FROM_NAME. El transporte productivo exige starttls o ssl con validación de certificado. Un proveedor sin autenticación puede dejar vacíos usuario y contraseña; deben configurarse juntos cuando se usen.
+Trabajar por SSH estricto en /root/proyect/acropolis-channel. Configurar en .env los valores IDENTITY_SMTP_HOST, IDENTITY_SMTP_PORT, IDENTITY_SMTP_SECURITY, IDENTITY_SMTP_USERNAME, IDENTITY_SMTP_PASSWORD, IDENTITY_SMTP_FROM_EMAIL e IDENTITY_SMTP_FROM_NAME. El transporte productivo exige starttls o ssl con validación de certificado. La configuración productiva exige autenticación SMTP: usuario y contraseña deben estar presentes; no se admite un proveedor sin autenticación.
 
 La identidad del remitente y el correo del primer administrador siguen pendientes del propietario. No enviar contraseñas por chat ni registrar las conexiones o los enlaces completos.
 

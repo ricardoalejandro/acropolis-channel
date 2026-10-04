@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Acropolis.Identity.IntegrationTests;
@@ -103,7 +104,12 @@ public sealed class IdentityTests(IdentityFixture database)
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
         using var loginAgain = await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("member@example.test", Password));
         Assert.Equal(HttpStatusCode.OK, loginAgain.StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await Write(client, HttpMethod.Post, "/api/v1/identity/change-password", new ChangePasswordRequest("wrong current phrase", ChangedPassword))).StatusCode);
+        using var incorrectCurrentPassword = await Write(client, HttpMethod.Post, "/api/v1/identity/change-password", new ChangePasswordRequest("wrong current phrase", ChangedPassword));
+        Assert.Equal(HttpStatusCode.BadRequest, incorrectCurrentPassword.StatusCode);
+        var problem = await incorrectCurrentPassword.Content.ReadFromJsonAsync<JsonElement>(Token);
+        Assert.Equal("current_password_invalid", problem.GetProperty("code").GetString());
+        Assert.Equal("La contraseña actual no es correcta.", problem.GetProperty("fieldErrors").GetProperty("currentPassword")[0].GetString());
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await Write(client, HttpMethod.Post, "/api/v1/identity/change-password", new ChangePasswordRequest(Password, ChangedPassword))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("member@example.test", Password))).StatusCode);
@@ -449,6 +455,40 @@ public sealed class IdentityTests(IdentityFixture database)
         await using var scope = api.Services.CreateAsyncScope();
         Assert.Equal("account_unconfirmed", (await scope.ServiceProvider.GetRequiredService<IIdentityService>().UpdateUserAsync(
             (await owner.Users.SingleAsync(x => x.Email == "pending-admin@example.test", Token)).Id, id, new AdminUserRequest(user!.Version, Status: "active"), Token)).Error);
+    }
+
+    [Fact]
+    public async Task PasswordUpdateConcurrencyFailureKeepsOriginalCredentialAndSession()
+    {
+        await database.ResetAsync(Token);
+        await using var api = new IdentityApiFactory(database);
+        using var client = api.Client();
+        var id = await RegisterConfirmed(api, client, "password-race@example.test");
+        await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("password-race@example.test", Password));
+        await using (var scope = api.Services.CreateAsyncScope())
+        {
+            // Commit a competing real PostgreSQL update after password validation and before Identity saves.
+            var manager = scope.ServiceProvider.GetRequiredService<UserManager<ChannelUser>>();
+            manager.PasswordValidators.Add(new CompetingUserUpdate(database, id));
+            var result = await scope.ServiceProvider.GetRequiredService<IIdentityService>()
+                .ChangePasswordAsync(id, new ChangePasswordRequest(Password, ChangedPassword), Token);
+            Assert.Equal("concurrency_conflict", result.Error);
+            Assert.Equal(409, result.Status);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("password-race@example.test", Password))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Write(client, HttpMethod.Post, "/api/v1/identity/login", new LoginRequest("password-race@example.test", ChangedPassword))).StatusCode);
+    }
+
+    private sealed class CompetingUserUpdate(IdentityFixture fixture, Guid userId) : IPasswordValidator<ChannelUser>
+    {
+        public async Task<Microsoft.AspNetCore.Identity.IdentityResult> ValidateAsync(UserManager<ChannelUser> manager, ChannelUser user, string? password)
+        {
+            await using var context = fixture.Context(true);
+            await context.Users.Where(value => value.Id == userId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(value => value.ConcurrencyStamp, Guid.NewGuid().ToString("N")), Token);
+            return Microsoft.AspNetCore.Identity.IdentityResult.Success;
+        }
     }
 
     private static async Task<Guid> RegisterConfirmed(IdentityApiFactory api, HttpClient client, string email)

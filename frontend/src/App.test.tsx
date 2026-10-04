@@ -199,6 +199,55 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     );
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ displayName: 'Nuevo Nombre' });
   });
+  it('keeps the profile and session on an incorrect current password until an explicit successful retry', async () => {
+    const dispatched = vi.spyOn(window, 'dispatchEvent');
+    const fetch = mount('/profile', user, (path, options) =>
+      path.endsWith('/change-password') &&
+      JSON.parse(String(options?.body))['currentPassword'] === 'Incorrect current password'
+        ? json(
+            {
+              code: 'current_password_invalid',
+              fieldErrors: { currentPassword: ['Private server diagnostic'] },
+            },
+            400,
+          )
+        : undefined,
+    );
+    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    fill('Contraseña actual', 'Incorrect current password');
+    fill('Nueva contraseña', 'Una contraseña completamente nueva');
+    fill('Confirmar contraseña', 'Una contraseña completamente nueva');
+    await userEvent.click(screen.getByRole('button', { name: 'Cambiar contraseña' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'La contraseña actual no es correcta. Revísala e inténtalo de nuevo.',
+    );
+    expect(screen.getByLabelText('Contraseña actual', { exact: true })).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(screen.getByLabelText('Contraseña actual', { exact: true })).toHaveAccessibleDescription(
+      'Revisa el valor de este campo.',
+    );
+    expect(window.location.pathname).toBe('/profile');
+    expect(screen.getByRole('heading', { name: 'Hola, Persona.' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Mi perfil' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Qué bueno verte.' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Private server diagnostic')).not.toBeInTheDocument();
+    expect(
+      dispatched.mock.calls.some(([event]) => event.type === 'acropolis:session-expired'),
+    ).toBe(false);
+    expect(
+      fetch.mock.calls.filter(([path]) => String(path).endsWith('/change-password')),
+    ).toHaveLength(1);
+    fill('Contraseña actual', 'Correct current password');
+    await userEvent.click(screen.getByRole('button', { name: 'Cambiar contraseña' }));
+    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    expect(window.location.pathname).toBe('/login');
+    expect(screen.getByRole('status')).toHaveTextContent('Contraseña actualizada');
+    expect(
+      fetch.mock.calls.filter(([path]) => String(path).endsWith('/change-password')),
+    ).toHaveLength(2);
+  });
   it('password change revokes local session and requires login with the new password', async () => {
     const fetch = mount('/profile', user);
     await screen.findByRole('heading', { name: 'Hola, Persona.' });
