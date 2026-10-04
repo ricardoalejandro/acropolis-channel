@@ -20,6 +20,8 @@ fi
 run_id="$(date -u +%Y%m%dT%H%M%SZ)_$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
 export QA_PROJECT="acropolis_test_${run_id,,}"
 export QA_DATABASE="$QA_PROJECT"
+reference_database="${QA_DATABASE}_schema_reference"
+reference_created=false
 export QA_ARTIFACTS="$project_dir/.local/qa/$sha/$run_id"
 export QA_HOST="qa-${run_id//_/}.test"
 QA_HOST="${QA_HOST,,}"
@@ -95,7 +97,9 @@ safe_cleanup_project() {
 cleanup() {
   local exit_code=$? cleanup_failed=false status=failed eligible=false
   trap - EXIT INT TERM
-  if ! safe_cleanup_project "$QA_PROJECT" "$QA_DATABASE" > "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
+  : > "$QA_ARTIFACTS/cleanup.log"
+  if [[ "$reference_created" == true ]] && ! drop_schema_reference >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
+  if ! safe_cleanup_project "$QA_PROJECT" "$QA_DATABASE" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   if ! safe_cleanup_project "$restore_project" "$restore_database" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   if ! safe_cleanup_project "$integration_project" "$integration_database" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   redact_log "$QA_ARTIFACTS/cleanup.log"
@@ -214,10 +218,18 @@ run_step frontend_quality compose run --rm --no-deps node '
   npm audit --audit-level=high --json > /artifacts/npm-audit.json
 '
 run_step migrations_first compose run --rm --no-deps migrations
-schema_digest() {
-  compose exec -T db sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --schema-only --no-owner --no-privileges' |
-    sed '/^\\restrict /d; /^\\unrestrict /d' | sha256sum | cut -d ' ' -f 1
+artifact_digest() {
+  [[ -s "$1" ]] || { echo 'Missing or empty comparison artifact.' >&2; return 1; }
+  local digest
+  digest="$(sha256sum -- "$1" | cut -d ' ' -f 1)" || return 1
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid artifact digest.' >&2; return 1; }
+  printf '%s\n' "$digest"
 }
+schema_dump() {
+  compose exec -T db sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$1" --schema-only --no-owner --no-privileges' sh "${1:-$QA_DATABASE}" |
+    sed '/^\\restrict /d; /^\\unrestrict /d'
+}
+schema_digest() { schema_dump | sha256sum | cut -d ' ' -f 1; }
 history_json() {
   compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 SELECT json_build_object(
@@ -242,7 +254,8 @@ PY_MIGRATIONS
 history_json > "$QA_ARTIFACTS/migration-history.json"
 run_step migration_manifest compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs migration-history /artifacts/migration-history.json /artifacts/expected-migrations.json'
 
-schema_before="$(schema_digest)"
+schema_dump > "$QA_ARTIFACTS/schema-initial.sql"
+schema_before="$(artifact_digest "$QA_ARTIFACTS/schema-initial.sql")"
 history_before="$(history_digest)"
 run_step migrations_repeat compose run --rm --no-deps migrations
 stage=migrations_idempotence
@@ -364,9 +377,106 @@ run_step catalog_source_digest capture_catalog_digest
 run_step catalog_public_boundaries compose run --rm --no-deps node 'node /qa-tools/catalog-state.mjs'
 run_step keyring_backup compose run --rm --no-deps pki backup-keyring
 run_step private_ca_backup compose run --rm --no-deps pki backup-caddy
+source_schema_consistency() {
+  schema_dump > "$QA_ARTIFACTS/schema-source.sql" || return 1
+  local expected actual
+  expected="$(artifact_digest "$QA_ARTIFACTS/schema-initial.sql")" || return 1
+  actual="$(artifact_digest "$QA_ARTIFACTS/schema-source.sql")" || return 1
+  if ! cmp -s -- "$QA_ARTIFACTS/schema-initial.sql" "$QA_ARTIFACTS/schema-source.sql"; then
+    diff -u "$QA_ARTIFACTS/schema-initial.sql" "$QA_ARTIFACTS/schema-source.sql" > "$QA_ARTIFACTS/schema-source.diff" || true
+    echo "Source schema changed before backup: expected=$expected actual=$actual; inspect schema-source.diff." >&2; return 1
+  fi
+  [[ "$actual" == "$schema_before" ]] || return 1
+  echo "Source schema preserved: $actual"
+}
+source_history_consistency() {
+  history_json > "$QA_ARTIFACTS/migration-history-source.json" || return 1
+  local expected actual
+  expected="$(artifact_digest "$QA_ARTIFACTS/migration-history.json")" || return 1
+  actual="$(artifact_digest "$QA_ARTIFACTS/migration-history-source.json")" || return 1
+  if ! cmp -s -- "$QA_ARTIFACTS/migration-history.json" "$QA_ARTIFACTS/migration-history-source.json"; then
+    diff -u "$QA_ARTIFACTS/migration-history.json" "$QA_ARTIFACTS/migration-history-source.json" > "$QA_ARTIFACTS/migration-history-source.diff" || true
+    echo "Source migration history changed before backup: expected=$expected actual=$actual." >&2; return 1
+  fi
+  [[ "$actual" == "$history_before" ]] || return 1
+  echo "Source migration history preserved: $actual"
+}
+restored_schema_consistency() {
+  local suffix expected actual
+  case "${1:-after}" in before) suffix=-before ;; after) suffix= ;; *) return 2 ;; esac
+  QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" schema_dump > "$QA_ARTIFACTS/schema-restored$suffix.sql" || return 1
+  expected="$(artifact_digest "$QA_ARTIFACTS/schema-reference.sql")" || return 1
+  actual="$(artifact_digest "$QA_ARTIFACTS/schema-restored$suffix.sql")" || return 1
+  if ! cmp -s -- "$QA_ARTIFACTS/schema-reference.sql" "$QA_ARTIFACTS/schema-restored$suffix.sql"; then
+    diff -u "$QA_ARTIFACTS/schema-reference.sql" "$QA_ARTIFACTS/schema-restored$suffix.sql" > "$QA_ARTIFACTS/schema-restored$suffix.diff" || true
+    echo "Restored schema differs from canonical reference: expected=$expected actual=$actual; inspect schema-restored$suffix.diff." >&2; return 1
+  fi
+  echo "Restored schema matches canonical reference: $actual"
+}
+restored_history_consistency() {
+  local suffix expected actual
+  case "${1:-after}" in before) suffix=-before ;; after) suffix= ;; *) return 2 ;; esac
+  QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" history_json > "$QA_ARTIFACTS/migration-history-restored$suffix.json" || return 1
+  expected="$(artifact_digest "$QA_ARTIFACTS/migration-history-source.json")" || return 1
+  actual="$(artifact_digest "$QA_ARTIFACTS/migration-history-restored$suffix.json")" || return 1
+  if ! cmp -s -- "$QA_ARTIFACTS/migration-history-source.json" "$QA_ARTIFACTS/migration-history-restored$suffix.json"; then
+    diff -u "$QA_ARTIFACTS/migration-history-source.json" "$QA_ARTIFACTS/migration-history-restored$suffix.json" > "$QA_ARTIFACTS/migration-history-restored$suffix.diff" || true
+    echo "Restored migration history differs from source: expected=$expected actual=$actual; inspect migration-history-restored$suffix.diff." >&2; return 1
+  fi
+  [[ "$actual" == "$history_before" ]] || return 1
+  echo "Restored migration history matches source: $actual"
+}
+guard_schema_reference() {
+  [[ "$QA_PROJECT" =~ ^acropolis_test_[a-z0-9_]+$ && "$QA_DATABASE" == "$QA_PROJECT"
+    && "$reference_database" == "${QA_DATABASE}_schema_reference" && ${#reference_database} -le 63 ]] ||
+    { echo 'Unsafe QA schema reference rejected.' >&2; return 2; }
+  local container
+  container="$(compose ps -q db)" || return 1
+  [[ -n "$container" && "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")" == "$QA_PROJECT"
+    && "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container")" == db ]] ||
+    { echo 'Schema reference container ownership mismatch.' >&2; return 2; }
+}
+create_schema_reference() {
+  guard_schema_reference || return $?
+  local exists
+  exists="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d postgres -At -v ON_ERROR_STOP=1 -v reference="$1"' sh "$reference_database" <<'SQL'
+SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=:'reference');
+SQL
+)" || return 1
+  [[ "$exists" == f ]] || { echo 'Refusing to reuse an existing schema reference database.' >&2; return 2; }
+  compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -v reference="$1"' sh "$reference_database" <<'SQL' || return 1
+SELECT format('CREATE DATABASE %I OWNER acropolis_migrator TEMPLATE template0', :'reference') \gexec
+SQL
+  reference_created=true
+  compose exec -T db sh -ec 'exec pg_restore -U "$POSTGRES_USER" -d "$1" --schema-only --no-owner --role=acropolis_migrator --exit-on-error --single-transaction' sh "$reference_database" < "$QA_ARTIFACTS/database.dump" || return 1
+  schema_dump "$reference_database" > "$QA_ARTIFACTS/schema-reference.sql" || return 1
+  [[ -s "$QA_ARTIFACTS/schema-reference.sql" ]] || return 1
+  echo 'Canonical schema reference restored without data; all schema objects and CHECK constraints remain compared.'
+}
+drop_schema_reference() {
+  [[ "$reference_created" == true ]] || return 0
+  guard_schema_reference || return $?
+  local owner
+  owner="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d postgres -At -v ON_ERROR_STOP=1 -v reference="$1"' sh "$reference_database" <<'SQL'
+SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=:'reference';
+SQL
+)" || return 1
+  [[ "$owner" == acropolis_migrator ]] || { echo 'Schema reference database owner mismatch; refusing drop.' >&2; return 2; }
+  compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -v reference="$1"' sh "$reference_database" <<'SQL' || return 1
+SELECT format('DROP DATABASE %I', :'reference') \gexec
+SQL
+  reference_created=false
+  echo 'Owned QA schema reference database removed.'
+}
+run_step source_schema_consistency source_schema_consistency
+run_step source_history_consistency source_history_consistency
 run_step backup bash scripts/backup-db.sh --project "$QA_PROJECT" --database "$QA_DATABASE" --output "$QA_ARTIFACTS/database.dump"
+run_step schema_reference create_schema_reference
+run_step schema_reference_cleanup drop_schema_reference
 run_step restore_database_start env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" up -d --wait --wait-timeout 90 db
 run_step restore bash scripts/restore-db-test.sh --project "$restore_project" --database "$restore_database" --input "$QA_ARTIFACTS/database.dump" --maintenance
+run_step restored_schema_before_runner restored_schema_consistency before
+run_step restored_history_before_runner restored_history_consistency before
 restore_proxy_ip="$QA_PROXY_IP"
 restore_compose() {
   QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" QA_PROXY_IP="$restore_proxy_ip" compose "$@"
@@ -460,8 +570,8 @@ stage=restored_catalog_consistency
 [[ "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" catalog_digest)" == "$catalog_before" ]] || { echo 'Restored editorial content or audit differs from the backup source.' >&2; exit 1; }
 run_step restored_greeting restore_compose run --rm --no-deps node 'node --input-type=module -e "const r = await fetch(process.env.BASE_URL + \"/api/v1/greeting\", { signal: AbortSignal.timeout(5000) }); const body = await r.json(); if (r.status !== 200 || body.message !== \"Hola mundo\") process.exit(1);"'
 run_step restored_migrations env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" run --rm --no-deps migrations
-stage=restore_consistency
-[[ "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" schema_digest)" == "$schema_before" && "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" history_digest)" == "$history_before" ]] || { echo 'Restored schema or data does not match the backup source.' >&2; exit 1; }
+run_step restored_schema_consistency restored_schema_consistency
+run_step restored_history_consistency restored_history_consistency
 restore_guard() {
   if bash scripts/restore-db-test.sh --project acropolis-channel --database acropolis --input "$QA_ARTIFACTS/database.dump" > "$QA_ARTIFACTS/restore-guard-rejection.log" 2>&1; then
     echo 'Restore guard accepted a production project.' >&2; return 1
