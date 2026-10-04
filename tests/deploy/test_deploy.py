@@ -132,7 +132,7 @@ class DeploymentTests(unittest.TestCase):
             return 0
         if args == ["python3", "scripts/identity-runtime.py", "--check"]:
             return 0
-        smtp_network = ["python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"]
+        smtp_network = ["python3", str(self.root / "scripts/smtp-network.py")]
         if args in (smtp_network, smtp_network + ["--allow-empty"]):
             self.assertTrue(capture, "Topology helper output must stay private")
             return "{}"
@@ -220,8 +220,8 @@ class DeploymentTests(unittest.TestCase):
         self.assert_not_activated()
 
     def smtp_network_calls(self):
-        expected = ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network")
-        return [args for kind, args in self.operations if kind == "command" and args[:3] == expected]
+        expected = ("python3", str(self.root / "scripts/smtp-network.py"))
+        return [args for kind, args in self.operations if kind == "command" and args[:len(expected)] == expected]
 
     def assert_network_verified_before_mutation(self):
         calls = self.smtp_network_calls()
@@ -238,7 +238,7 @@ class DeploymentTests(unittest.TestCase):
             handle.write("IDENTITY_EMAIL_ENABLED=true\nIDENTITY_SMTP_HOST=mail.naperu.cloud\n")
         self.assertEqual(self.execute(), 0)
         self.assertEqual(self.smtp_network_calls(), [
-            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network")])
+            ("python3", str(self.root / "scripts/smtp-network.py"))])
         self.assert_network_verified_before_mutation()
         self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
 
@@ -247,7 +247,7 @@ class DeploymentTests(unittest.TestCase):
             handle.write("IDENTITY_EMAIL_ENABLED=false\nIDENTITY_SMTP_HOST=mail.naperu.cloud\n")
         self.assertEqual(self.execute(), 0)
         self.assertEqual(self.smtp_network_calls(), [
-            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network", "--allow-empty")])
+            ("python3", str(self.root / "scripts/smtp-network.py"), "--allow-empty")])
         self.assert_network_verified_before_mutation()
         self.assertFalse(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
 
@@ -256,17 +256,17 @@ class DeploymentTests(unittest.TestCase):
             handle.write("IDENTITY_EMAIL_ENABLED=true\nIDENTITY_SMTP_HOST=smtp.acropolis.test\n")
         self.assertEqual(self.execute(), 0)
         self.assertEqual(self.smtp_network_calls(), [
-            ("python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network", "--allow-empty")])
+            ("python3", str(self.root / "scripts/smtp-network.py"), "--allow-empty")])
         self.assert_network_verified_before_mutation()
         self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
 
     def test_invalid_private_network_blocks_enabled_and_disabled_deployments_without_mutation(self):
         previous, previous_env, _ = self.seed_previous_deployment()
         original = self.command.side_effect
-        network_prefix = ["python3", str(self.root / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"]
+        network_prefix = ["python3", str(self.root / "scripts/smtp-network.py")]
 
         def unavailable_network(args, **kwargs):
-            if args[:3] == network_prefix:
+            if args[:len(network_prefix)] == network_prefix:
                 self.operations.append(("command", tuple(args)))
                 self.assertTrue(kwargs.get("capture"))
                 raise subprocess.CalledProcessError(1, args, output="synthetic-private-response")

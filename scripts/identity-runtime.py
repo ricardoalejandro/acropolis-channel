@@ -101,7 +101,7 @@ def validate_smtp_network(settings):
     if (settings.get("IDENTITY_EMAIL_ENABLED", "true").lower() == "true"
             and settings.get("IDENTITY_SMTP_HOST") == "mail.naperu.cloud"):
         # This helper is read-only; creation is an explicit mail maintenance operation.
-        command(["python3", str(ROOT / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"])
+        command(["python3", str(ROOT / "scripts/smtp-network.py")])
 
 
 def prepare():

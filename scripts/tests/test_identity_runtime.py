@@ -32,7 +32,7 @@ class PrivateSmtpPreflightTests(unittest.TestCase):
     def test_preflight_is_read_only_and_requires_private_mail_network(self):
         with patch.object(RUNTIME, "command", return_value="{}") as run:
             RUNTIME.validate_smtp_network(self.settings())
-        self.assertEqual(run.call_args.args[0], ["python3", str(RUNTIME.ROOT / "infra/mail/scripts/mail-ops.py"), "check-smtp-network"])
+        self.assertEqual(run.call_args.args[0], ["python3", str(RUNTIME.ROOT / "scripts/smtp-network.py")])
         self.assertEqual(run.call_count, 1)
 
     def test_failed_topology_blocks_preflight_without_secret_disclosure(self):
@@ -72,13 +72,13 @@ class ComposeSmtpPreflightTests(unittest.TestCase):
                          {"IDENTITY_EMAIL_ENABLED": "true", "IDENTITY_SMTP_HOST": "smtp.acropolis.test"}]:
             with self.subTest(settings=settings), patch.object(DEPLOY, "command", return_value="{}") as run:
                 DEPLOY.validate_compose_smtp_network(settings)
-                self.assertEqual(run.call_args.args[0][-2:], ["check-smtp-network", "--allow-empty"])
+                self.assertEqual(run.call_args.args[0][-2:], [str(DEPLOY.ROOT / "scripts/smtp-network.py"), "--allow-empty"])
                 self.assertTrue(run.call_args.kwargs["capture"])
 
     def test_own_smtp_never_allows_missing_mailserver(self):
         with patch.object(DEPLOY, "command", return_value="{}") as run:
             DEPLOY.validate_compose_smtp_network({"IDENTITY_EMAIL_ENABLED": "true", "IDENTITY_SMTP_HOST": "mail.naperu.cloud"})
-        self.assertEqual(run.call_args.args[0][-1], "check-smtp-network")
+        self.assertEqual(run.call_args.args[0][-1], str(DEPLOY.ROOT / "scripts/smtp-network.py"))
         self.assertNotIn("--allow-empty", run.call_args.args[0])
 
     def test_any_failed_network_check_blocks_even_email_disabled(self):

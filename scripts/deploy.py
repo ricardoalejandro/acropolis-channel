@@ -30,7 +30,7 @@ def validate_compose_smtp_network(settings):
     # Compose attaches this network even when email flows are disabled.
     own_mail = (settings.get('IDENTITY_EMAIL_ENABLED', 'true').lower() == 'true'
                 and settings.get('IDENTITY_SMTP_HOST') == 'mail.naperu.cloud')
-    arguments = ['python3', str(ROOT / 'infra/mail/scripts/mail-ops.py'), 'check-smtp-network']
+    arguments = ['python3', str(ROOT / 'scripts/smtp-network.py')]
     if not own_mail:
         arguments.append('--allow-empty')
     try:
