@@ -59,6 +59,26 @@ services:
     mem_limit: 192m
     cpus: 0.5
     pids_limit: 64
+  crl:
+    image: ${QA_PKI_IMAGE:?QA PKI image required}
+    user: '1654:1654'
+    entrypoint: [node, /qa-infra/crl-server.mjs]
+    environment:
+      QA_PROJECT: ${QA_PROJECT}
+    volumes:
+      - ./infra/qa:/qa-infra:ro
+      - ${QA_TLS}/crl:/qa-crl:ro
+    healthcheck:
+      test: [CMD, node, -e, "require('http').get('http://127.0.0.1:8082/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    cpus: 0.1
+    pids_limit: 32
   mailpit:
     image: axllent/mailpit:v1.31.4
     environment:
@@ -67,6 +87,9 @@ services:
       MP_SMTP_REQUIRE_STARTTLS: 'true'
       MP_SMTP_AUTH: qa:${QA_SMTP_PASSWORD:?QA SMTP password required}
       MP_MAX_MESSAGES: '200'
+    depends_on:
+      crl:
+        condition: service_healthy
     volumes:
       - ${QA_TLS}/smtp:/smtp:ro
     read_only: true

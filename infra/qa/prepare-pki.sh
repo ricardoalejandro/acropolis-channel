@@ -12,7 +12,7 @@ case "${1:-prepare}" in
     done
     ca=/caddy-data/caddy/pki/authorities/local
     [[ -s "$ca/root.crt" && -s "$ca/root.key" ]] || { echo 'Isolated Caddy CA did not become available.' >&2; exit 1; }
-    mkdir -p /tls/trust /tls/smtp /tls/protection
+    mkdir -p /tls/trust /tls/smtp /tls/protection /tls/crl
     cp "$ca/root.crt" /tls/trust/root.crt
     cat /etc/ssl/certs/ca-certificates.crt "$ca/root.crt" > /tls/trust/ca-bundle.crt
     openssl req -new -newkey rsa:2048 -nodes -keyout /tls/smtp/key.pem -out /tls/smtp/request.csr -subj '/CN=mailpit' >/dev/null 2>&1
@@ -21,19 +21,40 @@ basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 subjectAltName=DNS:mailpit
+crlDistributionPoints=URI:http://crl:8082/root.crl
 EXT
     openssl x509 -req -in /tls/smtp/request.csr -CA "$ca/root.crt" -CAkey "$ca/root.key" -set_serial "0x$(openssl rand -hex 16)" -days 1 -extfile /tls/smtp/extensions -out /tls/smtp/cert.pem >/dev/null 2>&1
-    openssl verify -CAfile /tls/trust/root.crt -verify_hostname mailpit /tls/smtp/cert.pem >/dev/null
+    mkdir -p /tmp/qa-crl
+    touch /tmp/qa-crl/index.txt
+    printf '01\n' > /tmp/qa-crl/crlnumber
+    cat > /tmp/qa-crl/openssl.cnf <<'CRL'
+[ca]
+default_ca = qa_authority
+[qa_authority]
+database = /tmp/qa-crl/index.txt
+certificate = /caddy-data/caddy/pki/authorities/local/root.crt
+private_key = /caddy-data/caddy/pki/authorities/local/root.key
+default_md = sha256
+default_crl_days = 1
+crlnumber = /tmp/qa-crl/crlnumber
+crl_extensions = qa_crl
+[qa_crl]
+authorityKeyIdentifier = keyid,issuer
+CRL
+    openssl ca -gencrl -config /tmp/qa-crl/openssl.cnf -out /tls/crl/root.pem >/dev/null 2>&1
+    openssl crl -in /tls/crl/root.pem -outform DER -out /tls/crl/root.crl
+    openssl verify -crl_check -CAfile /tls/trust/root.crt -CRLfile /tls/crl/root.pem -verify_hostname mailpit /tls/smtp/cert.pem >/dev/null
+    rm -rf -- /tmp/qa-crl
     openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout /tls/protection/key.pem -out /tls/protection/cert.pem -subj '/CN=Acropolis QA Data Protection' >/dev/null 2>&1
     openssl pkcs12 -export -inkey /tls/protection/key.pem -in /tls/protection/cert.pem -out /tls/protection/protector.pfx -passout env:QA_DP_PASSWORD
     rm -- /tls/smtp/request.csr /tls/smtp/extensions /tls/protection/key.pem /tls/protection/cert.pem
-    chmod 755 /tls/trust /tls/smtp
-    chmod 644 /tls/trust/*.crt /tls/smtp/cert.pem
+    chmod 755 /tls/trust /tls/smtp /tls/crl
+    chmod 644 /tls/trust/*.crt /tls/smtp/cert.pem /tls/crl/root.pem /tls/crl/root.crl
     chmod 600 /tls/smtp/key.pem
     chown -R "$QA_APP_UID:$QA_APP_UID" /tls/protection /keyring
     chmod 750 /tls/protection /keyring
     chmod 640 /tls/protection/protector.pfx
-    echo 'QA CA, SMTP certificate and Data Protection protector initialized.'
+    echo 'QA CA, SMTP certificate, signed revocation list and Data Protection protector initialized.'
     ;;
   backup-caddy)
     [[ ! -e /artifacts/caddy-pki.tar ]] || exit 2

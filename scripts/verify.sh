@@ -170,6 +170,8 @@ run_step database_start compose up -d --wait --wait-timeout 90 db
 run_step application_before_migrations compose up -d web
 run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 503 not_ready'
 run_step strict_private_tls compose run --rm --no-deps node 'node /qa-tools/tls-check.mjs'
+run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash playwright -euc 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs'
+run_step browser_trusted_tls compose run --rm --no-deps playwright 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs trusted'
 run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
 run_step integration_database_start env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" up -d --wait --wait-timeout 90 db
 run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" run --rm --no-deps sdk '
@@ -251,7 +253,6 @@ SQL
 }
 run_step synthetic_account_count synthetic_account_count
 run_step bootstrap_qa_admin compose run --rm --no-deps migrations bootstrap-admin --email qa-load-000000@example.test
-run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash playwright -euc 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs'
 run_step playwright_desktop compose run --rm --no-deps -e PLAYWRIGHT_OUTPUT_DIR=/artifacts/playwright/desktop -e PLAYWRIGHT_HTML_REPORT=/artifacts/playwright-report/desktop playwright '
   cd /source/frontend
   node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"

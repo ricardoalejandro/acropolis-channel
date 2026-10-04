@@ -532,7 +532,7 @@ fieldset legend {
 .field select {
   width: 100%;
   min-height: 48px;
-  border: 1px solid #bdc9ce;
+  border: 1px solid #708b9a;
   background: white;
   color: var(--ink);
   padding: 13px 14px;
@@ -541,7 +541,7 @@ fieldset legend {
 }
 .field input:hover,
 .field select:hover {
-  border-color: #708b9a;
+  border-color: #16374b;
 }
 .field input[aria-invalid='true'] {
   border-color: #aa362a;
