@@ -183,6 +183,29 @@ stage=persistence_consistency
 run_step backup bash scripts/backup-db.sh --project "$QA_PROJECT" --database "$QA_DATABASE" --output "$QA_ARTIFACTS/database.dump"
 run_step restore_database_start env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" up -d --wait --wait-timeout 90 db
 run_step restore bash scripts/restore-db-test.sh --project "$restore_project" --database "$restore_database" --input "$QA_ARTIFACTS/database.dump"
+restore_compose() {
+  QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" compose "$@"
+}
+restored_permissions() {
+  local result
+  result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT CASE WHEN
+  has_schema_privilege('acropolis_app', 'platform', 'USAGE')
+  AND NOT has_schema_privilege('acropolis_app', 'platform', 'CREATE')
+  AND has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'SELECT')
+  AND NOT has_table_privilege('acropolis_app', 'platform."__EFMigrationsHistory"', 'INSERT')
+  AND (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()) = 'acropolis_migrator'
+  AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'platform') = 'acropolis_migrator'
+  AND (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'platform."__EFMigrationsHistory"'::regclass) = 'acropolis_migrator'
+THEN 'ok' ELSE 'failed' END;
+SQL
+)" || return 1
+  [[ "$result" == ok ]] || { echo 'Restored ownership or application permissions differ from the expected boundary.' >&2; return 1; }
+}
+run_step restored_permissions restored_permissions
+run_step restored_application_start restore_compose up -d web
+run_step restored_readiness restore_compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http http://web:8080/health/ready 200 ok'
+run_step restored_greeting restore_compose run --rm --no-deps node 'node --input-type=module -e "const r = await fetch(\"http://web:8080/api/v1/greeting\", { signal: AbortSignal.timeout(5000) }); const body = await r.json(); if (r.status !== 200 || body.message !== \"Hola mundo\") process.exit(1);"'
 run_step restored_migrations env QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$restore_project" run --rm --no-deps migrations
 stage=restore_consistency
 [[ "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" schema_digest)" == "$schema_before" && "$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" history_digest)" == "$history_before" ]] || { echo 'Restored schema or data does not match the backup source.' >&2; exit 1; }

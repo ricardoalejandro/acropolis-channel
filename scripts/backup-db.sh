@@ -27,7 +27,7 @@ docker exec "$container" sh -ec 'test "$POSTGRES_DB" = "$1"' sh "$database" || {
 mkdir -p -- "$(dirname -- "$output")"
 temporary="$(mktemp -- "$(dirname -- "$output")/.backup.XXXXXX")"
 trap 'rm -f -- "$temporary"' EXIT
-docker exec "$container" sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$1" --format=custom --no-owner --no-privileges' sh "$database" > "$temporary"
+docker exec "$container" sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$1" --format=custom --no-owner' sh "$database" > "$temporary"
 docker exec -i "$container" pg_restore --list < "$temporary" > /dev/null
 [[ -s "$temporary" ]] || { echo 'Backup is empty.' >&2; exit 1; }
 mv --no-clobber -- "$temporary" "$output"

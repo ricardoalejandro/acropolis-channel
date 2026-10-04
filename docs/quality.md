@@ -50,7 +50,7 @@ Los servicios limitan CPU, memoria y procesos; las construcciones .NET usan un �
 | Migraciones | Antes de migrar readiness 503 y liveness 200; primera migración desde base vacía; segunda ejecución sin cambios de schema o historial |
 | Navegador | Playwright desktop/móvil contra frontend y API del candidato real; resultados y reporte conservados |
 | Resiliencia | Al detener PostgreSQL readiness 503 y liveness 200; al recuperarlo readiness 200; reinicio de app y base con schema e historial persistentes |
-| Recuperación | `pg_dump` custom, restauración en otro proyecto QA, reaplicación idempotente y comparación de schema e historial con el origen; intento de restaurar producción rechazado antes de contactar Docker |
+| Recuperación | `pg_dump` custom, restauración en otro proyecto QA conservando ACL, comprobación de propietarios y permisos efectivos, readiness/saludo de la aplicación restaurada antes de reaplicar migraciones, reaplicación idempotente y comparación de schema e historial con el origen; intento de restaurar producción rechazado antes de contactar Docker |
 | Carga | k6: cinco iteraciones breves de calentamiento antes de la medición; 20 VU durante 60 segundos, pausa de 1 segundo por iteración, p95 HTTP menor de 500 ms, tasa de errores HTTP 0 y todos los checks correctos |
 
 La cobertura de Application mide decisiones de la capa sin infraestructura. Las métricas de líneas y ramas deben existir y ser válidas; un informe sin ramas reales se declara no aplicable para esa métrica. Los tests de PostgreSQL y del runner ejercitan SQL y permisos con una base real; no se contabilizan como unidad ni se reemplazan por mocks para aumentar el porcentaje.
@@ -79,4 +79,4 @@ bash scripts/restore-db-test.sh \
   --input /root/proyect/acropolis-channel/.local/backups/ARCHIVO.dump
 ```
 
-Sustituir `RUN` por el identificador real en minúsculas y `ARCHIVO` por un backup existente. El destino requiere los roles de inicialización QA. La restauración usa `acropolis_migrator` como propietario, sin trasladar propietarios o grants ajenos; ejecutar después el runner de migraciones de ese mismo ámbito QA para verificar y restablecer los permisos propios del historial. El script no permite una restauración sobre el proyecto de producción.
+Sustituir `RUN` por el identificador real en minúsculas y `ARCHIVO` por un backup existente. El destino requiere los roles de inicialización QA. El backup conserva las ACL y privilegios predeterminados propios; no incluye roles globales ni sus contraseñas. La restauración usa `--no-owner --role=acropolis_migrator`, por lo que los objetos quedan bajo el migrador del destino y las ACL originales se reponen contra los roles inicializados. El gate comprueba propiedad, permisos efectivos de la aplicación y readiness antes de ejecutar de nuevo el runner del mismo ámbito QA. El script no permite una restauración sobre el proyecto de producción.

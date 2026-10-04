@@ -24,5 +24,5 @@ mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.projec
 container="${containers[0]}"
 [[ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")" == "$project" ]] || exit 2
 docker exec "$container" sh -ec 'test "$POSTGRES_DB" = "$1"' sh "$database" || { echo 'QA database does not match the container database.' >&2; exit 2; }
-docker exec -i "$container" sh -ec 'exec pg_restore -U "$POSTGRES_USER" -d "$1" --clean --if-exists --no-owner --no-privileges --role=acropolis_migrator --exit-on-error --single-transaction' sh "$database" < "$input"
+docker exec -i "$container" sh -ec 'exec pg_restore -U "$POSTGRES_USER" -d "$1" --clean --if-exists --no-owner --role=acropolis_migrator --exit-on-error --single-transaction' sh "$database" < "$input"
 echo "Backup restored only into QA database: $database"
