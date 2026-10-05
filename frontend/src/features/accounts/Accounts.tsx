@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { identity, request, type MfaChallenge } from '../../api/identity';
 import { useSession } from '../../auth/useSession';
 import { readEmailLink } from './emailLink';
@@ -157,7 +157,9 @@ export function Register() {
               email: values['email'],
               password: values['password'],
             });
-            navigate('/email-pending');
+            navigate('/email-pending', {
+              state: { kind: 'registration', email: values['email'] },
+            });
           }}
         />
       </EmailCapability>
@@ -167,7 +169,25 @@ export function Register() {
     </AccountLayout>
   );
 }
+function registrationEmailFrom(state: unknown): string | null {
+  if (typeof state !== 'object' || state === null || Array.isArray(state)) return null;
+  const context = state as Record<string, unknown>;
+  if (context['kind'] !== 'registration' || typeof context['email'] !== 'string') return null;
+  const address = context['email'].trim();
+  return address.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) ? address : null;
+}
+
 export function EmailPending() {
+  const location = useLocation();
+  return (
+    <PendingEmailContent
+      key={location.key}
+      registrationEmail={registrationEmailFrom(location.state)}
+    />
+  );
+}
+
+function PendingEmailContent({ registrationEmail }: { registrationEmail: string | null }) {
   const [sent, setSent] = useState(false);
   return (
     <AccountLayout
@@ -175,10 +195,15 @@ export function EmailPending() {
       title="Revisa tu correo."
       description="Para ingresar necesitas confirmar tu correo electrónico. Revisa también la carpeta de correo no deseado."
     >
-      <p className="quiet-note">
-        Revisa tu bandeja de entrada y el correo no deseado. Si aún necesitas confirmar tu cuenta,
-        recibirás las instrucciones cuando corresponda.
-      </p>
+      <div className="quiet-note">
+        {registrationEmail && (
+          <p>
+            Correo utilizado:
+            <strong className="pending-email-address">{registrationEmail}</strong>
+          </p>
+        )}
+        <p>Si tu cuenta necesita confirmación, recibirás las instrucciones en esa dirección.</p>
+      </div>
       {sent && (
         <p className="success-message" role="status">
           Si corresponde, recibirás un nuevo enlace. Revisa tu correo.
@@ -186,13 +211,20 @@ export function EmailPending() {
       )}
       <EmailCapability>
         <AccountForm
-          fields={[email]}
+          fields={registrationEmail ? [] : [email]}
           submit="Reenviar enlace"
+          submitVariant={registrationEmail ? 'secondary' : 'primary'}
           onSubmit={async (values) => {
-            await request('/identity/resend-confirmation', { email: values['email'] });
+            setSent(false);
+            await request('/identity/resend-confirmation', {
+              email: registrationEmail ?? values['email'],
+            });
             setSent(true);
           }}
-        />
+        >
+          {registrationEmail && <p className="field-help">¿No recibiste el mensaje?</p>}
+          <p className="field-help">Puedes solicitar un nuevo enlace una vez por minuto.</p>
+        </AccountForm>
       </EmailCapability>
       <p className="account-switch">
         <Link to="/login">Volver a ingresar</Link>

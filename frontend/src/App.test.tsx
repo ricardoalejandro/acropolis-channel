@@ -5,9 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { clearCsrf, type User } from './api/identity';
 import { user, admin, json } from './test/fixtures';
-type Override = (path: string, init?: RequestInit) => Response | undefined;
-function mount(path: string, account: User | null = null, override?: Override, strict = false) {
-  window.history.replaceState({}, '', path);
+type Override = (path: string, init?: RequestInit) => Response | Promise<Response> | undefined;
+function mount(
+  path: string,
+  account: User | null = null,
+  override?: Override,
+  strict = false,
+  navigationState: unknown = null,
+) {
+  window.history.replaceState({ usr: navigationState, key: 'initial' }, '', path);
   let current = account;
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -85,11 +91,11 @@ describe('Account journeys with real HTTP-shaped responses', () => {
       '/profile',
     );
   });
-  it('registers only allowed fields and always gives a generic pending-email outcome', async () => {
+  it('registers allowed fields and carries only the submitted email into the pending confirmation page', async () => {
     const fetch = mount('/register');
     await screen.findByLabelText('Nombre visible');
     fill('Nombre visible', '  Persona Nueva  ');
-    fill('Correo electrónico', 'persona@example.test');
+    fill('Correo electrónico', '  Persona@example.test  ');
     fill('Contraseña', 'Una frase larga para entrar');
     fill('Confirmar contraseña', 'Una frase larga para entrar');
     await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
@@ -97,14 +103,229 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     const call = fetch.mock.calls.find(([path]) => String(path).endsWith('/register'));
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({
       displayName: 'Persona Nueva',
-      email: 'persona@example.test',
+      email: 'Persona@example.test',
       password: 'Una frase larga para entrar',
     });
+    expect(window.history.state['usr']).toEqual({
+      kind: 'registration',
+      email: 'Persona@example.test',
+    });
+    expect(window.location.pathname).toBe('/email-pending');
+    expect(window.location.search).toBe('');
+    expect(window.location.hash).toBe('');
+    expect(JSON.stringify(window.history.state)).not.toMatch(/password|token|Una frase larga/);
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
     expect(screen.queryByLabelText('Nivel institucional')).not.toBeInTheDocument();
-    await screen.findByRole('button', { name: 'Reenviar enlace' });
+    expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Contraseña')).not.toBeInTheDocument();
+    expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent('Persona@example.test');
+    const resend = await screen.findByRole('button', { name: 'Reenviar enlace' });
+    expect(screen.getByText('¿No recibiste el mensaje?')).toBeInTheDocument();
+    expect(
+      screen.getByText('Puedes solicitar un nuevo enlace una vez por minuto.'),
+    ).toBeInTheDocument();
+    expect(resend).toHaveClass('button', 'button-outline');
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/resend-confirmation'))).toBe(
+      false,
+    );
+    await userEvent.click(resend);
+    await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+    const resends = fetch.mock.calls.filter(([path]) =>
+      String(path).endsWith('/resend-confirmation'),
+    );
+    expect(resends).toHaveLength(1);
+    expect(JSON.parse(String(resends[0]?.[1]?.body))).toEqual({ email: 'Persona@example.test' });
+    expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
+    expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent('Persona@example.test');
+  });
+  it('keeps registration failures on the original form and creates navigation context only after an explicit successful retry', async () => {
+    let unavailable = true;
+    const fetch = mount('/register', null, (path) =>
+      path.endsWith('/register') && unavailable
+        ? json({ code: 'email_unavailable', detail: 'private server diagnostic' }, 503)
+        : undefined,
+    );
+    await screen.findByLabelText('Nombre visible');
+    fill('Nombre visible', 'Persona Nueva');
     fill('Correo electrónico', 'persona@example.test');
+    fill('Contraseña', 'Una frase larga para entrar');
+    fill('Confirmar contraseña', 'Una frase larga para entrar');
+    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'El registro y la recuperación por correo no están disponibles temporalmente.',
+    );
+    expect(window.location.pathname).toBe('/register');
+    expect(window.history.state['usr']).toBeNull();
+    expect(screen.getByLabelText('Correo electrónico')).toHaveValue('persona@example.test');
+    expect(screen.queryByText(/Correo utilizado:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('private server diagnostic')).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/resend-confirmation'))).toBe(
+      false,
+    );
+    unavailable = false;
+    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
+    await screen.findByRole('heading', { name: 'Revisa tu correo.' });
+    expect(window.history.state['usr']).toEqual({
+      kind: 'registration',
+      email: 'persona@example.test',
+    });
+    expect(fetch.mock.calls.filter(([path]) => String(path).endsWith('/register'))).toHaveLength(2);
+  });
+  it.each([
+    ['trimmed registration email', '  Persona@example.test  ', 'Persona@example.test'],
+    ['maximum-length registration email', 'a'.repeat(247) + '@b.test', 'a'.repeat(247) + '@b.test'],
+  ])('uses a valid %s without exposing an editable email field', async (_name, email, expected) => {
+    const fetch = mount('/email-pending', null, undefined, false, { kind: 'registration', email });
+    await screen.findByRole('button', { name: 'Reenviar enlace' });
+    expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent(expected as string);
+    expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/resend-confirmation'))).toBe(
+      false,
+    );
+  });
+  it.each([
+    ['absent', null],
+    ['primitive', 'persona@example.test'],
+    ['array', [{ kind: 'registration', email: 'persona@example.test' }]],
+    ['missing kind', { email: 'persona@example.test' }],
+    ['different kind', { kind: 'recovery', email: 'persona@example.test' }],
+    ['missing email', { kind: 'registration' }],
+    ['non-string email', { kind: 'registration', email: 123 }],
+    ['empty email', { kind: 'registration', email: '   ' }],
+    ['malformed email', { kind: 'registration', email: 'persona@example' }],
+    ['overlong email', { kind: 'registration', email: 'a'.repeat(248) + '@b.test' }],
+  ])('falls back to an empty email form for %s navigation context', async (_name, state) => {
+    const fetch = mount('/email-pending', null, undefined, false, state);
+    expect(await screen.findByLabelText('Correo electrónico')).toHaveValue('');
+    expect(screen.queryByText(/Correo utilizado:/)).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/resend-confirmation'))).toBe(
+      false,
+    );
+  });
+  it('allows a direct visit to explicitly request confirmation for the entered address', async () => {
+    const fetch = mount('/email-pending');
+    expect(await screen.findByLabelText('Correo electrónico')).toHaveValue('');
+    fill('Correo electrónico', '  otra@example.test  ');
     await userEvent.click(screen.getByRole('button', { name: 'Reenviar enlace' }));
     await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+    const call = fetch.mock.calls.find(([path]) => String(path).endsWith('/resend-confirmation'));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'otra@example.test' });
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/register'))).toBe(false);
+  });
+  it.each([
+    {
+      name: 'rate limiting',
+      fail: () => json({ code: 'rate_limited', detail: 'private diagnostic' }, 429),
+      message: 'Has realizado varios intentos. Espera unos minutos y vuelve a intentarlo.',
+    },
+    {
+      name: 'email unavailability',
+      fail: () => json({ code: 'email_unavailable', detail: 'private diagnostic' }, 503),
+      message: 'El registro y la recuperación por correo no están disponibles temporalmente.',
+    },
+    {
+      name: 'network failure',
+      fail: () => Promise.reject(new Error('private diagnostic')),
+      message: 'No pudimos conectar. Comprueba tu conexión e inténtalo de nuevo.',
+    },
+  ])(
+    'retains the registration email through $name and an explicit resend retry',
+    async (failure) => {
+      let rejected = true;
+      const fetch = mount(
+        '/email-pending',
+        null,
+        (path) => (path.endsWith('/resend-confirmation') && rejected ? failure.fail() : undefined),
+        false,
+        { kind: 'registration', email: 'persona@example.test' },
+      );
+      await userEvent.click(await screen.findByRole('button', { name: 'Reenviar enlace' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(failure.message);
+      expect(screen.getByRole('button', { name: 'Reenviar enlace' })).toBeEnabled();
+      expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent('persona@example.test');
+      expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
+      expect(screen.queryByText('private diagnostic')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.'),
+      ).not.toBeInTheDocument();
+      expect(
+        fetch.mock.calls.filter(([path]) => String(path).endsWith('/resend-confirmation')),
+      ).toHaveLength(1);
+      rejected = false;
+      await userEvent.click(screen.getByRole('button', { name: 'Reenviar enlace' }));
+      await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      const resends = fetch.mock.calls.filter(([path]) =>
+        String(path).endsWith('/resend-confirmation'),
+      );
+      expect(resends).toHaveLength(2);
+      for (const [, options] of resends)
+        expect(JSON.parse(String(options?.body))).toEqual({ email: 'persona@example.test' });
+    },
+  );
+  it('blocks duplicate resend submissions while a contextual request is pending', async () => {
+    let release: ((response: Response) => void) | undefined;
+    const fetch = mount(
+      '/email-pending',
+      null,
+      (path) =>
+        path.endsWith('/resend-confirmation')
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : undefined,
+      false,
+      { kind: 'registration', email: 'persona@example.test' },
+    );
+    const button = await screen.findByRole('button', { name: 'Reenviar enlace' });
+    const form = button.closest('form') as HTMLFormElement;
+    fireEvent.submit(form);
+    await waitFor(() => expect(release).toBeDefined());
+    fireEvent.submit(form);
+    expect(form).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: 'Un momento…' })).toBeDisabled();
+    expect(
+      fetch.mock.calls.filter(([path]) => String(path).endsWith('/resend-confirmation')),
+    ).toHaveLength(1);
+    release?.(json({ message: 'Si corresponde, recibirás un correo.' }, 202));
+    await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+    expect(screen.getByRole('button', { name: 'Reenviar enlace' })).toBeEnabled();
+  });
+  it('resets resend notices and errors when a new navigation reaches the same pending-email route', async () => {
+    let rejected = false;
+    mount(
+      '/email-pending',
+      null,
+      (path) =>
+        path.endsWith('/resend-confirmation') && rejected
+          ? json({ code: 'rate_limited' }, 429)
+          : undefined,
+      false,
+      { kind: 'registration', email: 'primera@example.test' },
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Reenviar enlace' }));
+    await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+    window.history.pushState(
+      { usr: { kind: 'registration', email: 'segunda@example.test' }, key: 'second' },
+      '',
+      '/email-pending',
+    );
+    fireEvent(window, new PopStateEvent('popstate'));
+    await screen.findByRole('button', { name: 'Reenviar enlace' });
+    expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent('segunda@example.test');
+    expect(screen.queryByText(/primera@example.test/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.'),
+    ).not.toBeInTheDocument();
+    rejected = true;
+    await userEvent.click(screen.getByRole('button', { name: 'Reenviar enlace' }));
+    await screen.findByRole('alert');
+    window.history.pushState({ usr: null, key: 'direct' }, '', '/email-pending');
+    fireEvent(window, new PopStateEvent('popstate'));
+    expect(await screen.findByLabelText('Correo electrónico')).toHaveValue('');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Correo utilizado:/)).not.toBeInTheDocument();
   });
   it('reports invalid credentials safely then allows an explicit retry and profile navigation', async () => {
     let rejected = true;

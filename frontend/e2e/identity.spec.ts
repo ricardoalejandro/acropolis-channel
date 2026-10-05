@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
 import { loginQa } from './helpers/mfa';
@@ -32,9 +33,14 @@ async function write(
   });
 }
 
-async function mailLink(request: APIRequestContext, email: string, route: string): Promise<string> {
+async function mailMessage(
+  request: APIRequestContext,
+  email: string,
+  route: string,
+  excludedIds: readonly string[] = [],
+): Promise<{ id: string; link: string }> {
   if (!mailpit) throw new Error('Mailpit QA URL is required.');
-  let link = '';
+  let result = { id: '', link: '' };
   await expect(async () => {
     const messages = await request.get(`${mailpit}/api/v1/messages?limit=200`);
     expect(messages.status()).toBe(200);
@@ -42,22 +48,29 @@ async function mailLink(request: APIRequestContext, email: string, route: string
       messages: { ID: string; To: { Address: string }[] }[];
     };
     for (const message of body.messages) {
-      if (!message.To.some((recipient) => recipient.Address === email)) continue;
+      if (
+        excludedIds.includes(message.ID) ||
+        !message.To.some((recipient) => recipient.Address === email)
+      )
+        continue;
       const detail = await request.get(`${mailpit}/api/v1/message/${message.ID}`);
       const content = (await detail.json()) as { Text: string; HTML: string };
       const urls =
         `${content.Text} ${content.HTML}`.replaceAll('&amp;', '&').match(/https:\/\/[^\s"'<>]+/g) ??
         [];
-      link = urls.find((url) => new URL(url).pathname === route) ?? '';
-      if (link) break;
+      const link = urls.find((url) => new URL(url).pathname === route) ?? '';
+      if (link) {
+        result = { id: message.ID, link };
+        break;
+      }
     }
-    expect(Boolean(link)).toBe(true);
+    expect(Boolean(result.link)).toBe(true);
   }).toPass({ timeout: 30_000 });
   const expected = new URL(process.env['BASE_URL'] ?? '');
-  const actual = new URL(link);
+  const actual = new URL(result.link);
   expect(actual.origin).toBe(expected.origin);
   expect(actual.hash.includes('token=')).toBe(true);
-  return link;
+  return result;
 }
 
 test.use({ trace: 'off' });
@@ -67,20 +80,116 @@ test.describe('Identity on the real Production candidate', () => {
     page,
     context,
   }, testInfo) => {
-    test.setTimeout(90_000);
+    test.setTimeout(180_000);
     if (!password || !run?.startsWith('acropolis_test_')) {
       throw new Error('Identity E2E requires isolated QA credentials and run.');
     }
     const email = `e2e-${testInfo.project.name}-${Date.now()}@acropolis.test`;
+    const identityPosts: string[] = [];
+    const resendPayloads: unknown[] = [];
+    page.on('request', (request) => {
+      const route = new URL(request.url()).pathname;
+      if (request.method() !== 'POST' || !route.startsWith(`${api}/`)) return;
+      identityPosts.push(route);
+      if (route === `${api}/resend-confirmation`)
+        resendPayloads.push(request.postDataJSON() as unknown);
+    });
+    async function expectPrivateRegistrationState() {
+      const state = await page.evaluate(() => ({
+        history: window.history.state as { usr?: unknown },
+        url: window.location.href,
+        localStorage: { ...window.localStorage },
+        sessionStorage: { ...window.sessionStorage },
+      }));
+      expect(state.history.usr).toEqual({ kind: 'registration', email });
+      expect(JSON.stringify(state.history).includes(password!)).toBe(false);
+      expect(JSON.stringify(state.history)).not.toMatch(/password|token/i);
+      const url = new URL(state.url);
+      expect(url.pathname).toBe('/email-pending');
+      expect(url.search).toBe('');
+      expect(url.hash).toBe('');
+      expect(state.localStorage).toEqual({});
+      expect(state.sessionStorage).toEqual({});
+    }
+    async function expectRegistrationPending() {
+      await expect(page).toHaveURL(/\/email-pending$/);
+      await expect(
+        page.getByRole('heading', { name: 'Revisa tu correo.', exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText('Correo utilizado:')).toBeVisible();
+      await expect(page.getByText(email, { exact: true })).toBeVisible();
+      await expect(page.getByLabel('Correo electrónico', { exact: true })).toHaveCount(0);
+      await expect(page.locator('.account-panel input')).toHaveCount(0);
+      await expect(
+        page.getByRole('button', { name: 'Reenviar enlace', exact: true }),
+      ).toBeEnabled();
+      await expectPrivateRegistrationState();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      expect(identityPosts).toEqual([`${api}/register`]);
+    }
     await page.goto('/register');
     await page.getByLabel('Nombre visible', { exact: true }).fill('Persona QA');
     await page.getByLabel('Correo electrónico', { exact: true }).fill(email);
     await page.getByLabel('Contraseña', { exact: true }).fill(password);
     await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password);
+    const registrationResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/identity/register') && response.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: 'Crear cuenta', exact: true }).click();
-    await expect(page).toHaveURL(/\/email-pending/);
-    const confirmation = await mailLink(page.request, email, '/confirm-email');
-    await page.goto(confirmation);
+    expect((await registrationResponse).status()).toBe(202);
+    const registeredAt = Date.now();
+    await expectRegistrationPending();
+    const firstConfirmation = await mailMessage(page.request, email, '/confirm-email');
+    expect(identityPosts).toEqual([`${api}/register`]);
+    await page.reload();
+    await expectRegistrationPending();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/register$/);
+    expect(
+      await page.evaluate(
+        (secret) => JSON.stringify(window.history.state).includes(secret),
+        password,
+      ),
+    ).toBe(false);
+    expect(identityPosts).toEqual([`${api}/register`]);
+    await page.goForward();
+    await expectRegistrationPending();
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page.screenshot({
+      path: testInfo.outputPath('email-pending-' + testInfo.project.name + '.png'),
+      fullPage: true,
+    });
+    const resend = page.getByRole('button', { name: 'Reenviar enlace', exact: true });
+    await expect(resend).toHaveClass(/button-outline/);
+    // The real backend suppresses a new confirmation during the first 60 seconds.
+    await expect
+      .poll(() => Date.now() - registeredAt, { timeout: 65_000, intervals: [1_000] })
+      .toBeGreaterThanOrEqual(60_000);
+    expect(identityPosts).toEqual([`${api}/register`]);
+    await resend.focus();
+    await expect(resend).toBeFocused();
+    const resendResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/identity/resend-confirmation') &&
+        response.request().method() === 'POST',
+    );
+    await page.keyboard.press('Enter');
+    expect((await resendResponse).status()).toBe(202);
+    await expect(page.getByRole('status')).toHaveText(
+      'Si corresponde, recibirás un nuevo enlace. Revisa tu correo.',
+    );
+    expect(identityPosts).toEqual([`${api}/register`, `${api}/resend-confirmation`]);
+    expect(resendPayloads).toEqual([{ email }]);
+    await expectPrivateRegistrationState();
+    const confirmation = await mailMessage(page.request, email, '/confirm-email', [
+      firstConfirmation.id,
+    ]);
+    expect(confirmation.id).not.toBe(firstConfirmation.id);
+    expect(identityPosts).toEqual([`${api}/register`, `${api}/resend-confirmation`]);
+    await page.goto(confirmation.link);
     await page.getByRole('button', { name: 'Confirmar mi correo', exact: true }).click();
     await expect(
       page.getByRole('heading', { name: 'Correo confirmado', exact: true }),
@@ -152,8 +261,8 @@ test.describe('Identity on the real Production candidate', () => {
     const forgot = await write(page.request, 'forgot-password', { email });
     expect(forgot.status()).toBe(202);
     expect(await forgot.json()).toEqual(antiEnumeration);
-    const reset = await mailLink(page.request, email, '/reset-password');
-    await page.goto(reset);
+    const reset = await mailMessage(page.request, email, '/reset-password');
+    await page.goto(reset.link);
     await expect.poll(() => new URL(page.url()).hash).toBe('');
     await page.getByLabel('Nueva contraseña', { exact: true }).fill(password + 'N');
     await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password + 'N');
@@ -221,6 +330,42 @@ test.describe('Identity on the real Production candidate', () => {
       });
       fs.chmodSync(path.join(process.env['QA_SESSION_STATE_DIR']!, 'active.json'), 0o600);
     }
+  });
+
+  test('a direct email pending visit keeps the explicit resend form', async ({ page }) => {
+    if (!run?.startsWith('acropolis_test_')) {
+      throw new Error('Identity E2E requires an isolated QA run.');
+    }
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      const route = new URL(request.url()).pathname;
+      if (request.method() === 'POST' && route.startsWith(`${api}/`)) posts.push(route);
+    });
+    await page.goto('/email-pending');
+    await expect(
+      page.getByRole('heading', { name: 'Revisa tu correo.', exact: true }),
+    ).toBeVisible();
+    const emailField = page.getByLabel('Correo electrónico', { exact: true });
+    await expect(emailField).toBeVisible();
+    await expect(emailField).toHaveValue('');
+    await expect(page.getByText('Correo utilizado:')).toHaveCount(0);
+    expect(posts).toEqual([]);
+    const email = `unregistered-${Date.now()}@acropolis.test`;
+    await emailField.fill(email);
+    const response = page.waitForResponse(
+      (result) =>
+        result.url().endsWith('/identity/resend-confirmation') &&
+        result.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Reenviar enlace', exact: true }).click();
+    const result = await response;
+    expect(result.status()).toBe(202);
+    expect(await result.json()).toEqual(antiEnumeration);
+    expect(result.request().postDataJSON() as unknown).toEqual({ email });
+    expect(posts).toEqual([`${api}/resend-confirmation`]);
+    await expect(page.getByRole('status')).toHaveText(
+      'Si corresponde, recibirás un nuevo enlace. Revisa tu correo.',
+    );
   });
 
   test('anonymous authorization, CSRF and anti enumeration enforce the HTTP boundary', async ({

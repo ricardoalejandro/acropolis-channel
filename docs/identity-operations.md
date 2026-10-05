@@ -54,6 +54,12 @@ La confirmación de correo caduca en 24 horas; la recuperación en 30 minutos. L
 
 El correo se guarda cifrado y se envía desde un outbox con reintentos. Supervisar fallos de entrega y acumulación de pendientes mediante consultas administrativas agregadas; no exportar direcciones, tokens o payloads a logs públicos. La entrega SMTP admite reintentos: un fallo entre aceptación remota y confirmación local puede ocasionar un duplicado, y el enlace sólo puede consumirse una vez.
 
+## Pantalla posterior al registro
+
+Después de una respuesta aceptada del registro, la interfaz muestra la dirección introducida y las instrucciones de confirmación, sin pedirla nuevamente. El navegador conserva únicamente el contexto de navegación `{ kind: 'registration', email }` en el historial de esa entrada; permite recargar y volver mediante Atrás/Adelante. No incluye contraseña, tokens ni datos de cuenta, ni escribe el correo en la URL, localStorage o sessionStorage. Este contexto no acredita existencia, autenticación ni confirmación de una cuenta.
+
+El reenvío es una acción secundaria y explícita hacia el endpoint existente. Mantiene el acuse genérico y el límite de un minuto del servidor. Montar, recargar o volver a la pantalla no solicita envíos. Sin contexto válido, los accesos desde login o enlaces inválidos conservan el formulario independiente para introducir una dirección. Los cambios de entrada del historial reinician avisos y errores; la disponibilidad del correo sigue siendo requisito para ofrecer el reenvío.
+
 ## Respaldo y recuperación
 
 El respaldo completo requiere el dump de PostgreSQL, el key ring, el protector PFX y la configuración privada necesaria para abrirlo. El despliegue conserva estos materiales en su directorio privado de recuperación, además de las imágenes y configuración previas. candidate.env conserva la configuración preparada, incluida la contraseña del protector; previous.env describe el runtime anterior. No confundir ambos al recuperar una versión. No restaurar el key ring o sustituir su protector como parte de un simple cambio de imagen.

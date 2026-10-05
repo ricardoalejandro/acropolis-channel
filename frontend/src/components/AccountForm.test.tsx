@@ -16,6 +16,8 @@ describe('Account form validation and accessible async state', () => {
   it('blocks missing fields, connects feedback to inputs and focuses the first error', async () => {
     const save = vi.fn();
     render(<AccountForm fields={registration} submit="Guardar" onSubmit={save} />);
+    expect(screen.getByRole('button', { name: 'Guardar' })).toHaveClass('button');
+    expect(screen.getByRole('button', { name: 'Guardar' })).not.toHaveClass('button-outline');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
     expect(save).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Nombre visible')).toHaveFocus();
@@ -72,6 +74,35 @@ describe('Account form validation and accessible async state', () => {
     expect(screen.getByRole('button')).toHaveTextContent('Un momento');
     resolve?.();
     await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
+  });
+  it('supports a secondary action without fields and keeps its async state accessible', async () => {
+    let resolve: (() => void) | undefined;
+    const save = vi.fn(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done;
+        }),
+    );
+    render(
+      <AccountForm
+        fields={[]}
+        submit="Reenviar enlace"
+        submitVariant="secondary"
+        onSubmit={save}
+      />,
+    );
+    const button = screen.getByRole('button', { name: 'Reenviar enlace' });
+    expect(button).toHaveClass('button', 'button-outline');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    await userEvent.click(button);
+    expect(save).toHaveBeenCalledWith({});
+    expect(button).toBeDisabled();
+    expect(button.closest('form')).toHaveAttribute('aria-busy', 'true');
+    resolve?.();
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(button).toHaveClass('button-outline');
+    expect(button.closest('form')).toHaveAttribute('aria-busy', 'false');
   });
   it('shows safe field errors from the server and recovers after a retry', async () => {
     const save = vi

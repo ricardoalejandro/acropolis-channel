@@ -11,11 +11,13 @@ export type Field = {
 export function AccountForm({
   fields,
   submit,
+  submitVariant = 'primary',
   onSubmit,
   children,
 }: {
   fields: Field[];
   submit: string;
+  submitVariant?: 'primary' | 'secondary';
   onSubmit: (values: Record<string, string>) => Promise<void>;
   children?: ReactNode;
 }) {
@@ -133,7 +135,11 @@ export function AccountForm({
         </div>
       ))}
       {children}
-      <button className="button" type="submit" disabled={busy}>
+      <button
+        className={submitVariant === 'secondary' ? 'button button-outline' : 'button'}
+        type="submit"
+        disabled={busy}
+      >
         {busy ? 'Un momento…' : submit}
         <span aria-hidden="true">→</span>
       </button>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { EmailCapability } from './EmailCapability';
@@ -45,10 +45,6 @@ describe('Explicit email capabilities', () => {
     await userEvent.click(screen.getByRole('link', { name: '¿Olvidaste tu contraseña?' }));
     await screen.findByText(/El registro y la recuperación por correo no están disponibles/);
     expect(screen.queryByRole('button', { name: 'Enviar instrucciones' })).not.toBeInTheDocument();
-    window.history.replaceState({}, '', '/email-pending');
-    fireEvent(window, new PopStateEvent('popstate'));
-    await screen.findByText(/El registro y la recuperación por correo no están disponibles/);
-    expect(screen.queryByRole('button', { name: 'Reenviar enlace' })).not.toBeInTheDocument();
     expect(
       fetch.mock.calls.some(
         ([path]) =>
@@ -58,6 +54,33 @@ describe('Explicit email capabilities', () => {
       ),
     ).toBe(false);
   });
+  it.each([
+    ['direct', null],
+    ['registration', { kind: 'registration', email: 'persona@example.test' }],
+  ])(
+    'withholds resend actions for a disabled email capability on a %s visit',
+    async (_name, state) => {
+      const fetch = vi.fn((path: string) =>
+        Promise.resolve(
+          path.endsWith('/capabilities')
+            ? json({ emailEnabled: false })
+            : json({ code: 'unauthorized' }, 401),
+        ),
+      );
+      vi.stubGlobal('fetch', fetch);
+      vi.stubGlobal('scrollTo', vi.fn());
+      window.history.replaceState({ usr: state, key: 'pending' }, '', '/email-pending');
+      render(<App />);
+      await screen.findByText(/El registro y la recuperación por correo no están disponibles/);
+      expect(screen.queryByRole('button', { name: 'Reenviar enlace' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Volver a ingresar' })).toHaveAttribute(
+        'href',
+        '/login',
+      );
+      expect(fetch.mock.calls.some(([path]) => path.includes('/resend-confirmation'))).toBe(false);
+    },
+  );
   it('rejects malformed capability responses and allows an explicit retry', async () => {
     const fetch = vi
       .fn()

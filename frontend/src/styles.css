@@ -512,6 +512,10 @@ p {
   color: var(--blue);
   margin-bottom: 17px;
 }
+.pending-email-address {
+  display: block;
+  overflow-wrap: anywhere;
+}
 .account-form {
   display: flex;
   flex-direction: column;
