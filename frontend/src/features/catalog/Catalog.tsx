@@ -290,6 +290,7 @@ function ExploreView({
             </p>
             {state.data.items.length ? (
               <div className="catalog-grid">
+                <h2 className="sr-only">Resultados de la búsqueda</h2>
                 {state.data.items.map((item) => (
                   <ContentCard item={item} key={item.id} />
                 ))}

@@ -47,6 +47,8 @@ test('authenticator enrollment, second factor, recovery rotation and revocation 
   await expect(page).toHaveURL(/\/profile$/);
   const codes = await configure();
   expect((await page.request.get('/api/v1/identity/mfa')).status()).toBe(200);
+  if (testInfo.project.name === 'mobile-chromium')
+    await page.getByRole('button', { name: 'Menú', exact: true }).click();
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await loginForm();
   await expect(

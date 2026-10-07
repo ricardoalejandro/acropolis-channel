@@ -150,7 +150,12 @@ function AuditView({
               {state.data.total} cambios registrados
             </p>
             {state.data.items.length ? (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                role="region"
+                aria-label="Historial de cambios"
+                tabIndex={0}
+              >
                 <table>
                   <thead>
                     <tr>

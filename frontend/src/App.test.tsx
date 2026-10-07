@@ -591,6 +591,12 @@ describe('User administration', () => {
     failed = false;
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
     await screen.findByText('No hay usuarios con estos filtros.');
+    const region = screen.getByRole('region', { name: 'Lista de usuarios' });
+    expect(region).toHaveAttribute('tabindex', '0');
+    expect(within(region).getByRole('table')).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Buscar' }).focus();
+    await userEvent.tab();
+    expect(region).toHaveFocus();
   });
   it('edits levels and status using the version without granting administrator permission', async () => {
     let fetch!: ReturnType<typeof mount>;

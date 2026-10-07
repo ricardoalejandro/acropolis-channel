@@ -136,7 +136,12 @@ export function UserList() {
               <div className="results-count" role="status">
                 {data.total} {data.total === 1 ? 'usuario' : 'usuarios'}
               </div>
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                role="region"
+                aria-label="Lista de usuarios"
+                tabIndex={0}
+              >
                 <table>
                   <thead>
                     <tr>

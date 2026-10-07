@@ -188,6 +188,9 @@ describe('Published catalogue journeys', () => {
         : undefined,
     );
     await screen.findByRole('heading', { name: publishedContent.title });
+    const headings = within(document.querySelector('main')!).getAllByRole('heading');
+    expect(headings.map((heading) => heading.tagName)).toEqual(['H1', 'H2', 'H3']);
+    expect(headings[1]).toHaveAccessibleName('Resultados de la búsqueda');
     expect(document.querySelector('.catalog-no-image')).toBeInTheDocument();
     expect(document.querySelector('.catalog-duration')).toBeNull();
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled();

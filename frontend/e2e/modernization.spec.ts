@@ -503,7 +503,7 @@ test('@modernization @youtube-smoke official privacy player can load after delib
     title: 'YouTube official isolated smoke',
     slug: 'qa-youtube-smoke-' + testInfo.project.name + '-' + Date.now(),
     category: 'videos',
-    youTubeId: '38Oq_C4AxgA',
+    youTubeId: 'M7lc1UVf-VE',
   });
   expect((await write(page.request, '/subscriptions/activate', 'POST', {})).status()).toBe(200);
   await page.goto('/content/' + video.slug);
@@ -518,7 +518,8 @@ test('@modernization @youtube-smoke official privacy player can load after delib
     .toBe(true);
   const player = page.frameLocator('iframe.youtube-player');
   await expect(player.locator('.html5-video-player')).toBeVisible({ timeout: 30_000 });
-  await player.locator('.ytp-large-play-button').click();
+  await page.locator('iframe.youtube-player').scrollIntoViewIfNeeded();
+  await player.getByRole('button', { name: 'Play video', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Reproduciendo', { timeout: 30_000 });
   await expect
     .poll(

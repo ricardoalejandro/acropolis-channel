@@ -525,6 +525,35 @@ describe('Administration boundaries and audit navigation', () => {
       false,
     );
   }, 10000);
+  it('lets keyboard users reach the named read-only subscription audit table', async () => {
+    mount('/admin/audit?module=subscriptions', owner, (path) =>
+      path.includes('/admin/subscriptions/audit?')
+        ? json({
+            items: [
+              {
+                id: 'audit-one',
+                actorId: 'actor-qa',
+                subscriptionId: 'subscription-one',
+                action: 'subscription.updated',
+                createdUtc: now,
+                beforeStatus: 'active',
+                afterStatus: 'suspended',
+                reason: 'Revisión de QA',
+              },
+            ],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+          })
+        : undefined,
+    );
+    const region = await screen.findByRole('region', { name: 'Historial de cambios' });
+    expect(region).toHaveAttribute('tabindex', '0');
+    expect(within(region).getByRole('table')).toHaveTextContent('Suscripción actualizada');
+    screen.getByRole('button', { name: 'Filtrar' }).focus();
+    await userEvent.tab();
+    expect(region).toHaveFocus();
+  });
   it('denies every audit module to an ordinary account before a module API call', async () => {
     const fetch = mount('/admin/audit');
     await screen.findByText(/no tiene permisos para consultar la auditoría/);

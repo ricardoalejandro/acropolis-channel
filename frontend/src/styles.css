@@ -87,6 +87,7 @@ button,
 input,
 select,
 textarea,
+.table-scroll,
 summary {
   outline-offset: 4px;
 }
@@ -95,6 +96,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+.table-scroll:focus-visible,
 summary:focus-visible {
   outline: 3px solid var(--blue);
 }

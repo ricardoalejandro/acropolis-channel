@@ -6,6 +6,7 @@ import {
   type APIRequestContext,
   type APIResponse,
   type Page,
+  type Response,
 } from '@playwright/test';
 import { loginQa } from './helpers/mfa';
 import {
@@ -174,7 +175,7 @@ test('@modernization visible authorized reading records real pulses and reports 
       )
         pulseBodies.push(request.postDataJSON() as Record<string, unknown>);
     });
-    memberPage.on('response', (response) => {
+    const capturePulseResponse = (response: Response) => {
       if (
         response.request().method() === 'POST' &&
         /^\/api\/v1\/consumption\/sessions\/[^/]+\/pulses$/.test(new URL(response.url()).pathname)
@@ -186,7 +187,8 @@ test('@modernization visible authorized reading records real pulses and reports 
             return consumptionReceiptFrom(await response.json());
           })(),
         );
-    });
+    };
+    memberPage.on('response', capturePulseResponse);
     await memberPage.goto('/content/' + slug);
     await expect(
       memberPage.getByRole('heading', { name: 'Activa tu acceso gratuito.', exact: true }),
@@ -239,8 +241,10 @@ test('@modernization visible authorized reading records real pulses and reports 
       { timeout: 20_000 },
     );
     expect((await firstPulse).status()).toBe(200);
-    await memberPage.goto('/profile');
+    // Close capture and drain every observed body before navigation releases network resources.
+    memberPage.off('response', capturePulseResponse);
     const receipts = await Promise.all(pulseResponses);
+    await memberPage.goto('/profile');
     expect(receipts.length).toBeGreaterThanOrEqual(1);
     expect(pulseBodies).toHaveLength(receipts.length);
     let creditedMs = 0;
