@@ -15,9 +15,13 @@ public sealed class ConsumptionRetentionWorkerTests
     public async Task TestingDefaultsToNoScopesOrDatabaseEvenWhenRecordingIsEnabled()
     {
         var retention = new RetentionSpy(); using var services = Services(retention); var clock = new RetentionClock();
-        using var worker = Worker(services, retention, clock, "Testing", recording: true);
+        var scopes = new ScopeFactorySpy(services.GetRequiredService<IServiceScopeFactory>());
+        using var worker = new ConsumptionRetentionWorker(scopes, clock, new CaptureLogger(), new EnvironmentStub("Testing"), Options.Create(new ConsumptionRecordingOptions { RecordingEnabled = true }));
         await worker.StartAsync(Token);
-        Assert.True(worker.ExecuteTask?.IsCompletedSuccessfully); Assert.Equal(0, retention.Calls); Assert.Equal(0, clock.CreatedTimers);
+        // .NET 10 schedules all ExecuteAsync work in the background, including the Testing guard.
+        var execution = Assert.IsAssignableFrom<Task>(worker.ExecuteTask);
+        await execution.WaitAsync(TimeSpan.FromSeconds(3), Token);
+        Assert.True(execution.IsCompletedSuccessfully); Assert.Equal(0, scopes.Calls); Assert.Equal(0, retention.Calls); Assert.Equal(0, clock.CreatedTimers);
         await worker.StopAsync(Token);
     }
     [Fact]
@@ -70,6 +74,12 @@ public sealed class ConsumptionRetentionWorkerTests
     private static ServiceProvider Services(RetentionSpy retention) => new ServiceCollection().AddSingleton<IConsumptionRetentionService>(retention).BuildServiceProvider();
     private static ConsumptionRetentionWorker Worker(ServiceProvider services, RetentionSpy retention, RetentionClock clock, string environment, bool recording = false, bool testingEnabled = false, CaptureLogger? logger = null) =>
         new(services.GetRequiredService<IServiceScopeFactory>(), clock, logger ?? new CaptureLogger(), new EnvironmentStub(environment), Options.Create(new ConsumptionRecordingOptions { RecordingEnabled = recording, EnableRetentionInTesting = testingEnabled }));
+    private sealed class ScopeFactorySpy(IServiceScopeFactory inner) : IServiceScopeFactory
+    {
+        private int calls;
+        public int Calls => Volatile.Read(ref calls);
+        public IServiceScope CreateScope() { Interlocked.Increment(ref calls); return inner.CreateScope(); }
+    }
     private sealed class EnvironmentStub(string name) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = name;

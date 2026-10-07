@@ -13,11 +13,13 @@ public sealed class ConsumptionRetentionService(CatalogDbContext database, TimeP
         var generalCutoff = DateOnly.FromDateTime(ConsumptionActivityRules.GeneralAvailableFrom(now).UtcDateTime);
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         // Deleting receipts first avoids a cascade of thousands of pulses per session.
+        // Lock the mutable parent: receipts intentionally lack UPDATE privilege, and parallel
+        // cleanup/recording must not process the same session until this transaction completes.
         var pulses = await database.Database.ExecuteSqlInterpolatedAsync($"""
             WITH expired AS (
               SELECT p."SessionId",p."Sequence" FROM catalog."ConsumptionPulses" p
               JOIN catalog."ConsumptionSessions" s ON s."Id"=p."SessionId" WHERE s."StartedUtc"<={receiptCutoff}
-              ORDER BY s."StartedUtc",p."SessionId",p."Sequence" LIMIT 1000 FOR UPDATE OF p SKIP LOCKED
+              ORDER BY s."StartedUtc",p."SessionId",p."Sequence" LIMIT 1000 FOR UPDATE OF s SKIP LOCKED
             ) DELETE FROM catalog."ConsumptionPulses" p USING expired e WHERE p."SessionId"=e."SessionId" AND p."Sequence"=e."Sequence"
             """, token);
         var sessions = await database.Database.ExecuteSqlInterpolatedAsync($"""

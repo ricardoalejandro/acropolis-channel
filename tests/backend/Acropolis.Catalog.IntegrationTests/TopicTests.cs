@@ -181,9 +181,12 @@ public sealed class TopicTests(CatalogFixture database)
         await using (var raw = database.Context())
         {
             raw.ContentTopics.AddRange(ids.Select(id => new ContentTopic { ContentId = content.Id, TopicId = id }));
-            var error = await Assert.ThrowsAsync<DbUpdateException>(() => raw.SaveChangesAsync(Token));
-            Assert.Equal("CK_ContentTopics_Limit", Assert.IsType<PostgresException>(error.InnerException).ConstraintName);
+            // The deferred trigger runs at the implicit transaction commit and surfaces directly from Npgsql.
+            var error = await Assert.ThrowsAsync<PostgresException>(() => raw.SaveChangesAsync(Token));
+            Assert.Equal(PostgresErrorCodes.CheckViolation, error.SqlState);
+            Assert.Equal("CK_ContentTopics_Limit", error.ConstraintName);
         }
+        Assert.Empty(await context.ContentTopics.AsNoTracking().ToArrayAsync(Token));
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.AssignAsync(Actor, content.Id, new(content.Version, [ids[0]]), cancelled.Token));
         Assert.Empty((await service.GetContentTopicsAsync(content.Id, Token))!.Items);

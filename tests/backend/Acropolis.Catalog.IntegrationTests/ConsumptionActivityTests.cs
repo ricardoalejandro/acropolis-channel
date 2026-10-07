@@ -232,6 +232,31 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         Assert.Equal(personal.RecordedPulses, (await context.ConsumptionAccountDaily.AsNoTracking().SingleAsync(Token)).RecordedPulses);
     }
     [Fact]
+    public async Task ReceiptPruningSkipsLockedParentsWithoutUpdatePrivilegeOnReceipts()
+    {
+        await fixture.ResetAsync(Token); var clock = new ActivityClock(Now.AddHours(-8)); var account = Guid.NewGuid();
+        await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-locked-parent"); var recorder = Recording(context, clock);
+        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
+        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+        clock.Set(Now);
+        Assert.False(await context.Database.SqlQueryRaw<bool>("SELECT has_table_privilege(current_user, 'catalog.\"ConsumptionPulses\"', 'UPDATE') AS \"Value\"").SingleAsync(Token));
+        await using var blocker = new NpgsqlConnection(fixture.RuntimeConnection); await blocker.OpenAsync(Token);
+        await using var transaction = await blocker.BeginTransactionAsync(Token);
+        await using (var command = new NpgsqlCommand("SELECT \"Id\" FROM catalog.\"ConsumptionSessions\" WHERE \"Id\"=@id FOR UPDATE", blocker, transaction))
+        {
+            command.Parameters.AddWithValue("id", session.SessionId);
+            Assert.Equal(session.SessionId, Assert.IsType<Guid>(await command.ExecuteScalarAsync(Token)));
+        }
+        var retention = new ConsumptionRetentionService(context, clock);
+        Assert.Equal(new ConsumptionPruneResult(0, 0, 0, 0), await retention.PruneAsync(Token));
+        Assert.Equal(1, await context.ConsumptionPulses.CountAsync(Token)); Assert.Equal(1, await context.ConsumptionSessions.CountAsync(Token));
+        await transaction.RollbackAsync(Token);
+        Assert.Equal(new ConsumptionPruneResult(1, 1, 0, 0), await retention.PruneAsync(Token));
+        Assert.Empty(await context.ConsumptionPulses.ToArrayAsync(Token)); Assert.Empty(await context.ConsumptionSessions.ToArrayAsync(Token));
+        Assert.Equal(1, (await context.ConsumptionDaily.AsNoTracking().SingleAsync(Token)).RecordedPulses);
+        Assert.Equal(1, (await context.ConsumptionAccountDaily.AsNoTracking().SingleAsync(Token)).RecordedPulses);
+    }
+    [Fact]
     public async Task CancellationBeforeRecordingOrReportingLeavesNoFactsAndAllowsExplicitRetry()
     {
         await fixture.ResetAsync(Token); var clock = new ActivityClock(Now);
