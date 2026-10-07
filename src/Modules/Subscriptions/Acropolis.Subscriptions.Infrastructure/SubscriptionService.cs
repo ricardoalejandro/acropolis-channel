@@ -180,21 +180,39 @@ public sealed class SubscriptionService(SubscriptionsDbContext database, IIdenti
     {
         var audit = new SubscriptionAudit
         {
-            Id = Guid.NewGuid(), SubscriptionId = row.Id, UserId = row.UserId, ActorId = actorId, Action = action,
-            BeforeStatus = beforeStatus, AfterStatus = row.Status, Reason = reason, CreatedUtc = Timestamp(clock.GetUtcNow()),
-            BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan), AfterPlan = row.Plan,
-            BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc), AfterStartsUtc = row.StartsUtc,
-            BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc, AfterExpiresUtc = row.ExpiresUtc
+            Id = Guid.NewGuid(),
+            SubscriptionId = row.Id,
+            UserId = row.UserId,
+            ActorId = actorId,
+            Action = action,
+            BeforeStatus = beforeStatus,
+            AfterStatus = row.Status,
+            Reason = reason,
+            CreatedUtc = Timestamp(clock.GetUtcNow()),
+            BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan),
+            AfterPlan = row.Plan,
+            BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc),
+            AfterStartsUtc = row.StartsUtc,
+            BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc,
+            AfterExpiresUtc = row.ExpiresUtc
         };
         database.Audit.Add(audit);
         if (notificationSettings?.Value.Enabled == true && notificationEmail?.IsAvailable == true &&
             action is "subscription.assigned" or "subscription.renewed")
             database.Notifications.Add(new SubscriptionNotification
             {
-                Id = Guid.NewGuid(), SubscriptionId = row.Id, UserId = row.UserId, SourceAuditId = audit.Id,
-                TermGeneration = row.NotificationTermGeneration, DeduplicationKey = SubscriptionNotificationRules.EventKey(audit.Id),
-                Kind = action == "subscription.assigned" ? "assigned" : "renewed", Plan = row.Plan, StartsUtc = row.StartsUtc, ExpiresUtc = row.ExpiresUtc,
-                CreatedUtc = audit.CreatedUtc, NextAttemptUtc = audit.CreatedUtc
+                Id = Guid.NewGuid(),
+                SubscriptionId = row.Id,
+                UserId = row.UserId,
+                SourceAuditId = audit.Id,
+                TermGeneration = row.NotificationTermGeneration,
+                DeduplicationKey = SubscriptionNotificationRules.EventKey(audit.Id),
+                Kind = action == "subscription.assigned" ? "assigned" : "renewed",
+                Plan = row.Plan,
+                StartsUtc = row.StartsUtc,
+                ExpiresUtc = row.ExpiresUtc,
+                CreatedUtc = audit.CreatedUtc,
+                NextAttemptUtc = audit.CreatedUtc
             });
     }
     private SubscriptionView View(Subscription row) => new(row.Id, row.UserId, row.Plan, row.Status, row.CreatedUtc, row.ActivatedUtc, row.UpdatedUtc, row.CancelledUtc, row.ExpiresUtc, row.Version, row.StartsUtc, SubscriptionRules.EffectiveState(row.Status, row.StartsUtc, row.ExpiresUtc, Timestamp(clock.GetUtcNow())));

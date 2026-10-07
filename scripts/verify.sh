@@ -415,13 +415,36 @@ run_step synthetic_session_count synthetic_session_count
 run_step load compose run --rm --no-deps k6 run --summary-export /artifacts/k6-summary.json /qa-tools/smoke.js
 subscription_digest() {
   compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL' | sha256sum | cut -d ' ' -f 1
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL TIME ZONE 'UTC';
 SELECT row_to_json(s)::text FROM subscriptions."Subscriptions" s ORDER BY "Id";
 SELECT row_to_json(a)::text FROM subscriptions."Audit" a ORDER BY "Id";
+SELECT json_build_array('notification',"Id","SubscriptionId","UserId","SourceAuditId","TermGeneration","DeduplicationKey","Kind","Plan","StartsUtc","ExpiresUtc","CreatedUtc","Status","Attempts","NextAttemptUtc","LeaseOwner","LeaseExpiresUtc")::text FROM subscriptions."NotificationOutbox" ORDER BY "Id";
+SELECT json_build_array('notificationBudget',"Id","NextSubmissionUtc")::text FROM subscriptions."NotificationDeliveryState" ORDER BY "Id";
+COMMIT;
 SQL
 }
 capture_subscription_digest() {
   subscriptions_before="$(subscription_digest)" || return 1
   [[ "$subscriptions_before" =~ ^[0-9a-f]{64}$ ]]
+}
+notification_intent_digest() {
+  compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL' | sha256sum | cut -d ' ' -f 1
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL TIME ZONE 'UTC';
+SELECT json_build_array("Id","SubscriptionId","UserId","SourceAuditId","TermGeneration","DeduplicationKey","Kind","Plan","StartsUtc","ExpiresUtc","CreatedUtc","Attempts")::text
+FROM subscriptions."NotificationOutbox" WHERE "Kind" IN ('assigned','renewed') ORDER BY "Id";
+COMMIT;
+SQL
+}
+capture_notification_intent_digest() {
+  notification_intents_before="$(notification_intent_digest)" || return 1
+  [[ "$notification_intents_before" =~ ^[0-9a-f]{64}$ ]]
+}
+restored_notification_intents_consistency() {
+  local actual
+  actual="$(QA_PROJECT="$restore_project" QA_DATABASE="$restore_database" notification_intent_digest)" || return 1
+  [[ "$actual" == "$notification_intents_before" ]] || { echo 'Recovery or runner changed preserved notification intent IDs, terms or attempts.' >&2; return 1; }
 }
 assert_catalog_writers_stopped() {
   [[ "$QA_PROJECT" =~ ^acropolis_test_[a-z0-9_]+$ && "$QA_DATABASE" == "$QA_PROJECT" ]] ||
@@ -433,6 +456,69 @@ assert_catalog_writers_stopped() {
     state="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}} {{.State.Running}}' "$container")" || return 1
     [[ "$state" == "$QA_PROJECT web false" ]] || { echo 'Catalogue snapshot requires all owned web/worker writers stopped.' >&2; return 1; }
   done
+}
+subscription_notification_backup_fixture() {
+  [[ "$QA_PROJECT" =~ ^acropolis_test_[a-z0-9_]+$ && "$QA_DATABASE" == "$QA_PROJECT" ]] ||
+    { echo 'Notification restore fixtures are restricted to an isolated QA project.' >&2; return 2; }
+  assert_catalog_writers_stopped || return 1
+  local result
+  result="$(compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+BEGIN;
+SET LOCAL TIME ZONE 'UTC';
+DO $qa$
+BEGIN
+  IF current_database() !~ '^acropolis_test_[a-z0-9_]+$' THEN
+    RAISE EXCEPTION 'Notification restore fixtures require an isolated QA database';
+  END IF;
+  IF (SELECT count(*) FROM identity."Users" WHERE "Email" ~ '^qa-load-09999[0-4]@example[.]test$' AND "EmailConfirmed" AND NOT "IsDisabled" AND NOT "RevalidationRequired" AND NOT "IsOwner") <> 5 THEN
+    RAISE EXCEPTION 'Notification restore fixtures require five confirmed non-owner QA accounts';
+  END IF;
+  IF EXISTS (SELECT 1 FROM subscriptions."Subscriptions" s JOIN identity."Users" u ON u."Id"=s."UserId" WHERE u."Email" ~ '^qa-load-09999[0-4]@example[.]test$') THEN
+    RAISE EXCEPTION 'Notification restore fixtures refuse to replace existing subscriptions';
+  END IF;
+  IF (SELECT count(*) FROM identity."Users" WHERE "Email"='qa-load-000090@example.test' AND "IsOwner" AND "EmailConfirmed" AND NOT "IsDisabled" AND NOT "RevalidationRequired") <> 1 THEN
+    RAISE EXCEPTION 'Notification restore fixtures require the existing protected QA owner';
+  END IF;
+END;
+$qa$;
+SET LOCAL ROLE acropolis_app;
+WITH fixture AS (
+  SELECT u."Id" AS user_id,
+    CASE right(split_part(u."Email",'@',1),1) WHEN '0' THEN 'pending' WHEN '1' THEN 'sending' WHEN '2' THEN 'sent' WHEN '3' THEN 'failed' ELSE 'cancelled' END AS status,
+    CURRENT_TIMESTAMP AS starts_utc, CURRENT_TIMESTAMP + INTERVAL '1 year' AS expires_utc
+  FROM identity."Users" u WHERE u."Email" ~ '^qa-load-09999[0-4]@example[.]test$'
+), inserted_subscriptions AS (
+  INSERT INTO subscriptions."Subscriptions" ("Id","UserId","Plan","Status","CreatedUtc","ActivatedUtc","UpdatedUtc","Version","StartsUtc","ExpiresUtc","NotificationTermGeneration")
+  SELECT gen_random_uuid(),user_id,'annual','active',starts_utc,starts_utc,starts_utc,replace(gen_random_uuid()::text,'-',''),starts_utc,expires_utc,gen_random_uuid() FROM fixture
+  RETURNING *
+), inserted_audits AS (
+  INSERT INTO subscriptions."Audit" ("Id","SubscriptionId","UserId","ActorId","Action","BeforeStatus","AfterStatus","Reason","CreatedUtc","BeforePlan","AfterPlan","BeforeStartsUtc","AfterStartsUtc","BeforeExpiresUtc","AfterExpiresUtc")
+  SELECT gen_random_uuid(),s."Id",s."UserId",(SELECT "Id" FROM identity."Users" WHERE "Email"='qa-load-000090@example.test'),'subscription.assigned',NULL,'active','Fixture técnica de restauración QA; no asignación comercial.',s."CreatedUtc",NULL,'annual',NULL,s."StartsUtc",NULL,s."ExpiresUtc"
+  FROM inserted_subscriptions s
+  RETURNING "Id","SubscriptionId"
+)
+INSERT INTO subscriptions."NotificationOutbox" ("Id","SubscriptionId","UserId","SourceAuditId","TermGeneration","DeduplicationKey","Kind","Plan","StartsUtc","ExpiresUtc","CreatedUtc","Status","Attempts","NextAttemptUtc","LeaseOwner","LeaseExpiresUtc")
+SELECT gen_random_uuid(),s."Id",s."UserId",a."Id",s."NotificationTermGeneration",'audit:'||replace(a."Id"::text,'-',''),'assigned','annual',s."StartsUtc",s."ExpiresUtc",s."CreatedUtc",f.status,
+  CASE f.status WHEN 'pending' THEN 0 WHEN 'failed' THEN 5 ELSE 1 END,s."CreatedUtc",
+  CASE WHEN f.status='sending' THEN 'qa_restore_fixture' ELSE NULL END,
+  CASE WHEN f.status='sending' THEN s."CreatedUtc"+INTERVAL '1 hour' ELSE NULL END
+FROM inserted_subscriptions s JOIN inserted_audits a ON a."SubscriptionId"=s."Id" JOIN fixture f ON f.user_id=s."UserId";
+UPDATE subscriptions."NotificationDeliveryState" SET "NextSubmissionUtc"=CURRENT_TIMESTAMP+INTERVAL '10 minutes' WHERE "Id"=1;
+DO $qa$
+BEGIN
+  IF (SELECT array_agg(n."Status" ORDER BY n."Status") FROM subscriptions."NotificationOutbox" n JOIN identity."Users" u ON u."Id"=n."UserId" WHERE u."Email" ~ '^qa-load-09999[0-4]@example[.]test$') IS DISTINCT FROM ARRAY['cancelled','failed','pending','sending','sent']::varchar[] THEN
+    RAISE EXCEPTION 'Notification restore fixtures did not preserve all five states';
+  END IF;
+  IF (SELECT count(*) FROM subscriptions."NotificationDeliveryState" WHERE "Id"=1 AND "NextSubmissionUtc"=CURRENT_TIMESTAMP+INTERVAL '10 minutes') <> 1 THEN
+    RAISE EXCEPTION 'Notification restore fixture requires the shared budget row';
+  END IF;
+END;
+$qa$;
+COMMIT;
+SELECT 'ok';
+SQL
+)" || return 1
+  [[ "${result##*$'\n'}" == ok ]] || { echo 'Notification restore fixture failed.' >&2; return 1; }
 }
 catalog_digest() {
   compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL' | sha256sum | cut -d ' ' -f 1
@@ -468,8 +554,10 @@ capture_account_access_digest() {
 run_step catalog_public_boundaries compose run --rm --no-deps node 'node /qa-tools/catalog-state.mjs'
 run_step backup_maintenance compose stop web
 run_step catalog_source_writers_stopped assert_catalog_writers_stopped
+run_step subscription_notification_backup_fixture subscription_notification_backup_fixture
 run_step catalog_source_digest capture_catalog_digest
 run_step subscriptions_source_digest capture_subscription_digest
+run_step notification_intents_source_digest capture_notification_intent_digest
 run_step keyring_backup compose run --rm --no-deps pki backup-keyring
 run_step private_ca_backup compose run --rm --no-deps pki backup-caddy
 source_schema_consistency() {
@@ -626,6 +714,17 @@ SELECT CASE WHEN
   AND NOT has_table_privilege('acropolis_app', 'subscriptions."__EFMigrationsHistory"', 'INSERT')
   AND NOT has_table_privilege('acropolis_app', 'subscriptions."Audit"', 'UPDATE')
   AND NOT has_table_privilege('acropolis_app', 'subscriptions."Audit"', 'DELETE')
+  AND has_table_privilege('acropolis_app', 'subscriptions."NotificationOutbox"', 'SELECT')
+  AND has_table_privilege('acropolis_app', 'subscriptions."NotificationOutbox"', 'INSERT')
+  AND has_table_privilege('acropolis_app', 'subscriptions."NotificationOutbox"', 'UPDATE')
+  AND NOT has_table_privilege('acropolis_app', 'subscriptions."NotificationOutbox"', 'DELETE')
+  AND (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'subscriptions."NotificationOutbox"'::regclass) = 'acropolis_migrator'
+  AND has_table_privilege('acropolis_app', 'subscriptions."NotificationDeliveryState"', 'SELECT')
+  AND has_table_privilege('acropolis_app', 'subscriptions."NotificationDeliveryState"', 'UPDATE')
+  AND NOT has_table_privilege('acropolis_app', 'subscriptions."NotificationDeliveryState"', 'INSERT')
+  AND NOT has_table_privilege('acropolis_app', 'subscriptions."NotificationDeliveryState"', 'DELETE')
+  AND (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'subscriptions."NotificationDeliveryState"'::regclass) = 'acropolis_migrator'
+  AND (SELECT count(*) FROM subscriptions."NotificationDeliveryState" WHERE "Id"=1) = 1
   AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'subscriptions') = 'acropolis_migrator'
   AND has_schema_privilege('acropolis_app', 'catalog', 'USAGE')
   AND NOT has_schema_privilege('acropolis_app', 'catalog', 'CREATE')
@@ -692,7 +791,22 @@ SQL
 run_step restored_permissions restored_permissions
 run_step restore_keyring restore_compose run --rm --no-deps pki restore-keyring
 run_step restore_private_ca restore_compose run --rm --no-deps pki restore-caddy
-run_step recovery_invalidation restore_compose run --rm --no-deps migrations recovery-invalidate --maintenance
+recovery_invalidation_with_budget_check() {
+  local before after result
+  before="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT clock_timestamp()"')" || return 1
+  restore_compose run --rm --no-deps migrations recovery-invalidate --maintenance || return 1
+  after="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT clock_timestamp()"')" || return 1
+  result="$(restore_compose exec -T db sh -ec 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -v before="$1" -v after="$2"' sh "$before" "$after" <<'SQL'
+SELECT CASE WHEN (SELECT count(*) FROM subscriptions."NotificationDeliveryState"
+  WHERE "Id"=1 AND "NextSubmissionUtc">=:'before'::timestamptz+INTERVAL '15 seconds'
+  AND "NextSubmissionUtc"<=:'after'::timestamptz+INTERVAL '15 seconds')=1
+THEN 'ok' ELSE 'failed' END;
+SQL
+)" || return 1
+  [[ "$result" == ok ]] || { echo 'Recovery did not reserve the shared notification submission window.' >&2; return 1; }
+}
+run_step recovery_invalidation recovery_invalidation_with_budget_check
+run_step restored_notification_intents_after_invalidation restored_notification_intents_consistency
 run_step restored_account_access_after_invalidation restored_account_access_consistency
 run_step restored_catalog_after_invalidation_writers_stopped restored_catalog_writers_stopped
 run_step restored_catalog_after_invalidation restored_catalog_consistency
@@ -716,6 +830,15 @@ SELECT CASE WHEN
  AND NOT EXISTS (SELECT 1 FROM identity."MfaProofs")
  AND NOT EXISTS (SELECT 1 FROM identity."Flows" WHERE "ConsumedUtc" IS NULL)
  AND NOT EXISTS (SELECT 1 FROM identity."Outbox" WHERE "Status" <> 'cancelled' OR "Payload" <> '')
+ AND NOT EXISTS (SELECT 1 FROM subscriptions."NotificationOutbox" WHERE "Status"<>'cancelled' OR "LeaseOwner" IS NOT NULL OR "LeaseExpiresUtc" IS NOT NULL)
+ AND (SELECT count(*) FROM subscriptions."NotificationOutbox" n JOIN identity."Users" u ON u."Id"=n."UserId" WHERE u."Email" ~ '^qa-load-09999[0-4]@example[.]test$' AND n."Kind"='assigned' AND n."Status"='cancelled')=5
+ AND NOT EXISTS (
+   SELECT 1 FROM subscriptions."Subscriptions" s WHERE s."Plan" IN ('probationismo','annual')
+   AND NOT EXISTS (SELECT 1 FROM subscriptions."NotificationOutbox" n WHERE n."SubscriptionId"=s."Id"
+     AND n."TermGeneration"=s."NotificationTermGeneration" AND n."Kind"='expiring' AND n."Status"='cancelled'
+     AND n."SourceAuditId" IS NULL AND n."Plan"=s."Plan" AND n."StartsUtc"=s."StartsUtc" AND n."ExpiresUtc"=s."ExpiresUtc"
+     AND n."DeduplicationKey"='expiring:'||replace(s."Id"::text,'-','')||':'||replace(s."NotificationTermGeneration"::text,'-','')))
+ AND (SELECT count(*) FROM subscriptions."NotificationDeliveryState" WHERE "Id"=1)=1
 THEN 'ok' ELSE 'failed' END;
 SQL
 )"
@@ -756,6 +879,7 @@ run_step restored_migrations env QA_PROJECT="$restore_project" QA_DATABASE="$res
 run_step restored_schema_consistency restored_schema_consistency
 run_step restored_history_consistency restored_history_consistency
 run_step restored_catalog_after_runner restored_catalog_consistency
+run_step restored_notification_intents_after_runner restored_notification_intents_consistency
 restore_guard() {
   if bash scripts/restore-db-test.sh --project acropolis-channel --database acropolis --input "$QA_ARTIFACTS/database.dump" > "$QA_ARTIFACTS/restore-guard-rejection.log" 2>&1; then
     echo 'Restore guard accepted a production project.' >&2; return 1

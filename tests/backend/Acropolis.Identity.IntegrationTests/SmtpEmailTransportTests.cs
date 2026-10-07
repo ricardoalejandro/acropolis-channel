@@ -328,9 +328,13 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
             PublicOrigin = "https://app.example.test/",
             Smtp = new()
             {
-                Host = "127.0.0.1", Port = ((IPEndPoint)listener.LocalEndpoint).Port,
-                Username = Username, Password = Password, FromEmail = Sender,
-                FromName = "Acrópolis Channel QA", Security = security
+                Host = "127.0.0.1",
+                Port = ((IPEndPoint)listener.LocalEndpoint).Port,
+                Username = Username,
+                Password = Password,
+                FromEmail = Sender,
+                FromName = "Acrópolis Channel QA",
+                Security = security
             }
         };
 
@@ -360,7 +364,8 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
             {
                 await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
-                    ServerCertificate = certificate, ClientCertificateRequired = false,
+                    ServerCertificate = certificate,
+                    ClientCertificateRequired = false,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
                 }, stop.Token);
                 Interlocked.Increment(ref secureConnections);

@@ -37,7 +37,7 @@ El permiso administrativo se comprueba en servidor. Las actualizaciones usan ver
 
 ## Correo y claves
 
-El cambio de estado y la intención de correo se guardan juntos. El outbox cifra su payload con Data Protection y un worker envía por SMTP con TLS validado, reintentos y reclamaciones temporales recuperables. SMTP no participa en una transacción distribuida: puede existir un duplicado después de una aceptación remota seguida de un fallo local. El token sólo se consume una vez.
+El cambio de estado y la intención de correo se guardan juntos. El outbox de Identity cifra su payload con Data Protection y un worker envía por SMTP con TLS validado, reintentos y reclamaciones temporales recuperables. SMTP no participa en una transacción distribuida: puede existir un duplicado después de una aceptación remota seguida de un fallo local. El token sólo se consume una vez.
 
 La aplicación usa un nombre estable para Data Protection, un key ring persistente y un certificado protector PFX privado. No se generan claves efímeras por reiniciar el contenedor. Se respaldan base, claves, protector y configuración juntos. Ninguno de estos materiales entra en Git ni en las imágenes.
 
@@ -77,7 +77,7 @@ Identity.EmailEnabled=true sigue siendo el valor por defecto de código para con
 
 ## Suscripción y consumo
 
-El WIP actual mantiene como máximo una suscripción free_beta por usuario, sin caducidad. Este piloto no sustituye los tres tipos, fechas y renovaciones del documento funcional: esas reglas están pendientes de confirmación del propietario, conforme a `modernization-scope.md`. La activación es explícita, idempotente y disponible para una cuenta confirmada y activa. El usuario puede cancelar o volver a activar una cancelación; una suspensión administrativa no se elimina por autoservicio. Cambios administrativos exigen Subscriptions.Manage, MFA y versión, con auditoría transaccional. Un gestor ajeno no puede cambiar el acceso del propietario.
+Cada cuenta conserva como máximo una suscripción. El propietario confirmó Gratuito (`free_beta`) sin vencimiento, limitado a obras marcadas gratuitas, Probacionismo de tres meses naturales y Anual de un año con inicio explícito, inclusivo, y fin exclusivo UTC. La asignación y renovación son manuales, exigen Subscriptions.Manage, MFA, motivo y versión y se auditan en la misma transacción; no hay cobros ni renovación automática. Una renovación contigua conserva el inicio vigente y extiende el fin, sin recortar acceso actual. La activación gratuita propia es explícita e idempotente y no convierte ni prolonga un plan manual. Una suspensión administrativa no se elimina por autoservicio. Un gestor ajeno no puede cambiar el acceso del propietario. Leer `subscriptions-operations.md` y `modernization-scope.md`.
 
 La API de consumo vuelve a comprobar identidad activa/confirmada, suscripción activa y obra publicada; devuelve no-store y no introduce material restringido en metadata pública. Cursos y programas sólo entregan referencias publicadas y su orden. Los controles del reproductor YouTube son oficiales, cargados al pulsar reproducir; referencias de origen se limitan a ese iframe/script, conservando no-referrer global en cuentas y tokens. Los vídeos públicos de YouTube continúan accesibles en su origen; esta autorización del portal no demuestra exclusividad del recurso.
 
