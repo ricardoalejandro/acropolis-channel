@@ -42,6 +42,7 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
         Assert.Equal(settings.PublicOrigin, transport.PublicOrigin);
         await transport.CheckAsync(Token);
         await identity.CheckAsync(Token);
+        Assert.True(smtp.CrlRequests > 0);
         var id = Guid.NewGuid();
         var email = new TransactionalEmail(id, LoopbackSmtp.Recipient, "Tu suscripción de Acrópolis", "Aviso sintético de QA. Tu periodo sigue vigente.");
         await transport.SendAsync(email, Token);
@@ -82,6 +83,22 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
         await using var smtp = new LoopbackSmtp(database, security, trustCertificate: false);
         var transport = new SmtpEmailTransport(Options.Create(smtp.Settings()));
         await Assert.ThrowsAsync<SslHandshakeException>(() => transport.SendAsync(Email(), Token));
+        Assert.Equal(1, smtp.AcceptedConnections);
+        Assert.Equal(0, smtp.AuthenticatedConnections);
+        Assert.Equal(0, smtp.AuthenticationBeforeTls);
+        Assert.Empty(smtp.Messages);
+    }
+
+    [Theory]
+    [InlineData("ssl")]
+    [InlineData("starttls")]
+    public async Task RevokedCertificateFromTrustedAuthorityIsRejectedBeforeAuthenticationOrMessageDelivery(string security)
+    {
+        await using var smtp = new LoopbackSmtp(database, security, revokeServer: true);
+        var transport = new SmtpEmailTransport(Options.Create(smtp.Settings()));
+        var error = await Assert.ThrowsAsync<SslHandshakeException>(() => transport.SendAsync(Email(), Token));
+        Assert.Contains("revoked", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(smtp.CrlRequests > 0);
         Assert.Equal(1, smtp.AcceptedConnections);
         Assert.Equal(0, smtp.AuthenticatedConnections);
         Assert.Equal(0, smtp.AuthenticationBeforeTls);
@@ -200,6 +217,7 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
         Assert.Empty(smtp.Messages);
         Assert.True(await DispatchAsync());
         Assert.Single(smtp.Messages);
+        Assert.True(smtp.CrlRequests > 0);
         var acknowledged = Assert.Single(await RowsAsync());
         Assert.Equal("sent", acknowledged.Status); Assert.Equal(1, acknowledged.Attempts); Assert.Null(acknowledged.LeaseOwner);
         var renewed = await AssignAsync(oldEnd, assigned.Version);
@@ -273,16 +291,23 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
         private const string Username = "synthetic-smtp-user";
         private const string Password = "Synthetic QA SMTP phrase";
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly TcpListener crlListener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(Token);
         private readonly ConcurrentQueue<MimeMessage> messages = new();
         private readonly X509Certificate2 root;
         private readonly X509Certificate2 certificate;
+        private readonly byte[] crl;
+        private readonly string crlPath = "/root-" + Guid.NewGuid().ToString("N") + ".crl";
+        private readonly Task crlLoop = Task.CompletedTask;
         private readonly X509Store? store;
         private readonly string security;
         private readonly bool offerStartTls;
         private readonly bool expectCertificateRejection;
         private readonly Task loop;
         private TcpClient? active;
+        private TcpClient? activeCrl;
+        private int crlRequests, acceptedCrlConnections;
+        public int CrlRequests => Volatile.Read(ref crlRequests);
         private int acceptedConnections, secureConnections, authenticatedConnections, authenticationBeforeTls;
         public MimeMessage[] Messages => messages.ToArray();
         public int AcceptedConnections => Volatile.Read(ref acceptedConnections);
@@ -290,15 +315,21 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
         public int AuthenticatedConnections => Volatile.Read(ref authenticatedConnections);
         public int AuthenticationBeforeTls => Volatile.Read(ref authenticationBeforeTls);
 
-        public LoopbackSmtp(IdentityFixture database, string security, bool trustCertificate = true, bool offerStartTls = true)
+        public LoopbackSmtp(IdentityFixture database, string security, bool trustCertificate = true, bool offerStartTls = true, bool revokeServer = false)
         {
             if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") != "Testing" ||
                 !System.Text.RegularExpressions.Regex.IsMatch(new NpgsqlConnectionStringBuilder(database.AdminConnection).Database ?? "", "^acropolis_test_[a-z0-9_]+$"))
                 throw new InvalidOperationException("Synthetic SMTP trust requires the isolated Testing database fixture.");
             this.security = security;
             this.offerStartTls = offerStartTls;
-            expectCertificateRejection = !trustCertificate;
-            (root, certificate) = Certificates();
+            expectCertificateRejection = !trustCertificate || revokeServer;
+            try
+            {
+                crlListener.Start();
+                var crlPort = ((IPEndPoint)crlListener.LocalEndpoint).Port;
+                (root, certificate, crl) = Certificates($"http://127.0.0.1:{crlPort}{crlPath}", revokeServer);
+            }
+            catch { crlListener.Stop(); stop.Dispose(); throw; }
             try
             {
                 if (trustCertificate)
@@ -307,16 +338,25 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
                     store.Open(OpenFlags.ReadWrite);
                     store.Add(root);
                 }
+                crlLoop = RunCrlAsync();
                 listener.Start();
                 loop = RunAsync();
             }
             catch
             {
-                try { if (store is not null) store.Remove(root); }
+                try
+                {
+                    stop.Cancel(); crlListener.Stop(); activeCrl?.Dispose();
+                    crlLoop.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                }
                 finally
                 {
-                    store?.Dispose(); listener.Stop();
-                    certificate.Dispose(); root.Dispose(); stop.Dispose();
+                    try { if (store is not null) store.Remove(root); }
+                    finally
+                    {
+                        store?.Dispose(); listener.Stop();
+                        certificate.Dispose(); root.Dispose(); stop.Dispose();
+                    }
                 }
                 throw;
             }
@@ -456,12 +496,13 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
             finally { reader.Dispose(); writer.Dispose(); ssl?.Dispose(); }
         }
 
-        private static (X509Certificate2 Root, X509Certificate2 Server) Certificates()
+        private static (X509Certificate2 Root, X509Certificate2 Server, byte[] Crl) Certificates(string crlUri, bool revokeServer)
         {
             using var rootKey = RSA.Create(2048);
             var authority = new CertificateRequest("CN=Acropolis SMTP QA " + Guid.NewGuid().ToString("N"), rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
             authority.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
-            authority.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, true));
+            authority.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+            authority.CertificateExtensions.Add(CertificateRevocationListBuilder.BuildCrlDistributionPointExtension([crlUri]));
             authority.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(authority.PublicKey, false));
             var now = DateTimeOffset.UtcNow;
             using var issuer = authority.CreateSelfSigned(now.AddMinutes(-5), now.AddDays(1));
@@ -473,16 +514,69 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
             var names = new SubjectAlternativeNameBuilder();
             names.AddDnsName("localhost"); names.AddIpAddress(IPAddress.Loopback);
             request.CertificateExtensions.Add(names.Build());
+            request.CertificateExtensions.Add(CertificateRevocationListBuilder.BuildCrlDistributionPointExtension([crlUri]));
             using var issued = request.Create(issuer, now.AddMinutes(-1), now.AddHours(1), RandomNumberGenerator.GetBytes(16));
-            return (X509CertificateLoader.LoadCertificate(issuer.Export(X509ContentType.Cert)), issued.CopyWithPrivateKey(serverKey));
+            var builder = new CertificateRevocationListBuilder();
+            if (revokeServer) builder.AddEntry(issued, now.AddSeconds(-30));
+            var signedCrl = builder.Build(issuer, System.Numerics.BigInteger.One,
+                now.AddHours(1), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1, now.AddSeconds(-1));
+            return (X509CertificateLoader.LoadCertificate(issuer.Export(X509ContentType.Cert)), issued.CopyWithPrivateKey(serverKey), signedCrl);
+        }
+
+        // Serves only this fixture's signed CRL; no external network or certificate bypass.
+        private async Task RunCrlAsync()
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    using var client = await crlListener.AcceptTcpClientAsync(stop.Token);
+                    activeCrl = client;
+                    if (Interlocked.Increment(ref acceptedCrlConnections) > 32)
+                        throw new InvalidOperationException("Synthetic CRL connection budget exceeded.");
+                    try
+                    {
+                        using var request = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+                        request.CancelAfter(TimeSpan.FromSeconds(15));
+                        var stream = client.GetStream();
+                        var buffer = new byte[4096];
+                        var count = 0;
+                        string headers;
+                        do
+                        {
+                            if (count == buffer.Length) throw new InvalidOperationException("Synthetic CRL header budget exceeded.");
+                            var read = await stream.ReadAsync(buffer.AsMemory(count), request.Token);
+                            if (read == 0) break;
+                            count += read;
+                            headers = Encoding.ASCII.GetString(buffer, 0, count);
+                        } while (!headers.Contains("\r\n\r\n", StringComparison.Ordinal));
+                        if (count == 0) continue;
+                        headers = Encoding.ASCII.GetString(buffer, 0, count);
+                        if (!headers.Contains("\r\n\r\n", StringComparison.Ordinal))
+                            throw new InvalidOperationException("Incomplete synthetic CRL request.");
+                        var firstLine = headers.Split("\r\n", StringSplitOptions.None)[0];
+                        var isGet = firstLine == $"GET {crlPath} HTTP/1.1" || firstLine == $"GET {crlPath} HTTP/1.0";
+                        var isHead = firstLine == $"HEAD {crlPath} HTTP/1.1" || firstLine == $"HEAD {crlPath} HTTP/1.0";
+                        if (!isGet && !isHead)
+                            throw new InvalidOperationException("Unexpected synthetic CRL request.");
+                        Interlocked.Increment(ref crlRequests);
+                        var response = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/pkix-crl\r\nContent-Length: {crl.Length}\r\nConnection: close\r\n\r\n");
+                        await stream.WriteAsync(response, request.Token);
+                        if (isGet) await stream.WriteAsync(crl, request.Token);
+                    }
+                    finally { activeCrl = null; }
+                }
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            catch (SocketException) when (stop.IsCancellationRequested) { }
         }
 
         public async ValueTask DisposeAsync()
         {
             try
             {
-                stop.Cancel(); listener.Stop(); active?.Dispose();
-                await loop.WaitAsync(TimeSpan.FromSeconds(10));
+                stop.Cancel(); listener.Stop(); crlListener.Stop(); active?.Dispose(); activeCrl?.Dispose();
+                await Task.WhenAll(loop, crlLoop).WaitAsync(TimeSpan.FromSeconds(10));
             }
             finally
             {
