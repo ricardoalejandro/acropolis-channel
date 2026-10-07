@@ -36,6 +36,32 @@ Una asignación futura incompatible que sustituiría un periodo actualmente acti
 
 Los cambios y su auditoría se guardan juntos. Nuevos registros incluyen plan y fechas anteriores/posteriores; esos campos pueden ser null en auditoría histórica. Cancelación y suspensión permanecen versionadas; reactivar un estado no prolonga sus fechas.
 
+## Avisos transaccionales al titular
+
+El propietario confirmó el 7 de octubre de 2026 avisos por correo al titular cuando un gestor asigne o renueve su plan y antes del vencimiento de un plan temporal, con una ventana de siete días. No son mensajes de marketing. Una asignación manual a Gratuito informa acceso sólo a obras marcadas gratuitas y ausencia de vencimiento; la activación personal gratuita no genera estos avisos.
+
+Asignación o renovación con cambio real guarda su aviso en `subscriptions.NotificationOutbox` dentro de la misma transacción que la fila y su auditoría. No-ops, versiones obsoletas o una transacción revertida no generan otro aviso. Cada mensaje conserva un identificador estable y referencia al evento o generación del periodo, sin persistir correo, cuerpo ni tokens.
+
+El recordatorio sólo se programa para un periodo temporal activo ya iniciado cuyo fin aún no llegó y está a siete días o menos. La selección excluye las generaciones ya registradas antes de aplicar el lote de cien, para que no bloqueen las siguientes. Una ejecución omitida puede recuperarse dentro de esa ventana; no se envía un recordatorio vencido ni se afirma que siempre faltan exactamente siete días. Cambios reales del periodo rotan su generación interna; una suspensión o reactivación administrativa y los no-ops la conservan. Ese dato técnico no se expone en las APIs de suscripción.
+
+### Configuración y transporte
+
+`SUBSCRIPTIONS_NOTIFICATIONS_ENABLED=false` es el valor por defecto de `.env.example` y de Compose web; se traduce a `Subscriptions__Notifications__Enabled`. Desactivado impide encolar, programar y enviar nuevos avisos, evitando una cola histórica generada durante ese modo. Correo de Identity deshabilitado también impide esas operaciones. Cambiar este valor privado, publicar código o pasar QA no activa por sí solo producción: seguir el despliegue solicitado y su gate del commit definitivo.
+
+El cliente comparte el transporte autenticado de Identity, su configuración SMTP y validación TLS; no duplica credenciales ni instala correo. El remitente, nombre visible y `PublicOrigin` proceden de esa configuración validada. Los nuevos avisos usan Message-ID estable con dominio del remitente; confirmación y recuperación conservan sus identificadores y enlaces actuales. Antes de enviar, Identity resuelve únicamente el correo actual de una cuenta activa, confirmada y sin revalidación pendiente mediante su contrato público. Subscriptions no consulta tablas internas de Identity. La fila y sus términos también se revalidan para cancelar un aviso obsoleto. Los mensajes presentan las fechas persistidas en hora de Lima (UTC-05:00) y enlazan `/profile/subscription`, sin tokens.
+
+El worker revisa cada quince segundos, con lote máximo de cien y un plazo de veinte segundos por iteración. Un presupuesto PostgreSQL compartido entre instancias de avisos limita el inicio de un intento SMTP a uno cada quince segundos. No constituye una segunda cuota de entregas externas: ambas colas consumen el servicio de correo y su límite global de salida descrito en `docs/smtp-integration.md`. El bundle operativo instalado configura un único transporte con intervalo de dieciséis segundos; comprobar su runtime al activar, sin inferirlo sólo de archivos ni modificar el proyecto independiente de correo desde Acrópolis.
+
+El claim usa bloqueo y lease de treinta segundos; SMTP tiene un plazo de quince segundos y hasta cinco intentos totales con espera creciente. Los terminales sent, failed y cancelled no se reclaman. SMTP opera fuera de la transacción: si se acepta el mensaje y el proceso cae antes de registrar el resultado, puede repetirse con el mismo Message-ID. No se promete entrega exactamente una vez ni llegada a la bandeja por una aceptación SMTP. Logs y errores no exponen destinatarios, cuerpo, credenciales ni detalles privados del proveedor.
+
+### QA, recuperación y conservación
+
+En Testing el worker permanece inactivo aunque se habiliten los avisos, salvo opt-in explícito `Subscriptions__Notifications__RunInTesting=true` en el entorno sintético de QA. No trasladar esa opción a Compose productivo ni usar datos o correo reales. Verificar PostgreSQL/HTTP, doble worker con scope reutilizado, atomicidad de fila/audit/outbox, flags de correo, no-op/conflicto, ventana de siete días y lotes, exclusión de términos obsoletos, leases, límite compartido, fallos/reintentos y SMTP aislado con confianza TLS normal. Conservar las pruebas de confirmación, recuperación y MFA; no rebajar sus controles.
+
+Durante `recovery-invalidate --maintenance`, con web detenido, la misma transacción de Subscriptions cancela todos los estados de outbox restaurados, limpia leases y registra un tombstone del periodo temporal actual aunque el backup aún no tuviera recordatorio. Revalidar la cuenta o reactivar sólo el estado no reenvía ese periodo. Una posterior asignación o renovación genuina crea una nueva generación y admite su propio aviso. Una falla revierte conjuntamente esos cambios y la suspensión/auditoría existentes.
+
+Se conserva el ledger técnico mínimo necesario para deduplicación y supresión tras recuperación; no contiene contenido del correo, dirección ni tokens. No aplicar a este historial los plazos de 90 y 365 fechas del consumo ni inventar una política de eliminación. El downgrade rechaza un historial de avisos existente para evitar perder su idempotencia.
+
 ## Consulta administrativa y privacidad
 
 La búsqueda `/api/v1/admin/subscriptions/accounts?search=&page=1&pageSize=20` usa Subscriptions.Manage y MFA. Devuelve identificador, nombre, correo, estado y confirmación para localizar al titular; no concede edición de usuarios ni expone permisos, niveles o versiones. El lookup por lote acepta como máximo veinte IDs distintos y no vacíos; Identity los resuelve mediante su contrato público y una consulta.

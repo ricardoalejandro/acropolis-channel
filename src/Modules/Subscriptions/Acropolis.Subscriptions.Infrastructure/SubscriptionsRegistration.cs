@@ -11,7 +11,11 @@ public static class SubscriptionsRegistration
     public static IServiceCollection AddChannelSubscriptions(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddDbContext<SubscriptionsDbContext>((provider, options) => ConfigureDatabase(options, provider.GetRequiredService<NpgsqlDataSource>()));
+        services.Configure<SubscriptionNotificationOptions>(configuration.GetSection("Subscriptions:Notifications"));
         services.AddScoped<SubscriptionService>();
+        services.AddScoped<SubscriptionNotificationScheduler>();
+        services.AddScoped<SubscriptionNotificationDispatcher>();
+        services.AddHostedService<SubscriptionNotificationWorker>();
         services.AddScoped<ISubscriptionReportService, SubscriptionReportService>();
         services.AddScoped<ISubscriptionEventReportService, SubscriptionReportService>();
         services.AddScoped<ISubscriptionService>(provider => provider.GetRequiredService<SubscriptionService>());

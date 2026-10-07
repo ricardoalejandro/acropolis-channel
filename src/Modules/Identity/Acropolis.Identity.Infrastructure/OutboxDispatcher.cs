@@ -1,52 +1,27 @@
+using Acropolis.Identity.Application;
 using System.Text.Json;
-using MailKit.Net.Smtp;
-using MailKit.Security;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MimeKit;
 
 namespace Acropolis.Identity.Infrastructure;
 
 public interface IIdentityMailer { Task SendAsync(MailPayload payload, CancellationToken token); }
 public sealed class SmtpIdentityMailer(IOptions<IdentitySettings> configuration) : IIdentityMailer
 {
-    public async Task SendAsync(MailPayload payload, CancellationToken token)
+    private readonly SmtpEmailTransport transport = new(configuration);
+    public Task SendAsync(MailPayload payload, CancellationToken token)
     {
-        var settings = configuration.Value;
         var route = payload.Purpose == "confirm" ? "/confirm-email" : "/reset-password";
-        var link = settings.PublicOrigin.TrimEnd('/') + route + "#userId=" + payload.UserId + "&token=" + Uri.EscapeDataString(payload.Token);
-        var message = new MimeMessage();
-        message.MessageId = payload.MessageId.ToString("N") + "@acropolis-channel";
-        message.From.Add(new MailboxAddress(settings.Smtp.FromName, settings.Smtp.FromEmail));
-        message.To.Add(MailboxAddress.Parse(payload.Email));
-        message.Subject = payload.Purpose == "confirm" ? "Confirma tu correo en Acropolis Channel" : "Restablece tu contraseña de Acropolis Channel";
-        message.Body = new TextPart("plain") { Text = "Para continuar, abre este enlace:\n" + link + "\nSi no solicitaste esta acción, ignora este correo." };
-        using var client = new SmtpClient();
-        await ConnectAsync(client, token);
-        await client.SendAsync(message, token);
-        await client.DisconnectAsync(true, token);
+        var link = configuration.Value.PublicOrigin.TrimEnd('/') + route + "#userId=" + payload.UserId + "&token=" + Uri.EscapeDataString(payload.Token);
+        return transport.SendIdentityAsync(new(payload.MessageId, payload.Email,
+            payload.Purpose == "confirm" ? "Confirma tu correo en Acropolis Channel" : "Restablece tu contraseña de Acropolis Channel",
+            "Para continuar, abre este enlace:\n" + link + "\nSi no solicitaste esta acción, ignora este correo."), token);
     }
-    public async Task CheckAsync(CancellationToken token)
-    {
-        using var client = new SmtpClient();
-        await ConnectAsync(client, token);
-        await client.DisconnectAsync(true, token);
-    }
-    private async Task ConnectAsync(SmtpClient client, CancellationToken token)
-    {
-        if (!configuration.Value.EmailEnabled) throw new InvalidOperationException("Identity email is disabled.");
-        var settings = configuration.Value.Smtp;
-        if (settings.Security is not ("ssl" or "starttls") && !(settings.Security == "none" && Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Testing"))
-            throw new InvalidOperationException("SMTP requires an explicit secure transport.");
-        client.Timeout = 15000;
-        var security = settings.Security switch { "ssl" => SecureSocketOptions.SslOnConnect, "none" => SecureSocketOptions.None, _ => SecureSocketOptions.StartTls };
-        await client.ConnectAsync(settings.Host, settings.Port, security, token);
-        if (!string.IsNullOrEmpty(settings.Username)) await client.AuthenticateAsync(settings.Username, settings.Password, token);
-    }
+    public Task CheckAsync(CancellationToken token) => transport.CheckAsync(token);
 }
 public sealed class OutboxDispatcher(IdentityDbContext database, IDataProtectionProvider protection, IIdentityMailer mailer, TimeProvider clock, IOptions<IdentitySettings> settings)
 {

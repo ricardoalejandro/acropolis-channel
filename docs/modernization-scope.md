@@ -34,7 +34,7 @@ El propietario confirmó Gratuito sin vencimiento limitado a obras marcadas grat
 
 El reporte preparado de eventos agrega la auditoría de Subscriptions por fecha UTC y transición registrada: activación, reactivación, cancelación, asignación, renovación, cambios administrativos y suspensión por recuperación. Incluye eventos no clasificables y días sin eventos dentro del intervalo solicitado, con un máximo de 366 fechas. No inventa historia anterior ni interpreta eventos como cuentas únicas, ingresos, pagos o saldo diario de suscriptores. Es independiente del reporte del estado actual. La consulta exige `Subscriptions.Manage` y MFA; no expone cuentas ni actores.
 
-Pendiente: ejecutar la validación completa de esas reglas, migraciones, concurrencia y recorridos en la fuente definitiva; avisos y aceptación por gestores siguen pendientes (p. 6). La aprobación de negocio no acredita ejecución del gate ni despliegue. El intervalo del reporte de eventos no establece una nueva política de eliminación de auditoría.
+Las reglas de avisos al titular por asignación, renovación y próximo vencimiento están confirmadas y su implementación está preparada; validación y activación siguen pendientes. También falta ejecutar la validación completa de planes, migraciones, concurrencia y recorridos en la fuente definitiva y obtener la aceptación de gestores (p. 6). La aprobación de negocio no acredita ejecución del gate ni despliegue. El intervalo del reporte de eventos no establece una nueva política de eliminación de auditoría.
 
 ## Consumo y reportes
 
@@ -60,7 +60,7 @@ Pendiente: identificar la intranet, su contrato y la regla de acceso por nivel; 
 
 Acrópolis conserva su cliente SMTP y mensajes de confirmación y recuperación. La disponibilidad efectiva depende de sus guardas y del runtime activo. El servicio de correo Naperu mantiene fuente y runtime independientes. Las pruebas nuevas usan únicamente correo y cuentas sintéticas aisladas.
 
-Pendiente: avisos de suscripción, renovación y próximo vencimiento, además de WhatsApp; concretar disparadores, consentimiento y la integración correspondiente. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
+El propietario confirmó avisos transaccionales al titular por asignación manual, renovación manual y durante los siete días previos al vencimiento, sin marketing. La implementación está preparada y permanece desactivada; su validación y activación están pendientes. Leer [operación de suscripciones](subscriptions-operations.md). WhatsApp requiere concretar contrato, consentimiento e integración. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
 
 ## Facturación y gestión comercial
 

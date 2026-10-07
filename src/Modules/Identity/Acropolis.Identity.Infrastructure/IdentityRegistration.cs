@@ -78,6 +78,8 @@ public static class IdentityRegistration
         services.AddScoped<IAccountAccessService, AccountAccessService>();
         services.AddScoped<IIdentityReportService, IdentityReportService>();
         services.AddScoped<IIdentityMailer, SmtpIdentityMailer>();
+        services.AddScoped<ITransactionalEmailSender, SmtpEmailTransport>();
+        services.AddScoped<IAccountNotificationRecipient, AccountNotificationRecipient>();
         services.AddScoped<OutboxDispatcher>();
         services.AddHostedService<OutboxWorker>();
         return services;

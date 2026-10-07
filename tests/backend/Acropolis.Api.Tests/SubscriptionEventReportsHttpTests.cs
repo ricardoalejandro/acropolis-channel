@@ -127,8 +127,9 @@ public sealed class SubscriptionEventReportsHttpTests
         Assert.Equal(Midnight(DateOnly.ParseExact(to, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)), report.GetProperty("toUtc").GetDateTimeOffset());
         Assert.Equal(TimeSpan.Zero, report.GetProperty("fromUtc").GetDateTimeOffset().Offset);
         Assert.Equal(TimeSpan.Zero, report.GetProperty("toUtc").GetDateTimeOffset().Offset);
-        Assert.Equal(3L, report.GetProperty("totalEvents").GetInt64());
-        Groups(report.GetProperty("byEvent"), 2, 1);
+        Assert.Equal(6L, report.GetProperty("totalEvents").GetInt64());
+        Groups(report.GetProperty("byEvent"), 2, 1, 1, 2);
+        Assert.Equal(report.GetProperty("totalEvents").GetInt64(), report.GetProperty("byEvent").EnumerateArray().Sum(row => row.GetProperty("count").GetInt64()));
         var rows = report.GetProperty("days");
         Assert.Equal(days, rows.GetArrayLength());
         for (var index = 0; index < days; index++)
@@ -138,11 +139,14 @@ public sealed class SubscriptionEventReportsHttpTests
             Assert.Equal(DateOnly.ParseExact(from, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture).AddDays(index).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), day.GetProperty("dayUtc").GetString());
             var activated = index == 0 ? 2L : 0L;
             var suspended = index == (days == 1 ? 0 : 1) ? 1L : 0L;
-            Assert.Equal(activated + suspended, day.GetProperty("totalEvents").GetInt64());
-            Groups(day.GetProperty("byEvent"), activated, suspended);
+            var assigned = index == 0 ? 1L : 0L;
+            var renewed = index == days - 1 ? 2L : 0L;
+            Assert.Equal(activated + suspended + assigned + renewed, day.GetProperty("totalEvents").GetInt64());
+            Groups(day.GetProperty("byEvent"), activated, suspended, assigned, renewed);
+            Assert.Equal(day.GetProperty("totalEvents").GetInt64(), day.GetProperty("byEvent").EnumerateArray().Sum(row => row.GetProperty("count").GetInt64()));
         }
-        Assert.Equal(3L, rows.EnumerateArray().Sum(day => day.GetProperty("totalEvents").GetInt64()));
-        foreach (var field in new[] { "userId", "subscriptionId", "actorId", "email", "displayName", "reason", "version", "renewal" })
+        Assert.Equal(6L, rows.EnumerateArray().Sum(day => day.GetProperty("totalEvents").GetInt64()));
+        foreach (var field in new[] { "userId", "subscriptionId", "actorId", "email", "displayName", "reason", "version", "renewal", "plan", "startsUtc", "expiresUtc", "beforePlan", "afterPlan", "beforeStartsUtc", "afterStartsUtc", "beforeExpiresUtc", "afterExpiresUtc" })
             Assert.DoesNotContain('"' + field + '"', body, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(new SubscriptionEventInterval(DateOnly.ParseExact(from, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), DateOnly.ParseExact(to, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)), factory.Events.Interval);
         Assert.True(factory.Events.ReceivedToken.CanBeCanceled);
@@ -200,9 +204,17 @@ public sealed class SubscriptionEventReportsHttpTests
         using var client = Client(factory);
         using var current = await client.GetAsync("/api/v1/admin/reports/subscriptions", Token);
         Assert.Equal(HttpStatusCode.OK, current.StatusCode);
-        using var document = JsonDocument.Parse(await current.Content.ReadAsStringAsync(Token));
-        ExactProperties(document.RootElement, "generatedUtc", "total", "byStatus", "scope");
-        Assert.Equal("current", document.RootElement.GetProperty("scope").GetString());
+        var body = await current.Content.ReadAsStringAsync(Token);
+        using var document = JsonDocument.Parse(body);
+        var report = document.RootElement;
+        ExactProperties(report, "generatedUtc", "total", "byStatus", "byEffectiveState", "scope");
+        Assert.Equal("current", report.GetProperty("scope").GetString());
+        Assert.Equal(Snapshot, report.GetProperty("generatedUtc").GetDateTimeOffset());
+        Assert.Equal(0L, report.GetProperty("total").GetInt64());
+        ZeroGroups(report.GetProperty("byStatus"), "active", "cancelled", "suspended");
+        ZeroGroups(report.GetProperty("byEffectiveState"), "active", "scheduled", "expired", "cancelled", "suspended");
+        foreach (var field in new[] { "userId", "subscriptionId", "actorId", "email", "displayName", "reason", "version", "plan", "startsUtc", "expiresUtc" })
+            Assert.DoesNotContain('"' + field + '"', body, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, factory.Current.Calls);
         using var invalid = await client.GetAsync("/api/v1/admin/reports/subscriptions" + ValidQuery, Token);
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
@@ -218,17 +230,30 @@ public sealed class SubscriptionEventReportsHttpTests
         Assert.Equal("no-referrer", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
     }
     private static void ExactProperties(JsonElement value, params string[] names) => Assert.Equal(names.Order(StringComparer.Ordinal), value.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
-    private static void Groups(JsonElement groups, long activated, long suspended)
+    private static void Groups(JsonElement groups, long activated, long suspended, long assigned, long renewed)
     {
-        Assert.Equal(11, groups.GetArrayLength());
+        Assert.Equal(13, groups.GetArrayLength());
+        Assert.Equal(new[] { "activated", "reactivated", "cancelled", "updated_active_cancelled", "updated_active_suspended", "updated_cancelled_active", "updated_cancelled_suspended", "updated_suspended_active", "updated_suspended_cancelled", "recovery_suspended", "assigned", "renewed", "unclassified" }, groups.EnumerateArray().Select(row => row.GetProperty("key").GetString()));
         for (var index = 0; index < SubscriptionEventReportRules.Keys.Count; index++)
         {
             var row = groups[index];
             ExactProperties(row, "key", "count");
             var key = SubscriptionEventReportRules.Keys[index];
             Assert.Equal(key, row.GetProperty("key").GetString());
-            Assert.Equal(key == "activated" ? activated : key == "updated_active_suspended" ? suspended : 0L, row.GetProperty("count").GetInt64());
+            Assert.Equal(key switch { "activated" => activated, "updated_active_suspended" => suspended, "assigned" => assigned, "renewed" => renewed, _ => 0L }, row.GetProperty("count").GetInt64());
         }
+    }
+
+    private static void ZeroGroups(JsonElement groups, params string[] keys)
+    {
+        Assert.Equal(keys.Length, groups.GetArrayLength());
+        for (var index = 0; index < keys.Length; index++)
+        {
+            ExactProperties(groups[index], "key", "count");
+            Assert.Equal(keys[index], groups[index].GetProperty("key").GetString());
+            Assert.Equal(0L, groups[index].GetProperty("count").GetInt64());
+        }
+        Assert.Equal(0L, groups.EnumerateArray().Sum(row => row.GetProperty("count").GetInt64()));
     }
 
     private sealed class EventFactory(bool authenticated = true, bool mfa = true, string permission = IdentityRules.ManageSubscriptions) : WebApplicationFactory<Program>
@@ -306,11 +331,11 @@ public sealed class SubscriptionEventReportsHttpTests
             }
             var days = interval.To.DayNumber - interval.From.DayNumber;
             var rows = Enumerable.Range(0, days).Select(index => new SubscriptionEventDay(interval.From.AddDays(index),
-                (index == 0 ? 2L : 0L) + (index == (days == 1 ? 0 : 1) ? 1L : 0L),
-                Counts(index == 0 ? 2 : 0, index == (days == 1 ? 0 : 1) ? 1 : 0))).ToArray();
-            return new(Snapshot, Midnight(interval.From), Midnight(interval.To), 3, Counts(2, 1), rows);
+                (index == 0 ? 2L : 0L) + (index == (days == 1 ? 0 : 1) ? 1L : 0L) + (index == 0 ? 1L : 0L) + (index == days - 1 ? 2L : 0L),
+                Counts(index == 0 ? 2 : 0, index == (days == 1 ? 0 : 1) ? 1 : 0, index == 0 ? 1 : 0, index == days - 1 ? 2 : 0))).ToArray();
+            return new(Snapshot, Midnight(interval.From), Midnight(interval.To), 6, Counts(2, 1, 1, 2), rows);
         }
-        private static SubscriptionEventCount[] Counts(long activated, long suspended) => SubscriptionEventReportRules.Keys.Select(key => new SubscriptionEventCount(key, key == "activated" ? activated : key == "updated_active_suspended" ? suspended : 0L)).ToArray();
+        private static SubscriptionEventCount[] Counts(long activated, long suspended, long assigned, long renewed) => SubscriptionEventReportRules.Keys.Select(key => new SubscriptionEventCount(key, key switch { "activated" => activated, "updated_active_suspended" => suspended, "assigned" => assigned, "renewed" => renewed, _ => 0L })).ToArray();
     }
     private sealed class CurrentSpy : ISubscriptionReportService
     {
@@ -318,7 +343,8 @@ public sealed class SubscriptionEventReportsHttpTests
         public Task<SubscriptionReportView> GetCurrentAsync(CancellationToken token)
         {
             Calls++;
-            return Task.FromResult(new SubscriptionReportView(Snapshot, 0, [new("active", 0), new("cancelled", 0), new("suspended", 0)]));
+            return Task.FromResult(new SubscriptionReportView(Snapshot, 0, [new("active", 0), new("cancelled", 0), new("suspended", 0)],
+                [new("active", 0), new("scheduled", 0), new("expired", 0), new("cancelled", 0), new("suspended", 0)]));
         }
     }
 }

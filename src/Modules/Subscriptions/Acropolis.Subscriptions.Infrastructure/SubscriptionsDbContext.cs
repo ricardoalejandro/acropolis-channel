@@ -15,6 +15,7 @@ public sealed class Subscription
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CancelledUtc { get; set; }
     public string Version { get; set; } = Guid.NewGuid().ToString("N");
+    public Guid NotificationTermGeneration { get; set; } = Guid.NewGuid();
 }
 public sealed class SubscriptionAudit
 {
@@ -34,7 +35,7 @@ public sealed class SubscriptionAudit
     public DateTimeOffset? BeforeExpiresUtc { get; set; }
     public DateTimeOffset? AfterExpiresUtc { get; set; }
 }
-public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbContext> options) : DbContext(options)
+public sealed partial class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbContext> options) : DbContext(options)
 {
     public const string Schema = "subscriptions";
     public const string HistoryTable = "__EFMigrationsHistory";
@@ -43,6 +44,7 @@ public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbConte
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema(Schema);
+        ConfigureNotifications(builder);
         builder.Entity<Subscription>(entity =>
         {
             entity.ToTable("Subscriptions", table =>
@@ -54,6 +56,8 @@ public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbConte
             entity.HasKey(x => x.Id); entity.HasIndex(x => x.UserId).IsUnique();
             entity.Property(x => x.Plan).HasMaxLength(32); entity.Property(x => x.Status).HasMaxLength(16);
             entity.Property(x => x.Version).HasMaxLength(64).IsConcurrencyToken();
+            entity.Property(x => x.NotificationTermGeneration).HasDefaultValueSql("gen_random_uuid()");
+            entity.HasIndex(x => new { x.Status, x.ExpiresUtc, x.Id });
             entity.HasIndex(x => new { x.Status, x.UpdatedUtc, x.Id });
             entity.HasIndex(x => new { x.UpdatedUtc, x.Id });
         });

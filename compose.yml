@@ -84,6 +84,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       Catalog__Consumption__RecordingEnabled: ${CATALOG_RECORDING_ENABLED:-false}
+      Subscriptions__Notifications__Enabled: ${SUBSCRIPTIONS_NOTIFICATIONS_ENABLED:-false}
       ConnectionStrings__Database: Host=db;Database=acropolis;Username=acropolis_app;Password=${DB_APP_PASSWORD};Timeout=3;Command
         Timeout=3
       Identity__EmailEnabled: ${IDENTITY_EMAIL_ENABLED:-true}

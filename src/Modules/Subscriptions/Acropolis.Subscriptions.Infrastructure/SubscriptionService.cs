@@ -1,10 +1,11 @@
 using Acropolis.Identity.Application;
 using Acropolis.Subscriptions.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Acropolis.Subscriptions.Infrastructure;
 
-public sealed class SubscriptionService(SubscriptionsDbContext database, IIdentityService accounts, TimeProvider clock) : ISubscriptionService, ISubscriptionAccess
+public sealed class SubscriptionService(SubscriptionsDbContext database, IIdentityService accounts, TimeProvider clock, IOptions<SubscriptionNotificationOptions>? notificationSettings = null, ITransactionalEmailSender? notificationEmail = null) : ISubscriptionService, ISubscriptionAccess
 {
     public async Task<SubscriptionAccessScope> GetScopeAsync(Guid userId, CancellationToken token)
     {
@@ -45,6 +46,7 @@ public sealed class SubscriptionService(SubscriptionsDbContext database, IIdenti
         }
         else
         {
+            row.NotificationTermGeneration = Guid.NewGuid();
             row.Status = "active"; row.StartsUtc = now; row.ActivatedUtc = now; row.UpdatedUtc = now; row.CancelledUtc = null;
             row.Version = Guid.NewGuid().ToString("N");
         }
@@ -122,6 +124,7 @@ public sealed class SubscriptionService(SubscriptionsDbContext database, IIdenti
             row = new Subscription { Id = Guid.NewGuid(), UserId = userId, CreatedUtc = now };
             database.Subscriptions.Add(row);
         }
+        row.NotificationTermGeneration = Guid.NewGuid();
         row.Plan = request.Plan; row.StartsUtc = renewal ? row.StartsUtc : startsUtc; row.ExpiresUtc = expiresUtc;
         row.Status = "active"; row.ActivatedUtc = now; row.UpdatedUtc = now; row.CancelledUtc = null;
         row.Version = Guid.NewGuid().ToString("N");
@@ -173,23 +176,26 @@ public sealed class SubscriptionService(SubscriptionsDbContext database, IIdenti
     // PostgreSQL timestamps store microseconds; return the exact precision persisted for renewal comparisons.
     private static DateTimeOffset Timestamp(DateTimeOffset value) => new(value.UtcTicks - value.UtcTicks % 10, TimeSpan.Zero);
     private sealed record Terms(string Status, string Plan, DateTimeOffset StartsUtc, DateTimeOffset? ExpiresUtc);
-    private void Audit(Subscription row, Guid actorId, string action, string? beforeStatus, string reason, Terms? before = null) => database.Audit.Add(new SubscriptionAudit
+    private void Audit(Subscription row, Guid actorId, string action, string? beforeStatus, string reason, Terms? before = null)
     {
-        Id = Guid.NewGuid(),
-        SubscriptionId = row.Id,
-        UserId = row.UserId,
-        ActorId = actorId,
-        Action = action,
-        BeforeStatus = beforeStatus,
-        AfterStatus = row.Status,
-        Reason = reason,
-        CreatedUtc = Timestamp(clock.GetUtcNow()),
-        BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan),
-        AfterPlan = row.Plan,
-        BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc),
-        AfterStartsUtc = row.StartsUtc,
-        BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc,
-        AfterExpiresUtc = row.ExpiresUtc
-    });
+        var audit = new SubscriptionAudit
+        {
+            Id = Guid.NewGuid(), SubscriptionId = row.Id, UserId = row.UserId, ActorId = actorId, Action = action,
+            BeforeStatus = beforeStatus, AfterStatus = row.Status, Reason = reason, CreatedUtc = Timestamp(clock.GetUtcNow()),
+            BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan), AfterPlan = row.Plan,
+            BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc), AfterStartsUtc = row.StartsUtc,
+            BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc, AfterExpiresUtc = row.ExpiresUtc
+        };
+        database.Audit.Add(audit);
+        if (notificationSettings?.Value.Enabled == true && notificationEmail?.IsAvailable == true &&
+            action is "subscription.assigned" or "subscription.renewed")
+            database.Notifications.Add(new SubscriptionNotification
+            {
+                Id = Guid.NewGuid(), SubscriptionId = row.Id, UserId = row.UserId, SourceAuditId = audit.Id,
+                TermGeneration = row.NotificationTermGeneration, DeduplicationKey = SubscriptionNotificationRules.EventKey(audit.Id),
+                Kind = action == "subscription.assigned" ? "assigned" : "renewed", Plan = row.Plan, StartsUtc = row.StartsUtc, ExpiresUtc = row.ExpiresUtc,
+                CreatedUtc = audit.CreatedUtc, NextAttemptUtc = audit.CreatedUtc
+            });
+    }
     private SubscriptionView View(Subscription row) => new(row.Id, row.UserId, row.Plan, row.Status, row.CreatedUtc, row.ActivatedUtc, row.UpdatedUtc, row.CancelledUtc, row.ExpiresUtc, row.Version, row.StartsUtc, SubscriptionRules.EffectiveState(row.Status, row.StartsUtc, row.ExpiresUtc, Timestamp(clock.GetUtcNow())));
 }

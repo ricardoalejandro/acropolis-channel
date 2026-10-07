@@ -146,7 +146,8 @@ public sealed class OperationalReportsHttpTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         PrivateHeaders(response);
-        using var report = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Token));
+        var body = await response.Content.ReadAsStringAsync(Token);
+        using var report = JsonDocument.Parse(body);
         var root = report.RootElement;
         Assert.Equal("current", root.GetProperty("scope").GetString());
         Assert.Equal(SnapshotTime, root.GetProperty("generatedUtc").GetDateTimeOffset());
@@ -192,13 +193,17 @@ public sealed class OperationalReportsHttpTests
                     }
                 break;
             case "subscriptions":
-                ExactProperties(root, "generatedUtc", "total", "byStatus", "scope");
+                ExactProperties(root, "generatedUtc", "total", "byStatus", "byEffectiveState", "scope");
                 Assert.Equal(4, root.GetProperty("total").GetInt64());
                 CountGroups(root.GetProperty("byStatus"), ["active", "cancelled", "suspended"], [2, 1, 1]);
+                CountGroups(root.GetProperty("byEffectiveState"), ["active", "scheduled", "expired", "cancelled", "suspended"], [1, 1, 0, 1, 1]);
+                Assert.Equal(root.GetProperty("total").GetInt64(), root.GetProperty("byEffectiveState").EnumerateArray().Sum(group => group.GetProperty("count").GetInt64()));
                 break;
             default: throw new InvalidOperationException("Unknown synthetic report module.");
         }
         Assert.Equal(root.GetProperty("total").GetInt64(), root.GetProperty("byStatus").EnumerateArray().Sum(group => group.GetProperty("count").GetInt64()));
+        foreach (var field in new[] { "userId", "subscriptionId", "actorId", "email", "displayName", "reason", "version", "plan", "startsUtc", "expiresUtc" })
+            Assert.DoesNotContain('"' + field + '"', body, StringComparison.OrdinalIgnoreCase);
         factory.Reports.AssertOnlyCalled(module);
     }
 
@@ -356,7 +361,8 @@ public sealed class OperationalReportsHttpTests
             Interlocked.Increment(ref subscriptionCalls);
             if (Fail) throw new Npgsql.NpgsqlException("qa-only-private-connection-detail: synthetic-reports-connection");
             return Task.FromResult(new SubscriptionReportView(SnapshotTime, 4,
-                [new("active", 2), new("cancelled", 1), new("suspended", 1)]));
+                [new("active", 2), new("cancelled", 1), new("suspended", 1)],
+                [new("active", 1), new("scheduled", 1), new("expired", 0), new("cancelled", 1), new("suspended", 1)]));
         }
         public void AssertNoCalls()
         {

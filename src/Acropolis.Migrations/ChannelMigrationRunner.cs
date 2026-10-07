@@ -134,6 +134,8 @@ public sealed class ChannelMigrationRunner
             GRANT SELECT ON TABLE subscriptions."__EFMigrationsHistory" TO acropolis_app;
             REVOKE UPDATE,DELETE ON TABLE subscriptions."Audit" FROM acropolis_app;
             REVOKE DELETE ON TABLE subscriptions."Subscriptions" FROM acropolis_app;
+            REVOKE DELETE ON TABLE subscriptions."NotificationOutbox" FROM acropolis_app;
+            REVOKE INSERT,DELETE ON TABLE subscriptions."NotificationDeliveryState" FROM acropolis_app;
             """, connection, privileges);
         await restrict.ExecuteNonQueryAsync(token);
         await privileges.CommitAsync(token);
