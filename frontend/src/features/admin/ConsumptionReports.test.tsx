@@ -6,6 +6,7 @@ import { ConsumptionReportsPage, AccountConsumptionPage } from './ConsumptionRep
 import { admin, json } from '../../test/fixtures';
 import {
   activityPage,
+  activityMetrics,
   activityReport,
   accountActivityReport,
   zeroActivity,
@@ -101,6 +102,61 @@ describe('intentional recorded-consumption reports', () => {
     expect(within(summary).getByText(/1 muestras comparables/)).toBeVisible();
     expect(within(summary).getByText(/no se suman entre días u obras/)).toBeVisible();
     expect(screen.getByText(/estadísticas generales por obra y día/)).toBeVisible();
+  });
+  it('shows unavailable distinct accounts for an old annual report without exposing account data', async () => {
+    const report = activityReport();
+    report.fromUtc = '2025-10-07T00:00:00Z';
+    report.toUtc = '2026-10-07T00:00:00Z';
+    report.summary.accountsWithActivity = null;
+    for (const row of [...report.byKind, ...report.byCategory])
+      row.metrics.accountsWithActivity = null;
+    report.daily = Array.from({ length: 365 }, (_, index) => {
+      const dayUtc = new Date(Date.parse(report.fromUtc) + index * 86400000)
+        .toISOString()
+        .slice(0, 10);
+      const metrics = index === 0 ? activityMetrics() : zeroActivity();
+      if (dayUtc < report.detailAvailableFromUtc.slice(0, 10)) metrics.accountsWithActivity = null;
+      return { dayUtc, metrics };
+    });
+    const page = activityPage();
+    page.fromUtc = report.fromUtc;
+    page.toUtc = report.toUtc;
+    for (const item of page.items) item.metrics.accountsWithActivity = null;
+    const fetch = mount(false, (path) =>
+      json(path.includes('/consumption/content?') ? page : report),
+    );
+    fireEvent.change(screen.getByLabelText('Desde (UTC)'), { target: { value: '2025-10-07' } });
+    fireEvent.change(screen.getByLabelText('Hasta (sin incluir, UTC)'), {
+      target: { value: '2026-10-07' },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Consultar consumo' }));
+    const heading = await screen.findByRole('heading', { name: 'Resumen del periodo' });
+    const summary = heading.closest('section')!;
+    const accounts = within(summary).getByText('Cuentas con actividad').nextElementSibling!;
+    expect(accounts).toBeVisible();
+    expect(accounts).toHaveTextContent(/^No disponible$/);
+    expect(accounts).not.toHaveTextContent(/^0$/);
+    expect(within(summary).getByText('Inicios registrados').nextElementSibling).toHaveTextContent(
+      /^1$/,
+    );
+    expect(within(summary).getByText('50%')).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Consumo de esta cuenta' })).not.toBeInTheDocument();
+    expect(screen.queryByText(admin.email)).not.toBeInTheDocument();
+    expect(screen.queryByText(admin.displayName)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole('link').some((link) => link.getAttribute('href')?.includes('/admin/users/')),
+    ).toBe(false);
+    const requests = fetch.mock.calls;
+    expect(requests).toHaveLength(2);
+    expect(requests.map(([path]) => String(path))).toEqual([
+      '/api/v1/admin/reports/catalog/consumption?from=2025-10-07&to=2026-10-07',
+      '/api/v1/admin/reports/catalog/consumption/content?from=2025-10-07&to=2026-10-07&page=1&pageSize=20',
+    ]);
+    expect(requests.every(([, init]) => init?.method === 'GET' && init.cache === 'no-store')).toBe(
+      true,
+    );
   });
   it.each([
     { permissions: [] },

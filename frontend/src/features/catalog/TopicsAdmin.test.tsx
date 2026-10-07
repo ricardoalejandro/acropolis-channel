@@ -151,6 +151,35 @@ describe('Real topic management surfaces', () => {
     expect(rendered.router.state.location.pathname).toBe('/admin/topics/' + topicId);
     expect(screen.queryByLabelText('Dirección del tema')).not.toBeInTheDocument();
   }, 10000);
+  it('renames a topic with its current version and CSRF while preserving the stable slug', async () => {
+    const savedName = 'Sabiduría cotidiana QA';
+    let rendered!: ReturnType<typeof mount>;
+    await act(async () => {
+      rendered = mount('/admin/topics/' + topicId, (url, init) =>
+        url.endsWith('/admin/catalog/topics/' + topicId) && init?.method === 'PUT'
+          ? json({ ...topic, name: savedName, version: nextTopicVersion })
+          : undefined,
+      );
+    });
+    const name = screen.getByLabelText('Nombre del tema');
+    await userEvent.clear(name);
+    await userEvent.type(name, '  Sabiduría cotidiana QA  ');
+    expect(writes(rendered.fetch)).toHaveLength(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar tema' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Tema guardado.');
+    const requests = writes(rendered.fetch);
+    expect(requests).toHaveLength(1);
+    const [url, init] = requests[0]!;
+    expect(String(url)).toBe('/api/v1/admin/catalog/topics/' + topicId);
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ version: topicVersion, name: savedName });
+    expect(new Headers(init?.headers).get('X-CSRF-TOKEN')).toBe('synthetic-topic-csrf');
+    expect(name).toHaveValue(savedName);
+    expect(screen.getByText(topic.slug, { selector: 'span' })).toBeVisible();
+    expect(screen.queryByLabelText('Dirección del tema')).not.toBeInTheDocument();
+    expect(rendered.router.state.location.pathname).toBe('/admin/topics/' + topicId);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  }, 10000);
   it('rejects empty fields accessibly and focuses the first invalid input without a POST', async () => {
     let rendered!: ReturnType<typeof mount>;
     await act(async () => {
