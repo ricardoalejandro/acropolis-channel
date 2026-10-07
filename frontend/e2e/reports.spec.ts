@@ -123,14 +123,19 @@ test('@modernization current reports match real API aggregates and refresh indep
     );
     await expect(kinds.locator('tbody tr').nth(index).locator('td')).toHaveText(expected);
   }
-  const statuses = page.getByRole('table', { name: 'Suscripciones por estado registrado', exact: true });
+  const statuses = page.getByRole('table', {
+    name: 'Suscripciones por estado registrado',
+    exact: true,
+  });
   for (const [index, bucket] of subscriptions.byStatus.entries())
     await expect(statuses.locator('tbody tr').nth(index).locator('td')).toHaveText(
       number.format(bucket.count),
     );
   const effective = page.getByRole('table', { name: 'Acceso por vigencia', exact: true });
   for (const [index, bucket] of subscriptions.byEffectiveState.entries())
-    await expect(effective.locator('tbody tr').nth(index).locator('td')).toHaveText(number.format(bucket.count));
+    await expect(effective.locator('tbody tr').nth(index).locator('td')).toHaveText(
+      number.format(bucket.count),
+    );
   await expect(page.locator('main')).not.toContainText('@example.test');
   await expect(page.locator('main')).not.toContainText(account.id);
   await expect(page.locator('main')).toContainText('Una cuenta puede tener varios niveles');

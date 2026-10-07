@@ -1,6 +1,6 @@
 # Entrega de mediateca y backoffice
 
-El alcance de referencia es «Proyecto: Acrópolis Channel v1.0.0» (15 páginas), junto con las indicaciones vigentes del propietario. La entrega solicitada incluye los procesos necesarios para sustituir el sistema anterior; **sólo los pagos están aplazados**. Esta descripción refleja el código preparado para integración y sus pendientes. No declara aprobadas nuevas reglas de negocio, certificadas las imágenes, completa la entrega ni autorizado un despliegue.
+El alcance de referencia es «Proyecto: Acrópolis Channel v1.0.0» (15 páginas), junto con las indicaciones vigentes del propietario. La entrega solicitada incluye los procesos necesarios para sustituir el sistema anterior; **sólo los pagos están aplazados**. Esta descripción refleja el código integrado en el checkout y sus pendientes de validación y entrega. No declara aprobadas nuevas reglas de negocio, certificadas las imágenes, completa la entrega ni autorizado un despliegue.
 
 La validación definitiva corresponde al gate completo sobre el commit limpio y a sus informes. La existencia de código, pruebas preparadas o diagnósticos de una fuente anterior no demuestra que los recorridos de esta fuente hayan pasado.
 

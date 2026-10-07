@@ -77,9 +77,7 @@ function AuthorizedWork({ item }: { item: ContentDetail }) {
               ? 'Tu acceso está suspendido.'
               : 'Revisa tu suscripción.'}
         </h2>
-        <p>
-          {subscriptionMessage(state.failure)}
-        </p>
+        <p>{subscriptionMessage(state.failure)}</p>
         <Link
           className="button"
           to={'/profile/subscription?content=' + encodeURIComponent(item.slug)}

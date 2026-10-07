@@ -1,7 +1,8 @@
 import type { SubscriptionPlan } from '../../api/subscriptions';
 const limaOffset = 5 * 60 * 60 * 1000;
 export function limaStart(value: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value) || value.startsWith('0000-')) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value) || value.startsWith('0000-'))
+    return null;
   const normalized = value.length === 16 ? value + ':00' : value;
   const instant = Date.parse(normalized + '-05:00');
   if (!Number.isFinite(instant)) return null;

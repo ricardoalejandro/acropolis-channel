@@ -70,7 +70,9 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     expect((await page.request.get('/api/v1/admin/users')).status()).toBe(403);
     await page.goto('/admin/content');
     await page.getByRole('link', { name: 'Crear contenido', exact: true }).click();
-    await expect(page.getByLabel('Disponible con el plan Gratuito', { exact: true })).not.toBeChecked();
+    await expect(
+      page.getByLabel('Disponible con el plan Gratuito', { exact: true }),
+    ).not.toBeChecked();
     await page.getByLabel('Título', { exact: true }).fill(title);
     await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
     await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('podcast');

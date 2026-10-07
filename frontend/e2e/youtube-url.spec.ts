@@ -70,7 +70,12 @@ test('@modernization pasted YouTube URL persists only its identifier and reload 
   const created = await createResponse;
   expect(created.status()).toBe(201);
   const createPayload = created.request().postDataJSON() as Record<string, unknown>;
-  expect(createPayload).toMatchObject({ category: 'videos', isFree: false, youTubeId: videoId, workText: null });
+  expect(createPayload).toMatchObject({
+    category: 'videos',
+    isFree: false,
+    youTubeId: videoId,
+    workText: null,
+  });
   expect(JSON.stringify(createPayload)).not.toContain(pastedUrl);
   const draft = (await created.json()) as Content;
   expect(draft).toMatchObject({ slug, status: 'draft', youTubeId: videoId });

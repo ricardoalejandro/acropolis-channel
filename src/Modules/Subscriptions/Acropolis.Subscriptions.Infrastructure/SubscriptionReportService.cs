@@ -9,11 +9,11 @@ public sealed class SubscriptionReportService(SubscriptionsDbContext database, T
     {
         var generatedUtc = clock.GetUtcNow().ToUniversalTime();
         var groups = await database.Subscriptions.AsNoTracking().GroupBy(x => new
-            {
-                x.Status,
-                Effective = x.Status != "active" ? x.Status : generatedUtc < x.StartsUtc ? "scheduled" :
+        {
+            x.Status,
+            Effective = x.Status != "active" ? x.Status : generatedUtc < x.StartsUtc ? "scheduled" :
                     x.ExpiresUtc != null && generatedUtc >= x.ExpiresUtc ? "expired" : "active"
-            })
+        })
             .Select(x => new { x.Key.Status, x.Key.Effective, Count = x.LongCount() }).ToArrayAsync(token);
         var counts = groups.GroupBy(x => x.Status, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.Sum(g => g.Count), StringComparer.Ordinal);
         var effective = groups.GroupBy(x => x.Effective, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.Sum(g => g.Count), StringComparer.Ordinal);

@@ -222,7 +222,11 @@ describe('Operational reports with real HTTP-shaped responses', () => {
     });
     expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos cargar este reporte');
     await screen.findByRole('table', { name: 'Usuarios por estado' }, { timeout: 3000 });
-    await screen.findByRole('table', { name: 'Suscripciones por estado registrado' }, { timeout: 3000 });
+    await screen.findByRole(
+      'table',
+      { name: 'Suscripciones por estado registrado' },
+      { timeout: 3000 },
+    );
     expect(calls(fetch, 'catalog')).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar Contenidos' }));
     await screen.findByRole('table', { name: 'Por categoría' }, { timeout: 3000 });

@@ -1,5 +1,9 @@
 import { ApiError, request } from './identity';
-import { subscriptionPlanLabels, subscriptionInstant, type SubscriptionPlan } from './subscriptions';
+import {
+  subscriptionPlanLabels,
+  subscriptionInstant,
+  type SubscriptionPlan,
+} from './subscriptions';
 export const auditModules = [
   {
     id: 'users',
@@ -109,7 +113,12 @@ function editorialDescription(changes: string) {
         collectionChanged: 'colección',
       }))
         if (before[key] === true) labels.push(label);
-      if (typeof before['isFree'] === 'boolean' && typeof value['isFree'] === 'boolean' && before['isFree'] !== value['isFree']) labels.push('acceso gratuito');
+      if (
+        typeof before['isFree'] === 'boolean' &&
+        typeof value['isFree'] === 'boolean' &&
+        before['isFree'] !== value['isFree']
+      )
+        labels.push('acceso gratuito');
     } else if (typeof value['hasWork'] === 'boolean')
       labels.push(value['hasWork'] ? 'con obra completa' : 'ficha editorial');
     if (Number.isInteger(value['itemCount']) && Number(value['itemCount']) >= 0)
@@ -186,19 +195,33 @@ export function auditPageFrom(value: unknown, module: AuditModule): AuditPage {
         const starts = item[prefix + 'StartsUtc'];
         const expires = item[prefix + 'ExpiresUtc'];
         if (plan === null || plan === undefined) return '';
-        if (typeof plan !== 'string' || !Object.hasOwn(subscriptionPlanLabels, plan) ||
-          !(starts === null || (typeof starts === 'string' && Number.isFinite(Date.parse(starts)))) ||
-          !(expires === null || (typeof expires === 'string' && Number.isFinite(Date.parse(expires))))) invalid();
-        return subscriptionPlanLabels[plan as SubscriptionPlan] +
+        if (
+          typeof plan !== 'string' ||
+          !Object.hasOwn(subscriptionPlanLabels, plan) ||
+          !(
+            starts === null ||
+            (typeof starts === 'string' && Number.isFinite(Date.parse(starts)))
+          ) ||
+          !(
+            expires === null ||
+            (typeof expires === 'string' && Number.isFinite(Date.parse(expires)))
+          )
+        )
+          invalid();
+        return (
+          subscriptionPlanLabels[plan as SubscriptionPlan] +
           (starts ? ', desde ' + subscriptionInstant(starts as string) : '') +
-          (expires ? ', hasta ' + subscriptionInstant(expires as string) : ', sin vencimiento');
+          (expires ? ', hasta ' + subscriptionInstant(expires as string) : ', sin vencimiento')
+        );
       };
       const beforePlan = planDescription('before');
       const afterPlan = planDescription('after');
       description =
         (item['beforeStatus'] ? item['beforeStatus'] + ' → ' : '') +
         item['afterStatus'] +
-        (afterPlan ? ' · ' + (beforePlan ? beforePlan + ' → ' : '') + afterPlan + ' (hora de Lima)' : '') +
+        (afterPlan
+          ? ' · ' + (beforePlan ? beforePlan + ' → ' : '') + afterPlan + ' (hora de Lima)'
+          : '') +
         (item['reason'] ? ': ' + item['reason'] : '');
     }
     return {

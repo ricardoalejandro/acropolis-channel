@@ -99,8 +99,13 @@ function AccountDirectory({ select }: { select: (account: SubscriptionAccount) =
                           >
                             Ver suscripciones
                           </button>
-                          <Link className="text-link" to={'/admin/subscriptions/accounts/' + account.id}
-                            aria-label={'Asignar plan a ' + account.displayName + ', ' + account.email}>
+                          <Link
+                            className="text-link"
+                            to={'/admin/subscriptions/accounts/' + account.id}
+                            aria-label={
+                              'Asignar plan a ' + account.displayName + ', ' + account.email
+                            }
+                          >
                             Asignar plan
                           </Link>
                         </td>

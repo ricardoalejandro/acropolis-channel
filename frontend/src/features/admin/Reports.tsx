@@ -21,7 +21,13 @@ const identityLabels = {
 };
 const contentLabels = { draft: 'Borradores', published: 'Publicados', archived: 'Archivados' };
 const subscriptionLabels = { active: 'Activas', cancelled: 'Canceladas', suspended: 'Suspendidas' };
-const effectiveLabels = { active: 'Vigentes', scheduled: 'Programadas', expired: 'Vencidas', cancelled: 'Canceladas', suspended: 'Suspendidas' };
+const effectiveLabels = {
+  active: 'Vigentes',
+  scheduled: 'Programadas',
+  expired: 'Vencidas',
+  cancelled: 'Canceladas',
+  suspended: 'Suspendidas',
+};
 const kindLabels = { work: 'Obras', course: 'Cursos', program: 'Programas' };
 function Counts({
   rows,
@@ -222,9 +228,16 @@ export function ReportsPage() {
                       labels={subscriptionLabels}
                       caption="Suscripciones por estado registrado"
                     />
-                    <Counts rows={report.byEffectiveState} labels={effectiveLabels} caption="Acceso por vigencia" />
+                    <Counts
+                      rows={report.byEffectiveState}
+                      labels={effectiveLabels}
+                      caption="Acceso por vigencia"
+                    />
                     <p className="report-note">
-                      El estado registrado y la vigencia se consultan en el mismo instante. Una suscripción activa puede estar programada o vencida. El acceso también requiere una cuenta activa y confirmada; el plan Gratuito sólo permite las obras marcadas.
+                      El estado registrado y la vigencia se consultan en el mismo instante. Una
+                      suscripción activa puede estar programada o vencida. El acceso también
+                      requiere una cuenta activa y confirmada; el plan Gratuito sólo permite las
+                      obras marcadas.
                     </p>
                   </>
                 )}

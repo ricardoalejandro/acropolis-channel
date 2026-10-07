@@ -161,7 +161,12 @@ function SubscriptionListView({
                 />
               )}
               {state.data.items.length ? (
-                <div className="table-scroll" role="region" aria-label="Listado de suscripciones" tabIndex={0}>
+                <div
+                  className="table-scroll"
+                  role="region"
+                  aria-label="Listado de suscripciones"
+                  tabIndex={0}
+                >
                   <table>
                     <thead>
                       <tr>
@@ -185,10 +190,20 @@ function SubscriptionListView({
                             />
                           </td>
                           <td>{subscriptionPlanLabels[item.plan]}</td>
-                          <td><span className="status-badge">{subscriptionStateLabels[item.effectiveState]}</span></td>
                           <td>
-                            <time dateTime={item.startsUtc}>{subscriptionInstant(item.startsUtc)}</time>
-                            <span className="table-email">{item.expiresUtc ? 'Hasta ' + subscriptionInstant(item.expiresUtc) : 'Sin vencimiento'}</span>
+                            <span className="status-badge">
+                              {subscriptionStateLabels[item.effectiveState]}
+                            </span>
+                          </td>
+                          <td>
+                            <time dateTime={item.startsUtc}>
+                              {subscriptionInstant(item.startsUtc)}
+                            </time>
+                            <span className="table-email">
+                              {item.expiresUtc
+                                ? 'Hasta ' + subscriptionInstant(item.expiresUtc)
+                                : 'Sin vencimiento'}
+                            </span>
                           </td>
                           <td>
                             <Link to={'/admin/subscriptions/' + item.id}>
@@ -291,8 +306,17 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
         unavailable={Boolean(names.error) || !account}
         retry={names.reload}
       />
-      <p>Plan: {subscriptionPlanLabels[current.plan]} · {subscriptionStateLabels[current.effectiveState]}</p>
-      <p className="field-help">Desde {subscriptionInstant(current.startsUtc)}{current.expiresUtc ? ' hasta ' + subscriptionInstant(current.expiresUtc) : ', sin vencimiento'} (hora de Lima).</p>
+      <p>
+        Plan: {subscriptionPlanLabels[current.plan]} ·{' '}
+        {subscriptionStateLabels[current.effectiveState]}
+      </p>
+      <p className="field-help">
+        Desde {subscriptionInstant(current.startsUtc)}
+        {current.expiresUtc
+          ? ' hasta ' + subscriptionInstant(current.expiresUtc)
+          : ', sin vencimiento'}{' '}
+        (hora de Lima).
+      </p>
       {saved && (
         <p className="success-message" role="status">
           {saved}
@@ -313,7 +337,11 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
         </div>
       )}
       <h2>Estado de la suscripción</h2>
-      {planDirty && <p className="field-help">Termina o descarta los cambios del plan antes de modificar el estado.</p>}
+      {planDirty && (
+        <p className="field-help">
+          Termina o descarta los cambios del plan antes de modificar el estado.
+        </p>
+      )}
       <form
         className="account-form"
         onSubmit={(event) => {
@@ -356,10 +384,25 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
           {busy ? 'Guardando…' : 'Guardar estado'}
         </button>
       </form>
-      {(status !== current.status || Boolean(reason)) && <p className="field-help">Guarda o descarta el cambio de estado antes de asignar un plan.</p>}
-      <PlanAssignmentForm userId={current.userId} current={current} disabled={busy || status !== current.status || Boolean(reason)}
-        onSaved={(result) => {setCurrent(result);setStatus(result.status);setReason('');setSaved('');}}
-        onDirty={setPlanDirty} onBusy={setPlanBusy} reload={reload} />
+      {(status !== current.status || Boolean(reason)) && (
+        <p className="field-help">
+          Guarda o descarta el cambio de estado antes de asignar un plan.
+        </p>
+      )}
+      <PlanAssignmentForm
+        userId={current.userId}
+        current={current}
+        disabled={busy || status !== current.status || Boolean(reason)}
+        onSaved={(result) => {
+          setCurrent(result);
+          setStatus(result.status);
+          setReason('');
+          setSaved('');
+        }}
+        onDirty={setPlanDirty}
+        onBusy={setPlanBusy}
+        reload={reload}
+      />
       <p className="subscription-audit">
         <Link to={'/admin/audit?module=subscriptions&subscriptionId=' + current.id}>
           Ver historial de esta suscripción

@@ -141,9 +141,7 @@ describe('Explicit administrative recorded-subscription-events consultation', ()
     await consult(form);
     const section = results();
     expect(within(section).getByText('7', { selector: 'dd' })).toBeVisible();
-    expect(section).toHaveTextContent(
-      'no equivalen a personas únicas ni suscripciones vigentes',
-    );
+    expect(section).toHaveTextContent('no equivalen a personas únicas ni suscripciones vigentes');
     const ordinary = table(section, 'Activaciones y otros movimientos');
     const administrative = table(section, 'Cambios administrativos de estado');
     for (const [index, key] of expectedEventKeys.entries()) {

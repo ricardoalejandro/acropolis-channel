@@ -534,119 +534,277 @@ test('@modernization @youtube-smoke official privacy player can load after delib
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
-test('@modernization manual plans restrict Free works, renew live access and preserve versioned audit without payments', async ({ page, browser }, testInfo) => {
+test('@modernization manual plans restrict Free works, renew live access and preserve versioned audit without payments', async ({
+  page,
+  browser,
+}, testInfo) => {
   test.setTimeout(180_000);
   guard();
   const mobile = Boolean(testInfo.project.use.isMobile);
   const origin = process.env['BASE_URL']!;
-  const memberContext = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: false,
-    viewport: page.viewportSize()!, isMobile: mobile, hasTouch: testInfo.project.use.hasTouch ?? false,
+  const memberContext = await browser.newContext({
+    baseURL: origin,
+    ignoreHTTPSErrors: false,
+    viewport: page.viewportSize()!,
+    isMobile: mobile,
+    hasTouch: testInfo.project.use.hasTouch ?? false,
     deviceScaleFactor: testInfo.project.use.deviceScaleFactor ?? 1,
     ...(testInfo.project.use.userAgent ? { userAgent: testInfo.project.use.userAgent } : {}),
   });
   try {
     await loginQa(page.request, ownerEmail, password!);
-    const member = await loginQa(memberContext.request, 'qa-load-' + (mobile ? '001031' : '001030') + '@example.test', password!);
+    const member = await loginQa(
+      memberContext.request,
+      'qa-load-' + (mobile ? '001031' : '001030') + '@example.test',
+      password!,
+    );
     expect(member.permissions).not.toContain('Subscriptions.Manage');
     const suffix = testInfo.project.name + '-' + Date.now();
-    const freeWork = await createPublished(page.request, { title: 'Obra gratuita QA ' + suffix,
-      slug: 'qa-free-plan-' + suffix, category: 'lecturas', isFree: true, workText: 'Obra gratuita sintética.' });
-    const fullWork = await createPublished(page.request, { title: 'Obra de catálogo completo QA ' + suffix,
-      slug: 'qa-full-plan-' + suffix, category: 'lecturas', isFree: false, workText: 'Obra completa sintética con plan.' });
-    expect((await write(memberContext.request, '/subscriptions/activate', 'POST', {})).status()).toBe(200);
-    const free = subscriptionMeFrom(await (await memberContext.request.get('/api/v1/subscriptions/me')).json()).subscription!;
-    expect(free.plan).toBe('free_beta');expect(free.expiresUtc).toBeNull();
-    expect((await memberContext.request.get('/api/v1/consumption/content/' + freeWork.slug)).status()).toBe(200);
+    const freeWork = await createPublished(page.request, {
+      title: 'Obra gratuita QA ' + suffix,
+      slug: 'qa-free-plan-' + suffix,
+      category: 'lecturas',
+      isFree: true,
+      workText: 'Obra gratuita sintética.',
+    });
+    const fullWork = await createPublished(page.request, {
+      title: 'Obra de catálogo completo QA ' + suffix,
+      slug: 'qa-full-plan-' + suffix,
+      category: 'lecturas',
+      isFree: false,
+      workText: 'Obra completa sintética con plan.',
+    });
+    expect(
+      (await write(memberContext.request, '/subscriptions/activate', 'POST', {})).status(),
+    ).toBe(200);
+    const free = subscriptionMeFrom(
+      await (await memberContext.request.get('/api/v1/subscriptions/me')).json(),
+    ).subscription!;
+    expect(free.plan).toBe('free_beta');
+    expect(free.expiresUtc).toBeNull();
+    expect(
+      (await memberContext.request.get('/api/v1/consumption/content/' + freeWork.slug)).status(),
+    ).toBe(200);
     const denied = await memberContext.request.get('/api/v1/consumption/content/' + fullWork.slug);
-    expect(denied.status()).toBe(403);expect(await denied.json()).toMatchObject({ code: 'content_requires_plan' });
+    expect(denied.status()).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: 'content_requires_plan' });
     const memberPage = await memberContext.newPage();
     await memberPage.goto('/content/' + fullWork.slug);
-    await expect(memberPage.getByRole('heading', { name: 'Esta obra requiere otro plan.', exact: true })).toBeVisible();
-    await expect(memberPage.getByRole('article', { name: 'Lectura completa', exact: true })).toHaveCount(0);
-    await expect(memberPage.getByRole('link', { name: 'Ver mi suscripción', exact: true })).toBeVisible();
+    await expect(
+      memberPage.getByRole('heading', { name: 'Esta obra requiere otro plan.', exact: true }),
+    ).toBeVisible();
+    await expect(
+      memberPage.getByRole('article', { name: 'Lectura completa', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      memberPage.getByRole('link', { name: 'Ver mi suscripción', exact: true }),
+    ).toBeVisible();
     const assignPath = '/api/v1/admin/subscriptions/accounts/' + member.id + '/assign';
-    expect((await write(memberContext.request, '/admin/subscriptions/accounts/' + member.id + '/assign', 'POST', { plan: 'annual', startsUtc: new Date().toISOString(), version: free.version, reason: 'Intento sin permiso QA' })).status()).toBe(403);
+    expect(
+      (
+        await write(
+          memberContext.request,
+          '/admin/subscriptions/accounts/' + member.id + '/assign',
+          'POST',
+          {
+            plan: 'annual',
+            startsUtc: new Date().toISOString(),
+            version: free.version,
+            reason: 'Intento sin permiso QA',
+          },
+        )
+      ).status(),
+    ).toBe(403);
     await page.goto('/admin/subscriptions/accounts/' + member.id);
     const form = page.getByRole('form', { name: 'Asignación manual de plan', exact: true });
     await expect(form).toBeVisible();
     const observed: string[] = [];
-    page.on('request', (request) => { if (request.method() === 'POST' && new URL(request.url()).pathname === assignPath) observed.push(request.postData()!); });
-    const start = new Date(Date.now() - 300_000);start.setUTCSeconds(0, 0);
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === assignPath)
+        observed.push(request.postData()!);
+    });
+    const start = new Date(Date.now() - 300_000);
+    start.setUTCSeconds(0, 0);
     const localStart = new Date(start.getTime() - 18_000_000).toISOString().slice(0, 16);
     await form.getByLabel('Plan', { exact: true }).selectOption('probationismo');
     await form.getByLabel('Inicio del período (hora de Lima)', { exact: true }).fill(localStart);
-    await form.getByLabel('Motivo de la asignación', { exact: true }).fill('Período manual QA autorizado');
+    await form
+      .getByLabel('Motivo de la asignación', { exact: true })
+      .fill('Período manual QA autorizado');
     await form.getByRole('button', { name: 'Revisar asignación', exact: true }).click();
     expect(observed).toEqual([]);
-    const assignedResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignPath && response.request().method() === 'POST');
+    const assignedResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === assignPath && response.request().method() === 'POST',
+    );
     await form.getByRole('button', { name: 'Confirmar asignación', exact: true }).click();
-    const httpAssigned = await assignedResponse;expect(httpAssigned.status()).toBe(200);
+    const httpAssigned = await assignedResponse;
+    expect(httpAssigned.status()).toBe(200);
     const assigned = subscriptionFrom(await httpAssigned.json());
-    expect(assigned.plan).toBe('probationismo');expect(assigned.effectiveState).toBe('active');
-    expect(Date.parse(assigned.startsUtc)).toBe(start.getTime());expect(assigned.expiresUtc).not.toBeNull();
-    expect(JSON.parse(observed[0]!)).toEqual({ plan: 'probationismo', startsUtc: start.toISOString(), version: free.version, reason: 'Período manual QA autorizado' });
+    expect(assigned.plan).toBe('probationismo');
+    expect(assigned.effectiveState).toBe('active');
+    expect(Date.parse(assigned.startsUtc)).toBe(start.getTime());
+    expect(assigned.expiresUtc).not.toBeNull();
+    expect(JSON.parse(observed[0]!)).toEqual({
+      plan: 'probationismo',
+      startsUtc: start.toISOString(),
+      version: free.version,
+      reason: 'Período manual QA autorizado',
+    });
     await expect(page.getByRole('status')).toContainText('Guardamos el plan Probacionismo.');
-    await memberPage.reload();await expect(memberPage.getByRole('article', { name: 'Lectura completa', exact: true })).toContainText('Obra completa sintética con plan.');
+    await memberPage.reload();
+    await expect(
+      memberPage.getByRole('article', { name: 'Lectura completa', exact: true }),
+    ).toContainText('Obra completa sintética con plan.');
     await page.getByRole('button', { name: 'Renovar plan actual', exact: true }).click();
     await expect(form.getByLabel('Plan', { exact: true })).toBeDisabled();
-    await expect(form.getByLabel('Inicio del período (hora de Lima)', { exact: true })).toHaveAttribute('readonly', '');
-    await form.getByLabel('Motivo de la asignación', { exact: true }).fill('Renovación anticipada QA');
+    await expect(
+      form.getByLabel('Inicio del período (hora de Lima)', { exact: true }),
+    ).toHaveAttribute('readonly', '');
+    await form
+      .getByLabel('Motivo de la asignación', { exact: true })
+      .fill('Renovación anticipada QA');
     await form.getByRole('button', { name: 'Revisar renovación', exact: true }).click();
     expect(observed).toHaveLength(1);
-    const renewalResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignPath && response.request().method() === 'POST');
+    const renewalResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === assignPath && response.request().method() === 'POST',
+    );
     await form.getByRole('button', { name: 'Confirmar asignación', exact: true }).click();
-    const httpRenewed = await renewalResponse;expect(httpRenewed.status()).toBe(200);
+    const httpRenewed = await renewalResponse;
+    expect(httpRenewed.status()).toBe(200);
     const renewed = subscriptionFrom(await httpRenewed.json());
-    expect(renewed.startsUtc).toBe(assigned.startsUtc);expect(Date.parse(renewed.expiresUtc!)).toBeGreaterThan(Date.parse(assigned.expiresUtc!));
-    expect(renewed.effectiveState).toBe('active');expect(renewed.version).not.toBe(assigned.version);
-    const renewalBody = { plan: 'probationismo', startsUtc: assigned.expiresUtc, version: assigned.version, reason: 'Renovación anticipada QA' };
+    expect(renewed.startsUtc).toBe(assigned.startsUtc);
+    expect(Date.parse(renewed.expiresUtc!)).toBeGreaterThan(Date.parse(assigned.expiresUtc!));
+    expect(renewed.effectiveState).toBe('active');
+    expect(renewed.version).not.toBe(assigned.version);
+    const renewalBody = {
+      plan: 'probationismo',
+      startsUtc: assigned.expiresUtc,
+      version: assigned.version,
+      reason: 'Renovación anticipada QA',
+    };
     expect(JSON.parse(observed[1]!)).toEqual(renewalBody);
-    const stale = await write(page.request, '/admin/subscriptions/accounts/' + member.id + '/assign', 'POST', renewalBody);
-    expect(stale.status()).toBe(409);expect(await stale.json()).toMatchObject({ code: 'concurrency_conflict' });
-    expect(subscriptionFrom(await (await page.request.get('/api/v1/admin/subscriptions/' + renewed.id)).json())).toEqual(renewed);
-    const history = await page.request.get('/api/v1/admin/subscriptions/audit?subscriptionId=' + renewed.id + '&page=1&pageSize=20');
+    const stale = await write(
+      page.request,
+      '/admin/subscriptions/accounts/' + member.id + '/assign',
+      'POST',
+      renewalBody,
+    );
+    expect(stale.status()).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: 'concurrency_conflict' });
+    expect(
+      subscriptionFrom(
+        await (await page.request.get('/api/v1/admin/subscriptions/' + renewed.id)).json(),
+      ),
+    ).toEqual(renewed);
+    const history = await page.request.get(
+      '/api/v1/admin/subscriptions/audit?subscriptionId=' + renewed.id + '&page=1&pageSize=20',
+    );
     expect(history.status()).toBe(200);
-    const audit = (await history.json()) as { items: { action: string; beforeStartsUtc: string | null; afterStartsUtc: string | null; beforeExpiresUtc: string | null; afterExpiresUtc: string | null }[] };
+    const audit = (await history.json()) as {
+      items: {
+        action: string;
+        beforeStartsUtc: string | null;
+        afterStartsUtc: string | null;
+        beforeExpiresUtc: string | null;
+        afterExpiresUtc: string | null;
+      }[];
+    };
     expect(audit.items.filter((row) => row.action === 'subscription.renewed')).toHaveLength(1);
-    expect(audit.items.find((row) => row.action === 'subscription.renewed')).toMatchObject({ beforeStartsUtc: assigned.startsUtc, afterStartsUtc: assigned.startsUtc, beforeExpiresUtc: assigned.expiresUtc, afterExpiresUtc: renewed.expiresUtc });
+    expect(audit.items.find((row) => row.action === 'subscription.renewed')).toMatchObject({
+      beforeStartsUtc: assigned.startsUtc,
+      afterStartsUtc: assigned.startsUtc,
+      beforeExpiresUtc: assigned.expiresUtc,
+      afterExpiresUtc: renewed.expiresUtc,
+    });
     await page.getByRole('button', { name: 'Asignar otro período o plan', exact: true }).click();
     await form.getByLabel('Plan', { exact: true }).selectOption('annual');
     const future = new Date(Date.parse(renewed.expiresUtc!) + 86_400_000);
     const futureLocal = new Date(future.getTime() - 18_000_000).toISOString().slice(0, 16);
     await form.getByLabel('Inicio del período (hora de Lima)', { exact: true }).fill(futureLocal);
-    await form.getByLabel('Motivo de la asignación', { exact: true }).fill('Reemplazo futuro rechazado QA');
+    await form
+      .getByLabel('Motivo de la asignación', { exact: true })
+      .fill('Reemplazo futuro rechazado QA');
     await form.getByRole('button', { name: 'Revisar asignación', exact: true }).click();
     await form.getByRole('button', { name: 'Confirmar asignación', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('sustituiría el acceso actual');
-    await expect(form.getByLabel('Inicio del período (hora de Lima)', { exact: true })).toHaveValue(futureLocal);
-    expect(subscriptionFrom(await (await page.request.get('/api/v1/admin/subscriptions/' + renewed.id)).json())).toEqual(renewed);
-    await accessible(page);await captureDesign(page, testInfo.outputPath('manual-plans-admin-' + testInfo.project.name + '.png'));
+    await expect(form.getByLabel('Inicio del período (hora de Lima)', { exact: true })).toHaveValue(
+      futureLocal,
+    );
+    expect(
+      subscriptionFrom(
+        await (await page.request.get('/api/v1/admin/subscriptions/' + renewed.id)).json(),
+      ),
+    ).toEqual(renewed);
+    await accessible(page);
+    await captureDesign(
+      page,
+      testInfo.outputPath('manual-plans-admin-' + testInfo.project.name + '.png'),
+    );
     await form.getByLabel('Plan', { exact: true }).selectOption('free_beta');
-    await expect(form.getByLabel('Inicio del período (hora de Lima)', { exact: true })).toHaveCount(0);
-    await form.getByLabel('Motivo de la asignación', { exact: true }).fill('Cambio manual a Gratuito QA');
+    await expect(form.getByLabel('Inicio del período (hora de Lima)', { exact: true })).toHaveCount(
+      0,
+    );
+    await form
+      .getByLabel('Motivo de la asignación', { exact: true })
+      .fill('Cambio manual a Gratuito QA');
     await form.getByRole('button', { name: 'Revisar asignación', exact: true }).click();
-    const freeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignPath && response.request().method() === 'POST');
+    const freeResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === assignPath && response.request().method() === 'POST',
+    );
     await form.getByRole('button', { name: 'Confirmar asignación', exact: true }).click();
-    const httpFree = await freeResponse;expect(httpFree.status()).toBe(200);
+    const httpFree = await freeResponse;
+    expect(httpFree.status()).toBe(200);
     const changedFree = subscriptionFrom(await httpFree.json());
-    expect(changedFree.plan).toBe('free_beta');expect(changedFree.effectiveState).toBe('active');expect(changedFree.expiresUtc).toBeNull();
-    expect(httpFree.request().postDataJSON()).toEqual({ plan: 'free_beta', startsUtc: null, version: renewed.version, reason: 'Cambio manual a Gratuito QA' });
-    expect((await memberContext.request.get('/api/v1/consumption/content/' + fullWork.slug)).status()).toBe(403);
+    expect(changedFree.plan).toBe('free_beta');
+    expect(changedFree.effectiveState).toBe('active');
+    expect(changedFree.expiresUtc).toBeNull();
+    expect(httpFree.request().postDataJSON()).toEqual({
+      plan: 'free_beta',
+      startsUtc: null,
+      version: renewed.version,
+      reason: 'Cambio manual a Gratuito QA',
+    });
+    expect(
+      (await memberContext.request.get('/api/v1/consumption/content/' + fullWork.slug)).status(),
+    ).toBe(403);
     await form.getByLabel('Plan', { exact: true }).selectOption('annual');
     await form.getByLabel('Inicio del período (hora de Lima)', { exact: true }).fill(localStart);
-    await form.getByLabel('Motivo de la asignación', { exact: true }).fill('Acceso anual manual QA');
+    await form
+      .getByLabel('Motivo de la asignación', { exact: true })
+      .fill('Acceso anual manual QA');
     await form.getByRole('button', { name: 'Revisar asignación', exact: true }).click();
-    const annualResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignPath && response.request().method() === 'POST');
+    const annualResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === assignPath && response.request().method() === 'POST',
+    );
     await form.getByRole('button', { name: 'Confirmar asignación', exact: true }).click();
-    const httpAnnual = await annualResponse;expect(httpAnnual.status()).toBe(200);
-    const annual = subscriptionFrom(await httpAnnual.json());expect(annual.plan).toBe('annual');expect(annual.effectiveState).toBe('active');
+    const httpAnnual = await annualResponse;
+    expect(httpAnnual.status()).toBe(200);
+    const annual = subscriptionFrom(await httpAnnual.json());
+    expect(annual.plan).toBe('annual');
+    expect(annual.effectiveState).toBe('active');
     expect(new Date(annual.expiresUtc!).getUTCFullYear()).toBe(start.getUTCFullYear() + 1);
     await memberPage.goto('/profile/subscription');
-    await expect(memberPage.getByRole('heading', { name: 'Anual', level: 2, exact: true })).toBeVisible();
-    await expect(memberPage.getByRole('button', { name: 'Suscribirme gratis', exact: true })).toHaveCount(0);
+    await expect(
+      memberPage.getByRole('heading', { name: 'Anual', level: 2, exact: true }),
+    ).toBeVisible();
+    await expect(
+      memberPage.getByRole('button', { name: 'Suscribirme gratis', exact: true }),
+    ).toHaveCount(0);
     await expect(memberPage.locator('time').nth(0)).toHaveAttribute('datetime', annual.startsUtc);
     await expect(memberPage.locator('time').nth(1)).toHaveAttribute('datetime', annual.expiresUtc!);
-    await accessible(memberPage);await captureDesign(memberPage, testInfo.outputPath('manual-plans-account-' + testInfo.project.name + '.png'));
-    expect((await memberContext.request.get('/api/v1/consumption/content/' + fullWork.slug)).status()).toBe(200);
-  } finally { await memberContext.close(); }
+    await accessible(memberPage);
+    await captureDesign(
+      memberPage,
+      testInfo.outputPath('manual-plans-account-' + testInfo.project.name + '.png'),
+    );
+    expect(
+      (await memberContext.request.get('/api/v1/consumption/content/' + fullWork.slug)).status(),
+    ).toBe(200);
+  } finally {
+    await memberContext.close();
+  }
 });

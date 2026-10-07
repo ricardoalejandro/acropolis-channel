@@ -10,7 +10,18 @@ describe('Manual plan calendar previews and Lima input', () => {
     expect(limaStart(input)).toBe(utc);
     expect(limaInput(utc)).toBe(input.length === 16 ? input + ':00' : input);
   });
-  it.each(['', '2025-02-29T09:30', '2026-04-31T09:30', '2026-13-01T09:30', '2026-10-07T24:01', '2026-10-07T09:60', '2026-10-07T09:30Z', '0000-10-07T09:30', '2026-1-07T09:30', '2026-10-07T09:30\n'])('rejects impossible or ambiguous input %s', (input) => {
+  it.each([
+    '',
+    '2025-02-29T09:30',
+    '2026-04-31T09:30',
+    '2026-13-01T09:30',
+    '2026-10-07T24:01',
+    '2026-10-07T09:60',
+    '2026-10-07T09:30Z',
+    '0000-10-07T09:30',
+    '2026-1-07T09:30',
+    '2026-10-07T09:30\n',
+  ])('rejects impossible or ambiguous input %s', (input) => {
     expect(limaStart(input)).toBeNull();
   });
   it.each([

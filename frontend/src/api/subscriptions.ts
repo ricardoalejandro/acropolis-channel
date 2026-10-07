@@ -164,7 +164,8 @@ export function subscriptionMessage(error: unknown): string {
   const messages: Record<string, string> = {
     subscription_suspended:
       'La suscripción está suspendida. Contacta con Nueva Acrópolis para revisar tu acceso.',
-    subscription_required: 'Necesitas una suscripción vigente para acceder a esta obra. Revisa tu plan y sus fechas de acceso.',
+    subscription_required:
+      'Necesitas una suscripción vigente para acceder a esta obra. Revisa tu plan y sus fechas de acceso.',
     plan_change_requires_manager: 'Para cambiar o renovar este plan, contacta con Nueva Acrópolis.',
     content_requires_plan:
       'Esta obra requiere Probacionismo o Anual. El plan Gratuito incluye las obras marcadas como gratuitas.',
@@ -232,10 +233,12 @@ export const subscriptions = {
     reason: string,
   ) =>
     subscriptionFrom(
-      await request(
-        '/admin/subscriptions/accounts/' + encodeURIComponent(userId) + '/assign',
-        { plan, startsUtc, version, reason },
-      ),
+      await request('/admin/subscriptions/accounts/' + encodeURIComponent(userId) + '/assign', {
+        plan,
+        startsUtc,
+        version,
+        reason,
+      }),
     ),
   audit: async (subscriptionId = '', page = 1) =>
     pageFrom(

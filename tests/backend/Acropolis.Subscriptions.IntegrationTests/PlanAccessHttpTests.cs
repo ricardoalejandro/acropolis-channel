@@ -287,9 +287,15 @@ public sealed class PlanAccessHttpTests(IdentityFixture database)
         var manager = scope.ServiceProvider.GetRequiredService<UserManager<ChannelUser>>();
         var account = new ChannelUser
         {
-            Id = Guid.NewGuid(), Email = name + "@example.test", UserName = name + "@example.test",
-            DisplayName = "Synthetic plan account", EmailConfirmed = true, LockoutEnabled = true,
-            SubscriptionsManage = subscriptions, ContentManage = content, UsersManage = users
+            Id = Guid.NewGuid(),
+            Email = name + "@example.test",
+            UserName = name + "@example.test",
+            DisplayName = "Synthetic plan account",
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SubscriptionsManage = subscriptions,
+            ContentManage = content,
+            UsersManage = users
         };
         Assert.True((await manager.CreateAsync(account, Password)).Succeeded);
         return account;
@@ -331,8 +337,11 @@ public sealed class PlanAccessHttpTests(IdentityFixture database)
     {
         var request = new Dictionary<string, object?>
         {
-            ["slug"] = slug, ["title"] = "Synthetic plan reading", ["summary"] = "Synthetic public synopsis.",
-            ["body"] = "Synthetic public editorial text.", ["category"] = child is null ? "lecturas" : "cursos",
+            ["slug"] = slug,
+            ["title"] = "Synthetic plan reading",
+            ["summary"] = "Synthetic public synopsis.",
+            ["body"] = "Synthetic public editorial text.",
+            ["category"] = child is null ? "lecturas" : "cursos",
             ["workText"] = child is null ? PrivateText : null
         };
         if (isFree.HasValue) request["isFree"] = isFree.Value;
@@ -343,10 +352,15 @@ public sealed class PlanAccessHttpTests(IdentityFixture database)
     }
     private static object EditorialUpdate(JsonElement content, bool isFree) => new
     {
-        version = content.GetProperty("version").GetString(), status = "published",
-        slug = content.GetProperty("slug").GetString(), title = content.GetProperty("title").GetString(),
-        summary = "Synthetic public synopsis.", body = "Synthetic public editorial text.", category = "lecturas",
-        workText = PrivateText, isFree
+        version = content.GetProperty("version").GetString(),
+        status = "published",
+        slug = content.GetProperty("slug").GetString(),
+        title = content.GetProperty("title").GetString(),
+        summary = "Synthetic public synopsis.",
+        body = "Synthetic public editorial text.",
+        category = "lecturas",
+        workText = PrivateText,
+        isFree
     };
     private static string EditorRoute(JsonElement content) => $"/api/v1/admin/content/{content.GetProperty("id").GetGuid()}";
     private static string WorkRoute(JsonElement content) => $"/api/v1/consumption/content/{content.GetProperty("slug").GetString()}";

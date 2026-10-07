@@ -175,8 +175,20 @@ public sealed class SubscriptionPlanTests(IdentityFixture database)
         {
             var row = await setup.Subscriptions.SingleAsync(Token);
             row.Plan = "annual"; row.ExpiresUtc = row.StartsUtc.AddYears(1);
-            setup.Audit.Add(new SubscriptionAudit { Id = Guid.NewGuid(), SubscriptionId = row.Id, UserId = row.UserId, ActorId = Guid.NewGuid(),
-                Action = "subscription.assigned", AfterStatus = "active", Reason = "Historial manual sintético QA", CreatedUtc = now, AfterPlan = "annual", AfterStartsUtc = now, AfterExpiresUtc = row.ExpiresUtc });
+            setup.Audit.Add(new SubscriptionAudit
+            {
+                Id = Guid.NewGuid(),
+                SubscriptionId = row.Id,
+                UserId = row.UserId,
+                ActorId = Guid.NewGuid(),
+                Action = "subscription.assigned",
+                AfterStatus = "active",
+                Reason = "Historial manual sintético QA",
+                CreatedUtc = now,
+                AfterPlan = "annual",
+                AfterStartsUtc = now,
+                AfterExpiresUtc = row.ExpiresUtc
+            });
             await setup.SaveChangesAsync(Token);
             row.Plan = "free_beta"; row.ExpiresUtc = null; await setup.SaveChangesAsync(Token);
         }

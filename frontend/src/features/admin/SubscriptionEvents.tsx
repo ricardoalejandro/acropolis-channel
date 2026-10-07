@@ -170,7 +170,8 @@ export function SubscriptionEventsPage() {
               </div>
               <p className="event-scope">
                 Un usuario puede generar varios eventos. Estos conteos no equivalen a personas
-                únicas ni suscripciones vigentes. Las asignaciones y renovaciones registradas son operaciones manuales, sin acreditar cobros.
+                únicas ni suscripciones vigentes. Las asignaciones y renovaciones registradas son
+                operaciones manuales, sin acreditar cobros.
               </p>
               {data.totalEvents === 0 && (
                 <p className="event-empty" role="status">

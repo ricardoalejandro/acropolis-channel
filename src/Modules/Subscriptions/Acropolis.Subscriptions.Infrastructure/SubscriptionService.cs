@@ -184,9 +184,12 @@ public sealed class SubscriptionService(SubscriptionsDbContext database, IIdenti
         AfterStatus = row.Status,
         Reason = reason,
         CreatedUtc = Timestamp(clock.GetUtcNow()),
-        BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan), AfterPlan = row.Plan,
-        BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc), AfterStartsUtc = row.StartsUtc,
-        BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc, AfterExpiresUtc = row.ExpiresUtc
+        BeforePlan = before?.Plan ?? (beforeStatus is null ? null : row.Plan),
+        AfterPlan = row.Plan,
+        BeforeStartsUtc = before?.StartsUtc ?? (beforeStatus is null ? null : row.StartsUtc),
+        AfterStartsUtc = row.StartsUtc,
+        BeforeExpiresUtc = before is null ? (beforeStatus is null ? null : row.ExpiresUtc) : before.ExpiresUtc,
+        AfterExpiresUtc = row.ExpiresUtc
     });
     private SubscriptionView View(Subscription row) => new(row.Id, row.UserId, row.Plan, row.Status, row.CreatedUtc, row.ActivatedUtc, row.UpdatedUtc, row.CancelledUtc, row.ExpiresUtc, row.Version, row.StartsUtc, SubscriptionRules.EffectiveState(row.Status, row.StartsUtc, row.ExpiresUtc, Timestamp(clock.GetUtcNow())));
 }
