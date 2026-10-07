@@ -349,7 +349,7 @@ public sealed class SmtpEmailTransportTests(IdentityFixture database)
                     if (Interlocked.Increment(ref acceptedConnections) > 16)
                         throw new InvalidOperationException("Synthetic SMTP connection budget exceeded.");
                     try { await ReceiveAsync(client); }
-                    catch (Exception error) when (expectCertificateRejection && (error is AuthenticationException or IOException)) { }
+                    catch (Exception error) when (expectCertificateRejection && (error is System.Security.Authentication.AuthenticationException or IOException)) { }
                     finally { active = null; }
                 }
             }
