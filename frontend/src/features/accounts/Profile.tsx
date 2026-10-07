@@ -3,8 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { clearCsrf, identity, request } from '../../api/identity';
 import { useSession } from '../../auth/useSession';
 import { AccountForm } from '../../components/AccountForm';
+import { useOperationGuard } from './useOperationGuard';
 export function Profile() {
-  const { user, setUser } = useSession();
+  const { user, setUser, beginUserUpdate } = useSession();
+  const nameOperation = useOperationGuard();
   const navigate = useNavigate();
   const [saved, setSaved] = useState(false);
   if (!user) return null;
@@ -62,8 +64,10 @@ export function Profile() {
               ]}
               submit="Guardar cambios"
               onSubmit={async (values) => {
-                setUser(await identity.updateProfile(values['displayName'] as string));
-                setSaved(true);
+                const current = nameOperation.begin();
+                const commit = beginUserUpdate();
+                const updated = await identity.updateProfile(values['displayName'] as string);
+                if (current() && commit(updated)) setSaved(true);
               }}
             />
           </section>

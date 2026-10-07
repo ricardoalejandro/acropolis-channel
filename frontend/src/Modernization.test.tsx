@@ -631,6 +631,48 @@ describe('Editorial payloads and ordered membership', () => {
     expect(screen.getByLabelText('Enlace o identificador de YouTube')).toHaveValue('invalid');
     expect(writes(fetch, '/admin/content/reading-one')).toHaveLength(0);
   });
+  it('searches course works with Enter without saving pending editorial changes', async () => {
+    const fetch = mount('/admin/content/course-one', owner);
+    await screen.findByLabelText('Tipo de colección', {}, { timeout: 3000 });
+    const collection = within(document.querySelector('.collection-editor')!);
+    await collection.findByRole('button', { name: 'Bajar Primera lectura' }, { timeout: 3000 });
+    fill('Título', 'Curso con cambios pendientes');
+    await userEvent.click(collection.getByRole('button', { name: 'Bajar Primera lectura' }));
+    await userEvent.type(
+      collection.getByRole('searchbox', { name: 'Buscar elementos publicados' }),
+      '  Segunda  {Enter}',
+    );
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([path]) => {
+          const url = new URL(String(path), 'https://qa.invalid');
+          return (
+            url.pathname === '/api/v1/admin/content' &&
+            url.searchParams.get('search') === 'Segunda' &&
+            url.searchParams.get('page') === '1' &&
+            url.searchParams.get('status') === 'published'
+          );
+        }),
+      ).toBe(true),
+    );
+    expect(writes(fetch, '/admin/content/course-one')).toHaveLength(0);
+    expect(screen.getByLabelText('Título')).toHaveValue('Curso con cambios pendientes');
+    const selected = within(
+      collection.getByRole('list', { name: 'Elementos seleccionados' }),
+    ).getAllByRole('listitem');
+    expect(selected[0]).toHaveTextContent('Segunda lectura');
+    expect(selected[1]).toHaveTextContent('Primera lectura');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await screen.findByText('Contenido publicado.');
+    expect(writes(fetch, '/admin/content/course-one')).toHaveLength(1);
+    expect(
+      JSON.parse(String(writes(fetch, '/admin/content/course-one')[0]?.[1]?.body)),
+    ).toMatchObject({
+      title: 'Curso con cambios pendientes',
+      itemIds: [second.id, reading.id],
+      collectionKind: 'course',
+    });
+  }, 10000);
   it('saves the visible course order after moving works in both directions without downloading complete works', async () => {
     const fetch = mount('/admin/content/course-one', owner);
     await screen.findByLabelText('Tipo de colección', {}, { timeout: 3000 });

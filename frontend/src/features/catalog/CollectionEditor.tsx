@@ -134,6 +134,11 @@ export function CollectionEditor({
             value={search}
             disabled={disabled}
             onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              setQuery({ search: search.trim(), page: 1 });
+            }}
           />
         </div>
         <button

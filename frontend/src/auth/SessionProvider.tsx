@@ -12,6 +12,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setLoading(false);
     setNotice(message);
   }, []);
+  const beginUserUpdate = useCallback(() => {
+    const revision = generation.current;
+    return (value: User) => {
+      if (revision !== generation.current) return false;
+      setUser(value);
+      return true;
+    };
+  }, [setUser]);
   useEffect(() => {
     const revision = (generation.current += 1);
     void identity
@@ -43,5 +51,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener('acropolis:session-expired', expire);
     return () => window.removeEventListener('acropolis:session-expired', expire);
   }, [setUser]);
-  return <SessionContext value={{ user, loading, notice, setUser }}>{children}</SessionContext>;
+  return (
+    <SessionContext value={{ user, loading, notice, setUser, beginUserUpdate }}>
+      {children}
+    </SessionContext>
+  );
 }

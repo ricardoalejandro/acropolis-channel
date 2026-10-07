@@ -15,6 +15,7 @@ public sealed class CatalogService(CatalogDbContext database, TimeProvider clock
     private sealed record Reference(ContentSummary Summary, Guid[] ItemIds, bool Ready);
     public async Task<ContentPage> ListPublishedAsync(string? search, string? category, int page, int pageSize, CancellationToken token)
     {
+        await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, token);
         var query = Filter(database.Contents.AsNoTracking().Where(x => x.Status == "published"), search, category);
         var total = await query.CountAsync(token);
         var entries = await query.OrderByDescending(x => x.PublishedUtc).ThenBy(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize)
@@ -47,6 +48,7 @@ public sealed class CatalogService(CatalogDbContext database, TimeProvider clock
     }
     public async Task<AdminContentPage> ListAdminAsync(string? search, string? category, string? status, int page, int pageSize, CancellationToken token)
     {
+        await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, token);
         var query = Filter(database.Contents.AsNoTracking(), search, category);
         if (status is not null) query = query.Where(x => x.Status == status);
         var total = await query.CountAsync(token);

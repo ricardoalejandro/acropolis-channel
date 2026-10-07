@@ -249,6 +249,143 @@ public sealed class SubscriptionsTests(IdentityFixture database)
         await using var context = Context(); Assert.Equal(2, await context.Subscriptions.CountAsync(token)); Assert.Equal(2, await context.Audit.CountAsync(token));
     }
 
+    [Fact]
+    public async Task RecoveryCliFailureBetweenModulesKeepsAccessClosedAndRetryIdempotent()
+    {
+        var token = TestContext.Current.CancellationToken;
+        await database.ResetAsync(token);
+        await using var api = new IdentityApiFactory(database);
+        var member = await Create(api, "recovery-phase-member@example.test", token);
+        var owner = await Create(api, "recovery-phase-owner@example.test", token);
+        await using (var identity = database.Context(true))
+            await new IdentityOperations(identity, api.Clock).BootstrapOwnerAsync(owner.Email!, owner.Email, token);
+        await using (var identity = database.Context())
+        {
+            var designated = await identity.Users.AsNoTracking().SingleAsync(account => account.Id == owner.Id, token);
+            Assert.True(designated.IsOwner);
+            Assert.True(designated.UsersManage);
+            Assert.True(designated.ContentManage);
+            Assert.True(designated.SubscriptionsManage);
+        }
+        using var client = api.Client();
+        using var login = await MfaTestClient.Login(client, member.Email!, Password, token);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        SubscriptionView active;
+        using (var scope = api.Services.CreateScope())
+        {
+            var activation = await scope.ServiceProvider.GetRequiredService<ISubscriptionService>().ActivateAsync(member.Id, token);
+            Assert.True(activation.Succeeded);
+            active = activation.Value!;
+        }
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/subscriptions/me", token)).StatusCode);
+
+        // Invoke the actual async CLI Main without duplicating its two-phase orchestration
+        // or adding a production test hook. This collection already runs without parallelism.
+        var entryPoint = typeof(IdentityOperations).Assembly.GetType("Acropolis.Migrations.EntryPoint", throwOnError: true)!;
+        var runCli = entryPoint.GetMethod("Main", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .CreateDelegate<Func<string[], Task<int>>>();
+        var previousConnection = Environment.GetEnvironmentVariable("ConnectionStrings__Database");
+        const string removeFailure = """
+            DROP TRIGGER IF EXISTS qa_recovery_second_phase_failure ON subscriptions."Subscriptions";
+            DROP FUNCTION IF EXISTS subscriptions.qa_recovery_second_phase_failure();
+            """;
+        try
+        {
+            await using (var failure = Context(true))
+                await failure.Database.ExecuteSqlRawAsync("""
+                    CREATE FUNCTION subscriptions.qa_recovery_second_phase_failure() RETURNS trigger
+                    LANGUAGE plpgsql AS $qa$
+                    BEGIN
+                        RAISE EXCEPTION 'Synthetic QA failure in recovery subscription phase' USING ERRCODE='23514';
+                    END;
+                    $qa$;
+                    CREATE TRIGGER qa_recovery_second_phase_failure BEFORE UPDATE OF "Status"
+                    ON subscriptions."Subscriptions" FOR EACH ROW
+                    WHEN (OLD."Status"='active' AND NEW."Status"='suspended')
+                    EXECUTE FUNCTION subscriptions.qa_recovery_second_phase_failure();
+                    """, token);
+            Environment.SetEnvironmentVariable("ConnectionStrings__Database", database.MigrationConnection);
+            Assert.Equal(1, await runCli(["recovery-invalidate", "--maintenance"]));
+
+            // Identity has committed its quarantine, while the whole second transaction
+            // (including its audit insert before the failing UPDATE) must roll back.
+            await using (var identity = database.Context())
+            {
+                var accounts = await identity.Users.AsNoTracking().ToArrayAsync(token);
+                Assert.Equal(2, accounts.Length);
+                Assert.All(accounts, account =>
+                {
+                    Assert.True(account.RevalidationRequired);
+                    Assert.False(account.IsOwner);
+                    Assert.False(account.UsersManage);
+                    Assert.False(account.ContentManage);
+                    Assert.False(account.SubscriptionsManage);
+                });
+                Assert.Empty(await identity.Sessions.ToArrayAsync(token));
+                Assert.Equal(2, await identity.Audit.CountAsync(entry => entry.Action == "account.recovery_invalidated", token));
+            }
+            await using (var subscriptions = Context())
+            {
+                var unchanged = await subscriptions.Subscriptions.AsNoTracking().SingleAsync(token);
+                Assert.Equal(active.Id, unchanged.Id);
+                Assert.Equal("active", unchanged.Status);
+                Assert.Equal(active.Version, unchanged.Version);
+                Assert.Equal(1, await subscriptions.Audit.CountAsync(token));
+                Assert.Equal(0, await subscriptions.Audit.CountAsync(entry => entry.Action == "subscription.recovery_suspended", token));
+            }
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/identity/me", token)).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/subscriptions/me", token)).StatusCode);
+            using var oldPassword = await MfaTestClient.Login(client, member.Email!, Password, token);
+            Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
+
+            await using (var failure = Context(true))
+                await failure.Database.ExecuteSqlRawAsync(removeFailure, token);
+            Assert.Equal(0, await runCli(["recovery-invalidate", "--maintenance"]));
+            string suspendedVersion;
+            Guid[] subscriptionAuditIds;
+            Guid[] identityAuditIds;
+            await using (var subscriptions = Context())
+            {
+                var suspended = await subscriptions.Subscriptions.AsNoTracking().SingleAsync(token);
+                Assert.Equal("suspended", suspended.Status);
+                Assert.NotEqual(active.Version, suspended.Version);
+                suspendedVersion = suspended.Version;
+                var recovery = Assert.Single(await subscriptions.Audit.Where(entry => entry.Action == "subscription.recovery_suspended").ToArrayAsync(token));
+                Assert.Equal(active.Id, recovery.SubscriptionId);
+                Assert.Equal(member.Id, recovery.UserId);
+                Assert.Equal("active", recovery.BeforeStatus);
+                Assert.Equal("suspended", recovery.AfterStatus);
+                subscriptionAuditIds = await subscriptions.Audit.OrderBy(entry => entry.Id).Select(entry => entry.Id).ToArrayAsync(token);
+                Assert.Equal(2, subscriptionAuditIds.Length);
+            }
+            await using (var identity = database.Context())
+            {
+                identityAuditIds = await identity.Audit.OrderBy(entry => entry.Id).Select(entry => entry.Id).ToArrayAsync(token);
+                Assert.Equal(2, await identity.Audit.CountAsync(entry => entry.Action == "account.recovery_invalidated", token));
+            }
+            Assert.Equal(0, await runCli(["recovery-invalidate", "--maintenance"]));
+            await using (var subscriptions = Context())
+            {
+                Assert.Equal(suspendedVersion, (await subscriptions.Subscriptions.AsNoTracking().SingleAsync(token)).Version);
+                Assert.Equal(subscriptionAuditIds, await subscriptions.Audit.OrderBy(entry => entry.Id).Select(entry => entry.Id).ToArrayAsync(token));
+            }
+            await using (var identity = database.Context())
+            {
+                Assert.Equal(identityAuditIds, await identity.Audit.OrderBy(entry => entry.Id).Select(entry => entry.Id).ToArrayAsync(token));
+                Assert.All(await identity.Users.AsNoTracking().ToArrayAsync(token), account => Assert.True(account.RevalidationRequired));
+                Assert.Empty(await identity.Sessions.ToArrayAsync(token));
+            }
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/subscriptions/me", token)).StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ConnectionStrings__Database", previousConnection);
+            await using var cleanup = Context(true);
+            cleanup.Database.SetCommandTimeout(10);
+            await cleanup.Database.ExecuteSqlRawAsync(removeFailure, CancellationToken.None);
+        }
+    }
+
     private SubscriptionsDbContext Context(bool migration = false)
     {
         var options = new DbContextOptionsBuilder<SubscriptionsDbContext>();

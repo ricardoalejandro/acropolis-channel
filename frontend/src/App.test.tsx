@@ -460,6 +460,81 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     );
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ displayName: 'Nuevo Nombre' });
   });
+  it('keeps logout effective when a pending profile update responds after the route has closed', async () => {
+    let finishProfile!: (response: Response) => void;
+    const pendingProfile = new Promise<Response>((resolve) => {
+      finishProfile = resolve;
+    });
+    const fetch = mount('/profile', user, (path, options) =>
+      path.endsWith('/identity/me') && options?.method === 'PATCH' ? pendingProfile : undefined,
+    );
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
+    fill('Nombre visible', 'Nombre de respuesta tardía');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.filter(
+          ([path, options]) => String(path).endsWith('/identity/me') && options?.method === 'PATCH',
+        ),
+      ).toHaveLength(1),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar sesión' }));
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
+    await act(async () => {
+      finishProfile(json({ ...user, displayName: 'Nombre de respuesta tardía' }));
+      await pendingProfile;
+    });
+    expect(window.location.pathname).toBe('/login');
+    expect(screen.getByRole('heading', { name: 'Ingresar' })).toBeInTheDocument();
+    expect(
+      within(document.querySelector('header')!).getByRole('link', { name: 'Ingresar' }),
+    ).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Mi perfil' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Guardamos tus cambios.')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Cerraste tu sesión correctamente.');
+    const call = fetch.mock.calls.find(
+      ([path, options]) => String(path).endsWith('/identity/me') && options?.method === 'PATCH',
+    );
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      displayName: 'Nombre de respuesta tardía',
+    });
+  }, 10000);
+  it('does not restore the session when revocation and a pending profile response share one React batch', async () => {
+    let finishProfile!: (response: Response) => void;
+    const pendingProfile = new Promise<Response>((resolve) => {
+      finishProfile = resolve;
+    });
+    const fetch = mount('/profile', user, (path, options) =>
+      path.endsWith('/identity/me') && options?.method === 'PATCH' ? pendingProfile : undefined,
+    );
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
+    fill('Nombre visible', 'Nombre después de revocación');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.filter(
+          ([path, options]) => String(path).endsWith('/identity/me') && options?.method === 'PATCH',
+        ),
+      ).toHaveLength(1),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event('acropolis:session-expired'));
+      finishProfile(json({ ...user, displayName: 'Nombre después de revocación' }));
+      await pendingProfile;
+    });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
+    expect(window.location.pathname).toBe('/login');
+    expect(
+      within(document.querySelector('header')!).getByRole('link', { name: 'Ingresar' }),
+    ).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Mi perfil' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Guardamos tus cambios.')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Tu sesión ha finalizado. Ingresa de nuevo para continuar.',
+    );
+  }, 10000);
   it('keeps the profile and session on an incorrect current password until an explicit successful retry', async () => {
     const dispatched = vi.spyOn(window, 'dispatchEvent');
     const fetch = mount('/profile', user, (path, options) =>

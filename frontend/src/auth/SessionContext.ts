@@ -5,5 +5,6 @@ export type Session = {
   loading: boolean;
   notice: string;
   setUser: (user: User | null, message?: string) => void;
+  beginUserUpdate: () => (user: User) => boolean;
 };
 export const SessionContext = createContext<Session | null>(null);
