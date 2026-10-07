@@ -75,6 +75,7 @@ public static class IdentityEndpoints
         }).RequireAuthorization();
 
         app.MapChannelMfa();
+        app.MapChannelAccountAccess();
 
         var admin = app.MapGroup("/api/v1/admin/users").RequireAuthorization(IdentityRules.ManageUsers);
         admin.AddEndpointFilter<CsrfFilter>();
@@ -85,10 +86,22 @@ public static class IdentityEndpoints
             if (number < 1 || number > 1000000 || size is < 1 or > 100 || (search?.Length > 100 || search?.Any(char.IsControl) == true) || (status is not null && status is not ("active" or "disabled" or "pending")) || (level is not null && !IdentityRules.Levels.Contains(level))) return Problem("validation_error", 400);
             return Results.Ok(await service.ListUsersAsync(search, status, level, number, size, token));
         });
+        admin.MapGet("/audit", async (DateTimeOffset? fromUtc, DateTimeOffset? toUtc, string? action, Guid? userId, int? page, int? pageSize, IIdentityService service, CancellationToken token) =>
+        {
+            var number = page ?? 1;
+            var size = pageSize ?? 20;
+            if (!IdentityRules.ValidAuditQuery(fromUtc, toUtc, action, number, size)) return Problem("validation_error", 400);
+            return Results.Ok(await service.ListAuditAsync(fromUtc, toUtc, action, userId, number, size, token));
+        });
         admin.MapGet("/{id:guid}", async (Guid id, IIdentityService service, CancellationToken token) =>
         {
             var user = await service.GetUserAsync(id, token);
             return user is null ? Problem("not_found", 404) : Results.Ok(user);
+        });
+        admin.MapPut("/{id:guid}/permissions", async (Guid id, AdminPermissionsRequest request, HttpContext context, IIdentityService service, CancellationToken token) =>
+        {
+            var result = await service.UpdatePermissionsAsync(UserId(context), id, request, token);
+            return result.Succeeded ? Results.Ok(result.Value) : Failure(result);
         });
         admin.MapPatch("/{id:guid}", async (Guid id, AdminUserRequest request, HttpContext context, IIdentityService service, CancellationToken token) =>
         {

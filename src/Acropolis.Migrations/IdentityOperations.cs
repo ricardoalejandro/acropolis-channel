@@ -31,20 +31,113 @@ public sealed class IdentityOperations(IdentityDbContext database, TimeProvider 
         await database.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
     }
-    public async Task InvalidateRecoveryAsync(CancellationToken token)
+    public Task BootstrapOwnerAsync(string email, string? designatedEmail, CancellationToken token) => SetOwnerAsync(email, designatedEmail, false, token);
+
+    public Task RecoverOwnerAsync(string email, string? designatedEmail, bool maintenance, CancellationToken token)
     {
+        if (!maintenance) throw new InvalidOperationException("Owner recovery requires explicit maintenance authorization.");
+        return SetOwnerAsync(email, designatedEmail, true, token);
+    }
+
+    private async Task SetOwnerAsync(string email, string? designatedEmail, bool recovering, CancellationToken token)
+    {
+        if (!IdentityRules.ValidEmail(email) || !IdentityRules.ValidEmail(designatedEmail)
+            || !string.Equals(email.Trim(), designatedEmail!.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The explicit account must match the private owner designation.");
+        var normalized = email.Trim().ToUpperInvariant();
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({IdentityService.AdministrationLockKey})", token);
+        var userId = await database.Users.AsNoTracking().Where(x => x.NormalizedEmail == normalized).Select(x => (Guid?)x.Id).SingleOrDefaultAsync(token);
+        if (userId is null) throw new InvalidOperationException("The designated account must already be registered, confirmed and active.");
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({IdentityService.UserLock(userId.Value)})", token);
+        var user = await database.Users.SingleAsync(x => x.Id == userId.Value, token);
+        if (!user.EmailConfirmed || user.IsDisabled || user.RevalidationRequired || string.IsNullOrWhiteSpace(user.PasswordHash))
+            throw new InvalidOperationException("The designated account must already be registered, confirmed and active.");
+        if (await database.Users.AnyAsync(x => x.IsOwner && x.Id != user.Id, token))
+            throw new InvalidOperationException("A different protected owner is already configured.");
+        if (user.IsOwner) return;
+        var state = await database.Bootstrap.SingleOrDefaultAsync(x => x.Id == 2, token);
+        if (!recovering && state?.Completed == true)
+            throw new InvalidOperationException("Owner bootstrap is complete; use explicit recovery after credential revalidation.");
+        if (recovering && (state?.Completed != true || user.RevalidatedUtc is null))
+            throw new InvalidOperationException("Owner recovery requires a previous designation and fresh account revalidation.");
+        user.IsOwner = true;
+        user.UsersManage = true;
+        user.ContentManage = true;
+        user.SubscriptionsManage = true;
+        user.SecurityVersion = Guid.NewGuid().ToString("N");
+        user.ConcurrencyStamp = Guid.NewGuid().ToString("N");
+        await database.Sessions.Where(x => x.UserId == user.Id).ExecuteDeleteAsync(token);
         var now = clock.GetUtcNow();
-        await database.Sessions.ExecuteDeleteAsync(token);
-        await database.MfaChallenges.ExecuteDeleteAsync(token);
-        await database.MfaProofs.ExecuteDeleteAsync(token);
-        await database.MfaRecoveryCodes.ExecuteDeleteAsync(token);
-        await database.MfaCredentials.ExecuteDeleteAsync(token);
-        await database.Flows.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.ConsumedUtc, now), token);
-        await database.Outbox.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.Payload, ""), token);
-        await database.Users.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.RevalidationRequired, true).SetProperty(x => x.TwoFactorEnabled, false), token);
+        await database.Flows.Where(x => x.UserId == user.Id && x.ConsumedUtc == null).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.ConsumedUtc, now), token);
+        await database.Outbox.Where(x => x.UserId == user.Id && (x.Status == "pending" || x.Status == "sending")).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.Payload, ""), token);
+        if (state is null) database.Bootstrap.Add(new BootstrapState { Id = 2, Completed = true });
+        else state.Completed = true;
+        database.Audit.Add(new UserAudit { Id = Guid.NewGuid(), ActorId = Guid.Empty, UserId = user.Id, Action = recovering ? "owner.recovered" : "owner.bootstrap", Changes = "Protected ownership and independent permissions granted by explicit operator CLI.", CreatedUtc = now });
+        await database.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
+    }
+
+    public async Task InvalidateRecoveryAsync(CancellationToken token)
+    {
+        var previousTimeout = database.Database.GetCommandTimeout();
+        database.Database.SetCommandTimeout(120);
+        try
+        {
+            await using var transaction = await database.Database.BeginTransactionAsync(token);
+            await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({IdentityService.AdministrationLockKey})", token);
+            var now = clock.GetUtcNow();
+            await database.Sessions.ExecuteDeleteAsync(token);
+            await database.MfaChallenges.ExecuteDeleteAsync(token);
+            await database.MfaProofs.ExecuteDeleteAsync(token);
+            await database.MfaRecoveryCodes.ExecuteDeleteAsync(token);
+            await database.MfaCredentials.ExecuteDeleteAsync(token);
+            await database.Flows.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.ConsumedUtc, now), token);
+            await database.Outbox.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.Payload, ""), token);
+            // The web must remain stopped for maintenance. Keep every batch under the same
+            // transaction and administration lock; audit only rows changed by that batch.
+            Guid? after = null;
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                var ids = after is null
+                    ? await database.Database.SqlQueryRaw<Guid>("""
+                        SELECT "Id" AS "Value" FROM identity."Users"
+                        WHERE NOT "RevalidationRequired" OR "TwoFactorEnabled" OR "IsOwner"
+                            OR "UsersManage" OR "ContentManage" OR "SubscriptionsManage"
+                        ORDER BY "Id" LIMIT 1000 FOR UPDATE
+                        """).ToArrayAsync(token)
+                    : await database.Database.SqlQuery<Guid>($"""
+                        SELECT "Id" AS "Value" FROM identity."Users"
+                        WHERE "Id" > {after.Value} AND (NOT "RevalidationRequired" OR "TwoFactorEnabled" OR "IsOwner"
+                            OR "UsersManage" OR "ContentManage" OR "SubscriptionsManage")
+                        ORDER BY "Id" LIMIT 1000 FOR UPDATE
+                        """).ToArrayAsync(token);
+                if (ids.Length == 0) break;
+                await database.Database.ExecuteSqlInterpolatedAsync($"""
+                    WITH invalidated_accounts AS (
+                        UPDATE identity."Users"
+                        SET "RevalidationRequired" = true, "TwoFactorEnabled" = false, "IsOwner" = false,
+                            "UsersManage" = false, "ContentManage" = false, "SubscriptionsManage" = false
+                        WHERE "Id" = ANY({ids}) AND (NOT "RevalidationRequired" OR "TwoFactorEnabled" OR "IsOwner"
+                            OR "UsersManage" OR "ContentManage" OR "SubscriptionsManage")
+                        RETURNING "Id"
+                    )
+                    INSERT INTO identity."Audit" ("Id", "ActorId", "UserId", "Action", "Changes", "CreatedUtc")
+                    SELECT gen_random_uuid(), {Guid.Empty}, "Id", 'account.recovery_invalidated',
+                        'Restored ownership, permissions, credentials and MFA quarantined.', {now}
+                    FROM invalidated_accounts
+                    """, token);
+                token.ThrowIfCancellationRequested();
+                // The cursor follows PostgreSQL UUID ordering, rather than Guid.CompareTo.
+                after = ids[^1];
+            }
+            await transaction.CommitAsync(token);
+        }
+        finally
+        {
+            database.Database.SetCommandTimeout(previousTimeout);
+        }
     }
     public async Task RevalidateAsync(string email, bool grantAdministrator, CancellationToken token)
     {
@@ -62,6 +155,8 @@ public sealed class IdentityOperations(IdentityDbContext database, TimeProvider 
         user.RevalidatedUtc = clock.GetUtcNow();
         user.UsersManage = grantAdministrator;
         user.ContentManage = false;
+        user.SubscriptionsManage = false;
+        user.IsOwner = false;
         user.IsDisabled = false;
         user.PasswordHash = null;
         user.AccessFailedCount = 0;
@@ -82,9 +177,13 @@ public sealed class IdentityOperations(IdentityDbContext database, TimeProvider 
         if (!IdentityRules.ValidEmail(email)) throw new InvalidOperationException("Invalid editorial account email.");
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({IdentityService.AdministrationLockKey})", token);
-        var user = await database.Users.FromSqlInterpolated($"SELECT * FROM identity.\"Users\" WHERE \"Email\"={email} FOR UPDATE").SingleOrDefaultAsync(token);
+        var userId = await database.Users.Where(x => x.Email == email).Select(x => (Guid?)x.Id).SingleOrDefaultAsync(token);
+        if (userId is null) throw new InvalidOperationException("The exact editorial account must be registered, confirmed and active.");
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({IdentityService.UserLock(userId.Value)})", token);
+        var user = await database.Users.FromSqlInterpolated($"SELECT * FROM identity.\"Users\" WHERE \"Id\"={userId.Value} AND \"Email\"={email} FOR UPDATE").SingleOrDefaultAsync(token);
         if (user is null || (granted && (!user.EmailConfirmed || user.IsDisabled || user.RevalidationRequired)))
             throw new InvalidOperationException("The exact editorial account must be registered, confirmed and active.");
+        if (user.IsOwner && !granted) throw new InvalidOperationException("Protected ownership cannot lose editorial authority.");
         if (user.ContentManage == granted) return;
         user.ContentManage = granted;
         user.SecurityVersion = Guid.NewGuid().ToString("N");
@@ -115,7 +214,7 @@ public sealed class IdentityOperations(IdentityDbContext database, TimeProvider 
     public async Task SeedQaAsync(int count, string password, CancellationToken token)
     {
         var connection = new NpgsqlConnectionStringBuilder(database.Database.GetConnectionString());
-        if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") != "Testing" || connection.Database is null || !System.Text.RegularExpressions.Regex.IsMatch(connection.Database, "^acropolis_test_[a-z0-9_]+$") || count is < 1 or > 100000 || !IdentityRules.ValidPassword(password))
+        if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") != "Testing" || connection.Database is null || !System.Text.RegularExpressions.Regex.IsMatch(connection.Database, @"\Aacropolis_test_[a-z0-9_]+\z") || count is < 1 or > 100000 || !IdentityRules.ValidPassword(password))
             throw new InvalidOperationException("QA seed is restricted to guarded test databases.");
         var hasher = new PasswordHasher<ChannelUser>();
         var hash = hasher.HashPassword(new ChannelUser(), password);

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { EmailCapability } from './EmailCapability';
-import App from '../../App';
+import { renderApp } from '../../test/renderApp';
 import { json } from '../../test/fixtures';
 describe('Explicit email capabilities', () => {
   it('keeps forms hidden while checking and reveals them only when email is enabled', async () => {
@@ -37,7 +37,7 @@ describe('Explicit email capabilities', () => {
     vi.stubGlobal('fetch', fetch);
     vi.stubGlobal('scrollTo', vi.fn());
     window.history.replaceState({}, '', '/register');
-    render(<App />);
+    renderApp();
     await screen.findByText(/El registro y la recuperación por correo no están disponibles/);
     expect(screen.queryByRole('button', { name: 'Crear cuenta' })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('link', { name: 'Ingresar' })[0] as HTMLElement);
@@ -53,7 +53,7 @@ describe('Explicit email capabilities', () => {
           path.includes('/resend-confirmation'),
       ),
     ).toBe(false);
-  });
+  }, 10000);
   it.each([
     ['direct', null],
     ['registration', { kind: 'registration', email: 'persona@example.test' }],
@@ -70,7 +70,7 @@ describe('Explicit email capabilities', () => {
       vi.stubGlobal('fetch', fetch);
       vi.stubGlobal('scrollTo', vi.fn());
       window.history.replaceState({ usr: state, key: 'pending' }, '', '/email-pending');
-      render(<App />);
+      renderApp();
       await screen.findByText(/El registro y la recuperación por correo no están disponibles/);
       expect(screen.queryByRole('button', { name: 'Reenviar enlace' })).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();

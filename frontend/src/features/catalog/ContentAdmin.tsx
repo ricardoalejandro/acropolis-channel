@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Link,
   useNavigate,
@@ -6,6 +6,13 @@ import {
   useSearchParams,
   type SetURLSearchParams,
 } from 'react-router-dom';
+import { hasControlCharacters } from '../../validation/plainText';
+import {
+  MAX_YOUTUBE_REFERENCE_LENGTH,
+  normalizeYouTubeReference,
+} from '../../validation/youTubeReference';
+import { CollectionEditor } from './CollectionEditor';
+import { useUnsavedChanges } from '../../components/useUnsavedChanges';
 import { ApiError } from '../../api/identity';
 import {
   catalog,
@@ -73,12 +80,12 @@ function ContentAdminListView({
     <div className="workspace catalog-admin">
       <div className="catalog-admin-heading">
         <div className="page-heading">
-          <p className="eyebrow">ADMINISTRACIÓN EDITORIAL</p>
-          <h1>Ideas para compartir.</h1>
+          <p className="eyebrow">Administración editorial</p>
+          <h1>Contenidos</h1>
           <p className="lead">Crea, revisa y publica el catálogo de Acrópolis Channel.</p>
         </div>
         <Link className="button button-small" to="/admin/content/new">
-          Crear contenido <span aria-hidden="true">↗</span>
+          Crear contenido
         </Link>
       </div>
       <section className="surface">
@@ -143,7 +150,7 @@ function ContentAdminListView({
                               to={'/admin/content/' + encodeURIComponent(item.id)}
                               aria-label={'Editar contenido ' + item.title}
                             >
-                              Editar ↗
+                              Editar
                             </Link>
                           </td>
                         </tr>
@@ -206,7 +213,21 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
     body: item?.body ?? '',
     coverAsset: item?.coverAsset ?? null,
     durationSeconds: item?.durationSeconds ?? null,
+    author: item?.author ?? null,
+    tags: item?.tags ?? [],
+    workText: item?.workText ?? null,
+    youTubeId: item?.youTubeId ?? null,
+    collectionKind: item?.collectionKind ?? null,
+    itemIds: item?.itemIds ?? [],
   });
+  const [tagsText, setTagsText] = useState(item?.tags?.join(', ') ?? '');
+  const [baseline, setBaseline] = useState(
+    JSON.stringify({
+      fields,
+      duration: item?.durationSeconds?.toString() ?? '',
+      tagsText: item?.tags?.join(', ') ?? '',
+    }),
+  );
   const [duration, setDuration] = useState(item?.durationSeconds?.toString() ?? '');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
@@ -214,6 +235,16 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState('');
   const [pendingStatus, setPendingStatus] = useState<ContentStatus | null>(null);
+  const permitNavigation = useUnsavedChanges(
+    JSON.stringify({ fields, duration, tagsText }) !== baseline,
+  );
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   function update(name: keyof ContentFields, value: string | null) {
     setFields((previous) => ({ ...previous, [name]: value }));
     setSaved('');
@@ -221,6 +252,11 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
   async function save(status: ContentStatus) {
     if (busy || conflict) return;
     const next: Record<string, string> = {};
+    const audiovisual = ['documentales', 'videos', 'podcast', 'charlas-online'].includes(
+      fields.category,
+    );
+    const youTubeInput = fields.youTubeId ?? '';
+    const youTubeId = normalizeYouTubeReference(youTubeInput);
     const body: ContentFields = {
       ...fields,
       title: fields.title.trim(),
@@ -228,6 +264,17 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
       summary: fields.summary.trim(),
       body: fields.body.trim(),
       durationSeconds: duration ? Number(duration) : null,
+      author: fields.author?.trim() || null,
+      tags: tagsText
+        ? tagsText
+            .split(',')
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+        : [],
+      workText: fields.category === 'lecturas' ? fields.workText?.trim() || null : null,
+      youTubeId: audiovisual ? youTubeId : null,
+      collectionKind: fields.category === 'cursos' ? (fields.collectionKind ?? null) : null,
+      itemIds: fields.category === 'cursos' && fields.collectionKind ? (fields.itemIds ?? []) : [],
     };
     if (body.title.length < 2 || body.title.length > 180)
       next['title'] = 'Usa entre 2 y 180 caracteres.';
@@ -249,6 +296,31 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
           : 'Usa hasta 50.000 caracteres.';
     if (duration && (!/^\d+$/.test(duration) || Number(duration) < 1 || Number(duration) > 86400))
       next['durationSeconds'] = 'Usa un número entero entre 1 y 86.400 segundos.';
+    if (body.author && (body.author.length > 180 || hasControlCharacters(body.author)))
+      next['author'] = 'Usa hasta 180 caracteres sin controles.';
+    if (
+      (body.tags?.length ?? 0) > 12 ||
+      body.tags?.some((tag) => tag.length > 40 || hasControlCharacters(tag)) ||
+      new Set(body.tags?.map((tag) => tag.toLocaleLowerCase())).size !== body.tags?.length
+    )
+      next['tags'] =
+        'Usa hasta 12 etiquetas distintas de hasta 40 caracteres, separadas por comas.';
+    if (
+      body.workText &&
+      (body.workText.length > 500000 || hasControlCharacters(body.workText, true))
+    )
+      next['workText'] = 'Usa texto plano de hasta 500.000 caracteres sin controles.';
+    if (audiovisual && youTubeInput.trim() && !youTubeId)
+      next['youTubeId'] =
+        'Pega un enlace HTTPS válido de YouTube o su identificador de 11 caracteres.';
+    if (
+      body.category === 'cursos' &&
+      !body.collectionKind &&
+      !(current?.category === 'cursos' && !current.collectionKind)
+    )
+      next['collectionKind'] = 'Selecciona curso o programa.';
+    if (status === 'published' && body.collectionKind && !body.itemIds?.length)
+      next['itemIds'] = 'Añade al menos un elemento publicado antes de publicar.';
     setErrors(next);
     setError('');
     setSaved('');
@@ -262,8 +334,9 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
       const updated = current
         ? await catalog.update(current.id, body, status, current.version)
         : await catalog.create(body);
+      if (!alive.current) return;
       setCurrent(updated);
-      setFields({
+      const savedFields: ContentFields = {
         title: updated.title,
         slug: updated.slug,
         summary: updated.summary,
@@ -271,8 +344,21 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
         category: updated.category,
         coverAsset: updated.coverAsset,
         durationSeconds: updated.durationSeconds,
-      });
-      setDuration(updated.durationSeconds?.toString() ?? '');
+        author: updated.author ?? null,
+        tags: updated.tags ?? [],
+        workText: updated.workText ?? null,
+        youTubeId: updated.youTubeId ?? null,
+        collectionKind: updated.collectionKind ?? null,
+        itemIds: updated.itemIds ?? [],
+      };
+      const savedDuration = updated.durationSeconds?.toString() ?? '';
+      const savedTags = updated.tags?.join(', ') ?? '';
+      setFields(savedFields);
+      setDuration(savedDuration);
+      setTagsText(savedTags);
+      setBaseline(
+        JSON.stringify({ fields: savedFields, duration: savedDuration, tagsText: savedTags }),
+      );
       setSaved(
         updated.status === 'published'
           ? 'Contenido publicado.'
@@ -280,8 +366,12 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
             ? 'Contenido archivado.'
             : 'Borrador guardado.',
       );
-      if (!current) navigate('/admin/content/' + encodeURIComponent(updated.id), { replace: true });
+      if (!current) {
+        permitNavigation();
+        navigate('/admin/content/' + encodeURIComponent(updated.id), { replace: true });
+      }
     } catch (failure) {
+      if (!alive.current) return;
       setError(catalogMessage(failure));
       if (failure instanceof ApiError) {
         setErrors(
@@ -295,7 +385,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
         setConflict(failure.code === 'concurrency_conflict');
       }
     } finally {
-      setBusy(false);
+      if (alive.current) setBusy(false);
     }
   }
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -317,11 +407,11 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
   const form = (
     <>
       <Link className="text-link back-link" to="/admin/content">
-        ← Gestionar contenidos
+        Gestionar contenidos
       </Link>
       <div className="page-heading">
-        <p className="eyebrow">ADMINISTRACIÓN EDITORIAL · {statuses[current?.status ?? 'draft']}</p>
-        <h1>{current ? 'Dar forma a una idea.' : 'Una nueva idea.'}</h1>
+        <p className="eyebrow">Administración editorial · {statuses[current?.status ?? 'draft']}</p>
+        <h1>{current ? 'Editar contenido' : 'Crear contenido'}</h1>
         <p className="lead">
           Prepara una ficha clara, útil y cuidada. Sólo los contenidos publicados son públicos.
         </p>
@@ -400,7 +490,25 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               aria-invalid={Boolean(errors['category'])}
               aria-describedby={described('category')}
               value={fields.category}
-              onChange={(event) => update('category', event.target.value as CategoryId)}
+              onChange={(event) => {
+                const category = event.target.value as CategoryId;
+                if (
+                  (fields.workText || fields.youTubeId || fields.itemIds?.length) &&
+                  !window.confirm(
+                    'Cambiar de categoría descartará la obra y los elementos seleccionados. ¿Continuar?',
+                  )
+                )
+                  return;
+                setFields((previous) => ({
+                  ...previous,
+                  category,
+                  workText: null,
+                  youTubeId: null,
+                  collectionKind: category === 'cursos' ? 'course' : null,
+                  itemIds: [],
+                }));
+                setSaved('');
+              }}
               disabled={busy}
             >
               {categories.map((category) => (
@@ -410,6 +518,34 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               ))}
             </select>
             {feedback('category')}
+          </div>
+          <div className="field">
+            <label htmlFor="editor-author">Autor o institución</label>
+            <input
+              id="editor-author"
+              maxLength={180}
+              value={fields.author ?? ''}
+              onChange={(event) => update('author', event.target.value || null)}
+              disabled={busy}
+              aria-invalid={Boolean(errors['author'])}
+              aria-describedby={described('author', true)}
+            />
+            {feedback('author', 'Opcional. Usa la atribución real de la obra.')}
+          </div>
+          <div className="field">
+            <label htmlFor="editor-tags">Etiquetas</label>
+            <input
+              id="editor-tags"
+              value={tagsText}
+              onChange={(event) => {
+                setTagsText(event.target.value);
+                setSaved('');
+              }}
+              disabled={busy}
+              aria-invalid={Boolean(errors['tags'])}
+              aria-describedby={described('tags', true)}
+            />
+            {feedback('tags', 'Hasta 12 etiquetas distintas, separadas por comas.')}
           </div>
           <div className="field">
             <label htmlFor="editor-cover">Imagen editorial</label>
@@ -480,7 +616,100 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               'Texto editorial público, sin HTML. No incluyas lecturas completas ni material restringido.',
             )}
           </div>
+          {fields.category === 'lecturas' && (
+            <div className="field editor-wide">
+              <label htmlFor="editor-workText">Lectura completa</label>
+              <textarea
+                id="editor-workText"
+                rows={16}
+                maxLength={500000}
+                value={fields.workText ?? ''}
+                onChange={(event) => update('workText', event.target.value || null)}
+                disabled={busy}
+                aria-invalid={Boolean(errors['workText'])}
+                aria-describedby={described('workText', true)}
+              />
+              {feedback(
+                'workText',
+                'Texto plano protegido por suscripción. Conserva los párrafos. No admite formato HTML. Hasta 500.000 caracteres.',
+              )}
+            </div>
+          )}
+          {['documentales', 'videos', 'podcast', 'charlas-online'].includes(fields.category) && (
+            <div className="field editor-wide">
+              <label htmlFor="editor-youTubeId">Enlace o identificador de YouTube</label>
+              <input
+                id="editor-youTubeId"
+                maxLength={MAX_YOUTUBE_REFERENCE_LENGTH}
+                autoComplete="off"
+                spellCheck={false}
+                value={fields.youTubeId ?? ''}
+                onChange={(event) => update('youTubeId', event.target.value || null)}
+                disabled={busy}
+                aria-invalid={Boolean(errors['youTubeId'])}
+                aria-describedby={described('youTubeId', true)}
+              />
+              {feedback(
+                'youTubeId',
+                'Pega el enlace del vídeo de YouTube. También puedes usar su identificador.',
+              )}
+            </div>
+          )}
+          {fields.category === 'cursos' && (
+            <div className="field editor-wide">
+              <label htmlFor="editor-collectionKind">Tipo de colección</label>
+              <select
+                id="editor-collectionKind"
+                value={fields.collectionKind ?? ''}
+                disabled={busy}
+                aria-invalid={Boolean(errors['collectionKind'])}
+                aria-describedby={described('collectionKind')}
+                onChange={(event) => {
+                  if (
+                    fields.itemIds?.length &&
+                    !window.confirm(
+                      'Cambiar de tipo descartará los elementos seleccionados. ¿Continuar?',
+                    )
+                  )
+                    return;
+                  setFields((previous) => ({
+                    ...previous,
+                    collectionKind: event.target.value as 'course' | 'program',
+                    itemIds: [],
+                  }));
+                  setSaved('');
+                }}
+              >
+                <option value="" disabled>
+                  Seleccionar tipo
+                </option>
+                <option value="course">Curso: obras ordenadas</option>
+                <option value="program">Programa: cursos ordenados</option>
+              </select>
+              {feedback('collectionKind')}
+              {fields.collectionKind && (
+                <CollectionEditor
+                  kind={fields.collectionKind}
+                  value={fields.itemIds ?? []}
+                  disabled={busy}
+                  onChange={(itemIds) => {
+                    setFields((previous) => ({ ...previous, itemIds }));
+                    setSaved('');
+                  }}
+                />
+              )}
+              {feedback('itemIds')}
+            </div>
+          )}
         </div>
+        {!fields.collectionKind &&
+          !(fields.category === 'lecturas' ? fields.workText : fields.youTubeId) && (
+            <p className="form-notice">
+              {fields.category === 'cursos'
+                ? 'Esta ficha heredada puede conservarse publicada. Organízala como curso o programa y añade sus elementos para ofrecer una colección disponible.'
+                : 'La ficha puede publicarse, pero la obra completa todavía no estará disponible. Añade la lectura o el enlace de YouTube cuando dispongas del material autorizado.'}
+            </p>
+          )}
         {fields.coverAsset && (
           <div className="editor-cover-review">
             <img
@@ -566,9 +795,18 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
             </button>
           </div>
         )}
+        {current && (
+          <Link
+            className="text-link editor-public-link"
+            to={'/admin/audit?module=content&contentId=' + encodeURIComponent(current.id)}
+          >
+            Historial editorial
+          </Link>
+        )}
+        {current && <Link className="text-link editor-public-link" to={'/admin/content/' + current.id + '/topics'}>Gestionar temas del contenido</Link>}
         {current?.status === 'published' && (
           <Link className="text-link editor-public-link" to={'/content/' + current.slug}>
-            Ver ficha pública ↗
+            Ver ficha pública
           </Link>
         )}
       </form>

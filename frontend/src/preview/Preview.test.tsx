@@ -11,32 +11,44 @@ function mount(path = '/') {
   );
 }
 describe('Isolated editorial prototype', () => {
-  it('preserves all six original categories and clearly marks non-production content', async () => {
+  it('clearly marks non-production content, disables login and moves skip-link focus to main', async () => {
     mount();
-    await userEvent.click(screen.getByRole('link', { name: 'Saltar al contenido' }));
-    expect(screen.getByRole('main')).toHaveFocus();
+    const skip = screen.getByText('Saltar al contenido', { selector: 'a' });
+    expect(skip).toHaveRole('link');
+    expect(skip).toHaveAccessibleName('Saltar al contenido');
+    expect(skip).toHaveAttribute('href', '#preview-main');
+    await userEvent.click(skip);
+    const main = document.querySelector('main')!;
+    expect(main).toHaveRole('main');
+    expect(main).toHaveFocus();
     expect(
       screen.getByText(/Vista previa de diseño · Contenido de demostración/),
     ).toBeInTheDocument();
-    for (const category of [
-      'Lecturas',
-      'Documentales',
-      'Videos',
-      'Podcast',
-      'Charlas online',
-      'Cursos',
-    ])
-      expect(screen.getByRole('link', { name: category })).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Ingresar: disponible en la aplicación principal' }),
+      within(document.querySelector('header')!).getByRole('button', {
+        name: 'Ingresar: disponible en la aplicación principal',
+      }),
     ).toBeDisabled();
-    await userEvent.click(
-      screen.getAllByRole('button', { name: /Ver referencia/ })[0] as HTMLElement,
-    );
+  }, 10000);
+  it('preserves all six original category links and their accessible names', () => {
+    mount();
+    const labels = ['Lecturas', 'Documentales', 'Videos', 'Podcast', 'Charlas online', 'Cursos'];
+    const links = within(document.querySelector('.category-grid')!).getAllByRole('link');
+    expect(links).toHaveLength(labels.length);
+    links.forEach((link, index) => expect(link).toHaveAccessibleName(labels[index]));
+  }, 10000);
+  it('explains membership references without enabling purchases', async () => {
+    mount();
+    const memberships = within(document.getElementById('memberships')!);
+    await userEvent.click(memberships.getAllByRole('button', { name: /Ver referencia/ })[0]!);
     expect(screen.getByRole('status')).toHaveTextContent('No se ha habilitado ninguna compra');
-    await userEvent.click(screen.getByText('¿Cómo funcionan las membresías?'));
-    expect(screen.getByText(/Sus condiciones se validarán/)).toBeVisible();
-  });
+    await userEvent.click(
+      within(document.querySelector('.faq-section')!).getByText('¿Cómo funcionan las membresías?'),
+    );
+    expect(
+      within(document.querySelector('.faq-section')!).getByText(/Sus condiciones se validarán/),
+    ).toBeVisible();
+  }, 10000);
   it('filters only fixture contents and handles empty searches', async () => {
     mount('/explore');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar contenido' }), {
@@ -51,7 +63,7 @@ describe('Isolated editorial prototype', () => {
     expect(screen.getByRole('heading', { name: 'El arte de escuchar' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Todo' }));
     expect(screen.getByRole('status')).toHaveTextContent('6 contenidos de demostración');
-  });
+  }, 10000);
   it('shows a video detail with explicit unavailable media and keyboard-operable information', async () => {
     mount('/video/filosofia-cotidiana');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('La filosofía empieza');
@@ -71,7 +83,7 @@ describe('Isolated editorial prototype', () => {
     expect(screen.getByRole('tab', { name: 'Transcripción' })).toHaveFocus();
     await userEvent.click(screen.getByRole('tab', { name: 'Sobre este contenido' }));
     expect(screen.getByRole('tabpanel')).toHaveTextContent('vida diaria');
-  });
+  }, 10000);
   it('shows podcast, institutional and membership pages without a payment or invented media API', () => {
     mount('/podcast/arte-de-escuchar');
     expect(

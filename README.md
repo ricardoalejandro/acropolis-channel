@@ -1,6 +1,6 @@
 # Acrópolis Channel
 
-Monolito modular con ASP.NET Core / .NET 10 LTS, React 19, TypeScript, Vite y PostgreSQL 18. El código y las validaciones se trabajan en el VPS; la distribución multimedia futura estará en AWS.
+Monolito modular con ASP.NET Core / .NET 10 LTS, React 19, TypeScript, Vite y PostgreSQL 18. El código y las validaciones se trabajan en el VPS; el piloto reproduce YouTube oficial y sirve lecturas completas. La integración de archivos en AWS se incorporará después.
 
 ## Trabajo y alcance
 
@@ -12,12 +12,18 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps
 
 La fase de identidad incorpora registro con confirmación de correo, acceso, recuperación y cambio de contraseña, perfil y administración de usuarios. Los niveles institucionales pueden coexistir y se gestionan por separado del permiso administrativo `Users.Manage`. El correo puede permanecer deshabilitado explícitamente mientras su integración está pospuesta. Al habilitarlo utiliza SMTP autenticado y TLS, configurado privadamente.
 
-La portada y el catálogo editorial real conservan la dirección visual de Acrópolis Channel Perú: seis categorías, búsqueda, filtros, paginación y fichas públicas. El panel permite borradores, publicación, retirada y archivo con el permiso separado Content.Manage. Las fichas contienen sinopsis públicas; no obras completas ni multimedia restringida. MFA con aplicación autenticadora es obligatorio para administrar usuarios o contenidos. Reproducción, pagos, suscripciones, migración WordPress y recursos AWS siguen pendientes de sus contratos e integraciones; las pantallas correspondientes del prototipo siguen siendo demostrativas.
+La mediateca tiene seis categorías, búsqueda, filtros, paginación y fichas públicas, con una dirección visual propia documentada y fuentes locales. Las obras completas están separadas de sus sinopsis y requieren cuenta activa confirmada y suscripción gratuita explícita. La implementación WIP ofrece un piloto gratuito sin vencimiento. Este piloto no sustituye los tipos, fechas y renovaciones del documento funcional, todavía pendientes de confirmar. YouTube conserva sus controles y la disponibilidad de su origen público; no se presenta como multimedia privada exclusiva.
+
+En la gestión editorial se podrá pegar un enlace HTTPS de YouTube o su identificador de once caracteres. La guía de [uso del catálogo](docs/catalog-operations.md#añadir-un-vídeo) explica los formatos admitidos, cómo guardar el borrador y publicar. La reproducción depende de la disponibilidad de YouTube; AWS será una modalidad futura, sin recursos creados en esta preparación.
+
+El backoffice tiene navegación propia y permisos separados Users.Manage, Content.Manage y Subscriptions.Manage, todos con MFA. El propietario protegido se designa mediante un CLI auditado y delega autoridad; los demás gestores no pueden suspenderlo ni quitarle permisos. Se gestionan cuentas/niveles, contenidos/publicación, cursos/programas ordenados, suscripciones y auditoría de sólo lectura. Los pagos quedan para después. La facturación electrónica solicitada sigue pendiente de identificar e integrar el mecanismo existente; la gratuidad del piloto no la excluye automáticamente. La integración AWS real y la migración WordPress siguen pendientes.
 
 - [Arquitectura y límites](docs/architecture.md).
 - [Diseño, estructura y procedencia de imágenes](docs/design.md).
 - [Identidad: correo, administración y recuperación](docs/identity-operations.md).
 - [Catálogo editorial y pendientes funcionales](docs/catalog-operations.md).
+- [Suscripción gratuita y consumo](docs/subscriptions-operations.md).
+- [Alcance de la entrega](docs/modernization-scope.md).
 - [MFA y recuperación](docs/mfa-operations.md).
 - [Validación y criterios de calidad](docs/quality.md).
 
@@ -31,12 +37,15 @@ React y API comparten origen. Las API desconocidas devuelven 404, sin ocultarse 
 | `/api/v1/identity/*` | Registro, confirmación, sesión, recuperación y perfil |
 | `/api/v1/catalog/categories` | Seis categorías oficiales |
 | `/api/v1/catalog/content` | Listado paginado y fichas de contenidos publicados |
-| `/api/v1/admin/content` | Gestión editorial con Content.Manage y MFA |
+| `/api/v1/admin/content` | Gestión editorial y auditoría con Content.Manage y MFA |
+| `/api/v1/consumption/content/{slug}` | Obra publicada para cuenta confirmada activa y suscripción activa |
+| `/api/v1/subscriptions/*` | Estado, activación gratuita explícita y cancelación propias |
+| `/api/v1/admin/subscriptions` | Administración y auditoría con Subscriptions.Manage y MFA |
 | `/api/v1/identity/capabilities` | Disponibilidad explícita del correo, sin secretos |
 | `/api/v1/admin/users` | Búsqueda, filtros y gestión paginada con autorización |
 | `/api/v1/greeting` | Contrato de diagnóstico `{"message":"Hola mundo"}` |
 | `/health` | Liveness sin dependencia de PostgreSQL |
-| `/health/ready` | Conexión y migraciones esperadas de Platform, Identity y Catalog |
+| `/health/ready` | Conexión y migraciones esperadas de Platform, Identity, Catalog y Subscriptions |
 
 El servidor guarda sesiones revocables y aplica un máximo absoluto de ocho horas. Los enlaces de correo se consumen una sola vez; registro y recuperación evitan revelar si una cuenta existe. La administración aplica control de concurrencia y auditoría. Los niveles no conceden permisos administrativos por sí mismos.
 
@@ -80,8 +89,8 @@ Verificar DNS público, certificado válido, redirección HTTP, interfaz, API y,
 
 ## Respaldo y capacidad
 
-Los manifiestos se guardan en `.local/deployments/` y las copias en `.local/backups/`. Una copia completa incluye base, key ring, protector y configuración privada. Tras restaurar una base antigua, poner cuentas en mantenimiento y revalidar su seguridad según el procedimiento; nunca reabrir sesiones o credenciales revocadas por restaurar un backup.
+Los manifiestos se guardan en `.local/deployments/` y las copias en `.local/backups/`. Una copia completa incluye base, key ring, protector y configuración privada. La recuperación de una imagen anterior exige comprobar su ID y readiness frente al esquema actual, incluso si la migración falló parcialmente. Sólo entonces se registra `failed_recovery_applied`; si falla la comprobación, queda `recovery_incomplete`, se intenta detener sólo web y se retira el puntero activo. Los backups y la última publicación verificada se conservan; no se ejecutan migraciones descendentes ni restauraciones automáticas. La configuración privada preparada se conserva y el runtime recuperado usa su snapshot anterior por separado. Tras restaurar una base antigua, poner cuentas en mantenimiento y revalidar su seguridad según el procedimiento; nunca reabrir sesiones o credenciales revocadas por restaurar un backup.
 
 `restore-db-test.sh` sólo admite destinos QA `acropolis_test_*`. No borrar volúmenes productivos ni restaurar producción como operación rutinaria.
 
-El objetivo del producto es 100.000 cuentas y alrededor de 1.000 usuarios simultáneos. Sembrar 100.000 registros y probar concurrencia acotada permite detectar problemas iniciales, pero no acredita todavía esa capacidad operativa.
+El objetivo del producto es soportar 100.000 cuentas y alrededor de 1.000 usuarios simultáneos. La aplicación conserva las cuentas reales existentes y no precarga usuarios. Las 100.000 cuentas sintéticas se crean únicamente en bases temporales de QA y se eliminan al cerrar las pruebas; esa carga acotada permite detectar problemas iniciales, pero no acredita todavía toda la capacidad operativa.

@@ -33,7 +33,7 @@ public sealed class IdentityFixture : IAsyncLifetime
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     public async Task ResetAsync(CancellationToken token)
     {
-        await ExecuteAsync("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app; ALTER DEFAULT PRIVILEGES FOR ROLE acropolis_migrator IN SCHEMA platform GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO acropolis_app", token);
+        await ExecuteAsync("DROP SCHEMA IF EXISTS subscriptions CASCADE; DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS platform CASCADE; CREATE SCHEMA platform AUTHORIZATION acropolis_migrator; GRANT USAGE ON SCHEMA platform TO acropolis_app; ALTER DEFAULT PRIVILEGES FOR ROLE acropolis_migrator IN SCHEMA platform GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO acropolis_app", token);
         await new ChannelMigrationRunner().RunAsync(MigrationConnection, token);
     }
     public IdentityDbContext Context(bool migration = false)

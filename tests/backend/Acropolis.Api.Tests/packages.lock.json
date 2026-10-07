@@ -524,6 +524,8 @@
           "Acropolis.Identity.Infrastructure": "[1.0.0, )",
           "Acropolis.Platform.Application": "[1.0.0, )",
           "Acropolis.Platform.Infrastructure": "[1.0.0, )",
+          "Acropolis.Subscriptions.Application": "[1.0.0, )",
+          "Acropolis.Subscriptions.Infrastructure": "[1.0.0, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.12, )"
         }
       },
@@ -559,6 +561,17 @@
           "Microsoft.EntityFrameworkCore": "[10.0.12, )",
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.12, )",
           "Npgsql": "[10.0.3, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "acropolis.subscriptions.application": {
+        "type": "Project"
+      },
+      "acropolis.subscriptions.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "Acropolis.Identity.Application": "[1.0.0, )",
+          "Acropolis.Subscriptions.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

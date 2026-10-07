@@ -45,19 +45,6 @@ export function AccountLayout({
 }) {
   return (
     <section className="account-layout">
-      <aside className="account-editorial" aria-label="Acrópolis Channel">
-        <span className="editorial-index">APRENDER A VIVIR</span>
-        <div>
-          <p className="eyebrow">Filosofía para el día a día</p>
-          <h2>
-            La sabiduría <br />
-            empieza con <br />
-            <em>una pregunta.</em>
-          </h2>
-          <p>Un espacio para descubrir ideas, ampliar tu mirada y conectar con lo esencial.</p>
-        </div>
-        <span className="editorial-foot">Nueva Acrópolis · Perú</span>
-      </aside>
       <div className="account-panel">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
@@ -70,13 +57,20 @@ export function AccountLayout({
 export function Login() {
   const { user, loading, setUser } = useSession();
   const navigate = useNavigate();
+  const location = useLocation();
+  const routeState = location.state as { returnTo?: unknown } | null;
+  const returnTo =
+    typeof routeState?.returnTo === 'string' &&
+    /^(?:\/content\/[a-z0-9-]+|\/profile\/subscription)$/.test(routeState.returnTo)
+      ? routeState.returnTo
+      : '/profile';
   const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
   const [loginNotice, setLoginNotice] = useState('');
-  if (!loading && user) return <Navigate to="/profile" replace />;
+  if (!loading && user) return <Navigate to={returnTo} replace />;
   if (challenge)
     return (
       <AccountLayout
-        eyebrow="PROTEGE TU ACCESO"
+        eyebrow="Verificación de acceso"
         title="Confirma que eres tú."
         description="Completa la verificación en dos pasos para continuar."
       >
@@ -85,7 +79,7 @@ export function Login() {
           authenticated={(value) => {
             setChallenge(null);
             setUser(value);
-            navigate('/profile', { replace: true });
+            navigate(returnTo, { replace: true });
           }}
           cancel={(notice) => {
             setChallenge(null);
@@ -97,7 +91,7 @@ export function Login() {
   return (
     <AccountLayout
       eyebrow="Tu espacio"
-      title="Qué bueno verte."
+      title="Ingresar"
       description="Ingresa para continuar en Acrópolis Channel."
     >
       {loginNotice && (
@@ -117,7 +111,7 @@ export function Login() {
           if ('mfaRequired' in result) setChallenge(result);
           else {
             setUser(result);
-            navigate('/profile', { replace: true });
+            navigate(returnTo, { replace: true });
           }
         }}
       >
@@ -139,7 +133,7 @@ export function Register() {
   return (
     <AccountLayout
       eyebrow="Bienvenido a Acrópolis"
-      title="Abre tu mirada."
+      title="Crear cuenta"
       description="Crea tu cuenta y comienza a formar parte de este espacio."
     >
       <EmailCapability>
@@ -237,7 +231,7 @@ export function ForgotPassword() {
   return (
     <AccountLayout
       eyebrow="Recupera tu acceso"
-      title="Volvamos a empezar."
+      title="Recuperar contraseña"
       description="Escribe tu correo y te enviaremos las instrucciones para recuperar el acceso."
     >
       <EmailCapability>
@@ -273,7 +267,7 @@ export function EmailAction({ reset = false }: { reset?: boolean }) {
   return (
     <AccountLayout
       eyebrow={reset ? 'Recupera tu acceso' : 'Confirmación de correo'}
-      title={reset ? 'Una nueva contraseña.' : 'Confirma tu correo.'}
+      title={reset ? 'Nueva contraseña' : 'Confirmar correo'}
       description={
         reset
           ? 'Elige una contraseña larga y personal para volver a ingresar.'

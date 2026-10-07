@@ -10,7 +10,7 @@ test('@email-deferred catalogue remains usable and email forms clearly stay unav
   expect(capability.status()).toBe(200);
   expect(await capability.json()).toEqual({ emailEnabled: false });
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Conéctate con/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Tu mediateca cultural.');
   for (const label of [
     'Lecturas',
     'Documentales',

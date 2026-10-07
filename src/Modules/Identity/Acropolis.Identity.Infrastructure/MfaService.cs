@@ -202,7 +202,7 @@ public sealed class MfaService(IdentityDbContext database, UserManager<ChannelUs
         return result;
     }
     private bool Locked(MfaCredential credential) => credential.LockedUntilUtc > clock.GetUtcNow();
-    private static bool Required(ChannelUser user) => user.UsersManage || user.ContentManage;
+    private static bool Required(ChannelUser user) => user.UsersManage || user.ContentManage || user.SubscriptionsManage || user.IsOwner;
     private bool Active(ChannelUser? user) => user is not null && user.EmailConfirmed && !user.IsDisabled && !user.RevalidationRequired
         && (!user.LockoutEnabled || user.LockoutEnd is null || user.LockoutEnd <= clock.GetUtcNow());
     private IDataProtector KeyProtector(Guid userId) => protection.CreateProtector("Acropolis.Identity.MfaKey.v1", userId.ToString("N"));

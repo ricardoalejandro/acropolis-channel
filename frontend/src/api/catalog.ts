@@ -16,6 +16,7 @@ export const covers = [
   'editorial-nature',
 ] as const;
 export type CoverAsset = (typeof covers)[number];
+export type CollectionKind = 'course' | 'program';
 export type ContentStatus = 'draft' | 'published' | 'archived';
 export type ContentSummary = {
   id: string;
@@ -26,15 +27,27 @@ export type ContentSummary = {
   coverAsset: CoverAsset | null;
   durationSeconds: number | null;
   publishedUtc: string | null;
+  author?: string | null;
+  tags?: string[];
+  collectionKind?: CollectionKind | null;
 };
-export type ContentDetail = ContentSummary & { body: string; updatedUtc: string };
+export type ContentDetail = ContentSummary & {
+  body: string;
+  updatedUtc: string;
+  items?: ContentSummary[];
+};
 export type AdminSummary = ContentSummary & {
   status: ContentStatus;
   createdUtc: string;
   updatedUtc: string;
   version: string;
 };
-export type AdminContent = AdminSummary & { body: string };
+export type AdminContent = AdminSummary & {
+  body: string;
+  workText?: string | null;
+  youTubeId?: string | null;
+  itemIds?: string[];
+};
 export type ContentPage<T> = { items: T[]; total: number; page: number; pageSize: number };
 export type ContentFields = {
   title: string;
@@ -44,10 +57,17 @@ export type ContentFields = {
   category: CategoryId;
   coverAsset: CoverAsset | null;
   durationSeconds: number | null;
+  author?: string | null;
+  tags?: string[];
+  workText?: string | null;
+  youTubeId?: string | null;
+  collectionKind?: CollectionKind | null;
+  itemIds?: string[];
 };
 export type ContentQuery = {
   search?: string;
   category?: string;
+  topic?: string;
   status?: string;
   page?: number;
   pageSize?: number;
@@ -76,7 +96,22 @@ export function summaryFrom(value: unknown): ContentSummary {
         Number(value['durationSeconds']) >= 1 &&
         Number(value['durationSeconds']) <= 86400)
     ) ||
-    !date(value['publishedUtc'], true)
+    !date(value['publishedUtc'], true) ||
+    !(
+      value['author'] === undefined ||
+      value['author'] === null ||
+      typeof value['author'] === 'string'
+    ) ||
+    !(
+      value['tags'] === undefined ||
+      (Array.isArray(value['tags']) && value['tags'].every((tag) => typeof tag === 'string'))
+    ) ||
+    !(
+      value['collectionKind'] === undefined ||
+      value['collectionKind'] === null ||
+      value['collectionKind'] === 'course' ||
+      value['collectionKind'] === 'program'
+    )
   )
     fail();
   return value as ContentSummary;
@@ -84,7 +119,13 @@ export function summaryFrom(value: unknown): ContentSummary {
 export function detailFrom(value: unknown): ContentDetail {
   const summary = summaryFrom(value);
   if (!object(value) || typeof value['body'] !== 'string' || !date(value['updatedUtc'])) fail();
-  return { ...summary, body: value['body'], updatedUtc: value['updatedUtc'] as string };
+  if (value['items'] !== undefined && !Array.isArray(value['items'])) fail();
+  return {
+    ...summary,
+    body: value['body'],
+    updatedUtc: value['updatedUtc'] as string,
+    ...(Array.isArray(value['items']) ? { items: value['items'].map(summaryFrom) } : {}),
+  };
 }
 export function adminFrom(value: unknown): AdminSummary {
   summaryFrom(value);
@@ -102,6 +143,23 @@ export function adminFrom(value: unknown): AdminSummary {
 export function adminDetailFrom(value: unknown): AdminContent {
   const summary = adminFrom(value);
   if (!object(value) || typeof value['body'] !== 'string') fail();
+  if (
+    !(
+      value['workText'] === undefined ||
+      value['workText'] === null ||
+      typeof value['workText'] === 'string'
+    ) ||
+    !(
+      value['youTubeId'] === undefined ||
+      value['youTubeId'] === null ||
+      (typeof value['youTubeId'] === 'string' && /^[A-Za-z0-9_-]{11}$/.test(value['youTubeId']))
+    ) ||
+    !(
+      value['itemIds'] === undefined ||
+      (Array.isArray(value['itemIds']) && value['itemIds'].every((id) => typeof id === 'string'))
+    )
+  )
+    fail();
   return { ...summary, body: value['body'] };
 }
 function pageFrom<T>(value: unknown, item: (value: unknown) => T): ContentPage<T> {
@@ -126,7 +184,7 @@ function pageFrom<T>(value: unknown, item: (value: unknown) => T): ContentPage<T
 }
 function queryString(query: ContentQuery) {
   const params = new URLSearchParams();
-  for (const name of ['search', 'category', 'status'] as const)
+  for (const name of ['search', 'category', 'status', 'topic'] as const)
     if (query[name]) params.set(name, query[name]);
   params.set('page', String(query.page ?? 1));
   params.set('pageSize', String(query.pageSize ?? 20));
@@ -138,6 +196,8 @@ export function catalogMessage(error: unknown): string {
     concurrency_conflict:
       'Otra persona modificó este contenido. Conservamos tus cambios; recarga los datos antes de guardar.',
     slug_immutable: 'La dirección se conserva después de la primera publicación.',
+    collection_items_invalid:
+      'Revisa los elementos: deben estar publicados y corresponder al tipo de colección.',
     slug_conflict: 'Esa dirección ya pertenece a otro contenido. Elige una diferente.',
     invalid_transition:
       'Ese cambio de estado no está permitido. Vuelve a borrador antes de publicar.',
@@ -161,9 +221,41 @@ function editableFields(fields: ContentFields): ContentFields {
     category: fields.category,
     coverAsset: fields.coverAsset,
     durationSeconds: fields.durationSeconds,
+    ...(fields.author !== undefined ? { author: fields.author } : {}),
+    ...(fields.tags !== undefined ? { tags: fields.tags } : {}),
+    ...(fields.workText !== undefined ? { workText: fields.workText } : {}),
+    ...(fields.youTubeId !== undefined ? { youTubeId: fields.youTubeId } : {}),
+    ...(fields.collectionKind !== undefined ? { collectionKind: fields.collectionKind } : {}),
+    ...(fields.itemIds !== undefined ? { itemIds: fields.itemIds } : {}),
   };
 }
+export type ContentAudit = {
+  id: string;
+  actorId: string;
+  contentId: string;
+  action: string;
+  changes: string;
+  createdUtc: string;
+};
+function auditFrom(value: unknown): ContentAudit {
+  if (
+    !object(value) ||
+    !['id', 'actorId', 'contentId', 'action', 'changes'].every(
+      (key) => typeof value[key] === 'string',
+    ) ||
+    !date(value['createdUtc'])
+  )
+    fail();
+  return value as ContentAudit;
+}
 export const catalog = {
+  audit: async (id: string, page = 1) =>
+    pageFrom(
+      await request(
+        '/admin/content/' + encodeURIComponent(id) + '/audit?page=' + page + '&pageSize=20',
+      ),
+      auditFrom,
+    ),
   categories: async () => {
     const data = await request('/catalog/categories');
     if (
@@ -191,6 +283,8 @@ export const catalog = {
     detailFrom(await request('/catalog/content/' + encodeURIComponent(slug))),
   adminList: async (query: ContentQuery = {}) =>
     pageFrom(await request('/admin/content' + queryString(query)), adminFrom),
+  adminSummary: async (id: string) =>
+    adminFrom(await request('/admin/content/' + encodeURIComponent(id) + '/summary')),
   adminDetail: async (id: string) =>
     adminDetailFrom(await request('/admin/content/' + encodeURIComponent(id))),
   create: async (fields: ContentFields) =>
@@ -213,6 +307,7 @@ export function contentQuery(params: URLSearchParams): ContentQuery {
     category: categories.some((item) => item.id === params.get('category'))
       ? (params.get('category') as string)
       : '',
+    ...(params.get('topic') ? { topic: params.get('topic') as string } : {}),
     page: value >= 1 && value <= 1000000 ? value : 1,
   };
 }

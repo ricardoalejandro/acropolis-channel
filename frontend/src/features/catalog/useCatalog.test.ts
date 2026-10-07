@@ -23,6 +23,7 @@ describe('Catalogue request ordering', () => {
       });
       expect(result.current.data).toBe(2);
       expect(result.current.error).toBe('');
+      expect(result.current.failure).toBeNull();
     });
   it('hides data from the previous key while a new response is pending and cancels abandoned views', async () => {
     const first = () => Promise.resolve(1);
@@ -38,6 +39,7 @@ describe('Catalogue request ordering', () => {
     rerender({ load: next, key: 'two' });
     expect(result.current.data).toBeNull();
     expect(result.current.loading).toBe(true);
+    expect(result.current.failure).toBeNull();
     unmount();
     await act(async () => {
       release?.(2);

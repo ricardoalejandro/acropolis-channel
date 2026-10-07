@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
@@ -248,7 +250,13 @@ public sealed class IdentityTests(IdentityFixture database)
         await using (var context = database.Context(true))
         {
             var operations = new IdentityOperations(context, api.Clock);
+            context.Database.SetCommandTimeout(13);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operations.InvalidateRecoveryAsync(new CancellationToken(true)));
+            Assert.Equal(13, context.Database.GetCommandTimeout());
+            Assert.False((await context.Users.AsNoTracking().SingleAsync(x => x.Id == id, Token)).RevalidationRequired);
+            Assert.Single(await context.Sessions.ToArrayAsync(Token));
             await operations.InvalidateRecoveryAsync(Token);
+            Assert.Equal(13, context.Database.GetCommandTimeout());
             await operations.RevalidateAsync("recover@example.test", false, Token);
         }
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/identity/me", Token)).StatusCode);
@@ -567,16 +575,24 @@ public sealed class IdentityTests(IdentityFixture database)
         {
             previous.Database.SetCommandTimeout(30);
             await previous.Database.GetService<IMigrator>().MigrateAsync(previous.Database.GetMigrations().First(), Token);
-            await previous.Database.ExecuteSqlRawAsync(
-                """
-                INSERT INTO identity."Users" ("Id","DisplayName","IsDisabled","UsersManage","RevalidationRequired","SecurityVersion","UserName","NormalizedUserName","Email","NormalizedEmail","EmailConfirmed","ConcurrencyStamp","PhoneNumberConfirmed","TwoFactorEnabled","LockoutEnabled","AccessFailedCount")
-                SELECT gen_random_uuid(),'QA User '||number,false,false,false,md5(number::text),
-                'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
-                'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
-                true,md5('version-'||number),false,false,true,0
-                FROM generate_series(0,99999) number;
-                INSERT INTO identity."UserLevels" ("UserId","Level") SELECT "Id",'Externo' FROM identity."Users";
-                """, Token);
+            previous.Database.SetCommandTimeout(120);
+            try
+            {
+                await previous.Database.ExecuteSqlRawAsync(
+                    """
+                    INSERT INTO identity."Users" ("Id","DisplayName","IsDisabled","UsersManage","RevalidationRequired","SecurityVersion","UserName","NormalizedUserName","Email","NormalizedEmail","EmailConfirmed","ConcurrencyStamp","PhoneNumberConfirmed","TwoFactorEnabled","LockoutEnabled","AccessFailedCount")
+                    SELECT gen_random_uuid(),'QA User '||number,false,false,false,md5(number::text),
+                    'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
+                    'qa-load-'||lpad(number::text,6,'0')||'@example.test',upper('qa-load-'||lpad(number::text,6,'0')||'@example.test'),
+                    true,md5('version-'||number),false,false,true,0
+                    FROM generate_series(0,99999) number;
+                    INSERT INTO identity."UserLevels" ("UserId","Level") SELECT "Id",'Externo' FROM identity."Users";
+                    """, Token);
+            }
+            finally
+            {
+                previous.Database.SetCommandTimeout(30);
+            }
         }
         await new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token);
         await new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token);
@@ -595,10 +611,104 @@ public sealed class IdentityTests(IdentityFixture database)
             await Assert.ThrowsAsync<Npgsql.PostgresException>(() => current.Database.ExecuteSqlRawAsync(sql, Token));
         await using var maintenance = database.Context(true);
         maintenance.Database.SetCommandTimeout(30);
-        await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(Token);
+        var restoredUser = await maintenance.Users.OrderBy(user => user.Id)
+            .Select(user => new { user.Id, user.SecurityVersion }).FirstAsync(Token);
+        var restoredFlowId = Guid.NewGuid();
+        var restoredMessageId = Guid.NewGuid();
+        var restoredSessionId = Guid.NewGuid().ToString("N");
+        var now = api.Clock.GetUtcNow();
+        maintenance.Sessions.Add(new StoredSession
+        {
+            Id = restoredSessionId,
+            UserId = restoredUser.Id,
+            SecurityVersion = restoredUser.SecurityVersion,
+            Ticket = [1],
+            CreatedUtc = now,
+            ExpiresUtc = now.AddHours(1)
+        });
+        maintenance.Flows.Add(new IdentityFlow
+        {
+            Id = restoredFlowId,
+            UserId = restoredUser.Id,
+            Purpose = "confirm",
+            TokenHash = new string('a', 64),
+            CreatedUtc = now,
+            ExpiresUtc = now.AddHours(1)
+        });
+        maintenance.Outbox.Add(new OutboxMessage
+        {
+            Id = restoredMessageId,
+            UserId = restoredUser.Id,
+            FlowId = restoredFlowId,
+            Payload = "QA restored payload",
+            Status = "pending",
+            NextAttemptUtc = now
+        });
+        await maintenance.SaveChangesAsync(Token);
+        maintenance.ChangeTracker.Clear();
+        var restoredVersion = await maintenance.Database.SqlQuery<string>($"SELECT xmin::text AS \"Value\" FROM identity.\"Users\" WHERE \"Id\"={restoredUser.Id}").SingleAsync(Token);
+        using (var interruption = CancellationTokenSource.CreateLinkedTokenSource(Token))
+        {
+            var barrier = new CancelAfterInvalidationBatch(interruption);
+            var options = new DbContextOptionsBuilder<IdentityDbContext>();
+            IdentityRegistration.ConfigureDatabase(options, database.MigrationConnection);
+            options.AddInterceptors(barrier);
+            await using var interrupted = new IdentityDbContext(options.Options);
+            interrupted.Database.SetCommandTimeout(30);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                new IdentityOperations(interrupted, api.Clock).InvalidateRecoveryAsync(interruption.Token));
+            Assert.Equal(1, barrier.CompletedBatches);
+            Assert.Equal(1000, barrier.ChangedRows);
+            Assert.Equal(30, interrupted.Database.GetCommandTimeout());
+        }
+        Assert.Equal(0, await maintenance.Users.CountAsync(user => user.RevalidationRequired, Token));
+        Assert.Equal(0, await maintenance.Audit.CountAsync(entry => entry.Action == "account.recovery_invalidated", Token));
+        Assert.Equal(restoredVersion, await maintenance.Database.SqlQuery<string>($"SELECT xmin::text AS \"Value\" FROM identity.\"Users\" WHERE \"Id\"={restoredUser.Id}").SingleAsync(Token));
+        Assert.Single(await maintenance.Sessions.Where(session => session.Id == restoredSessionId).ToArrayAsync(Token));
+        Assert.Null((await maintenance.Flows.AsNoTracking().SingleAsync(flow => flow.Id == restoredFlowId, Token)).ConsumedUtc);
+        var restoredOutbox = await maintenance.Outbox.AsNoTracking().SingleAsync(message => message.Id == restoredMessageId, Token);
+        Assert.Equal("pending", restoredOutbox.Status);
+        Assert.Equal("QA restored payload", restoredOutbox.Payload);
+        using (var recoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(Token))
+        {
+            recoveryDeadline.CancelAfter(TimeSpan.FromMinutes(5));
+            await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(recoveryDeadline.Token);
+        }
+        Assert.Equal(30, maintenance.Database.GetCommandTimeout());
         Assert.Equal(100000, await maintenance.Users.CountAsync(user => user.RevalidationRequired, Token));
-        await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(Token);
+        Assert.Equal(100000, await maintenance.Audit.CountAsync(entry => entry.Action == "account.recovery_invalidated", Token));
+        Assert.Empty(await maintenance.Sessions.ToArrayAsync(Token));
+        Assert.NotNull((await maintenance.Flows.AsNoTracking().SingleAsync(flow => flow.Id == restoredFlowId, Token)).ConsumedUtc);
+        var cancelledOutbox = await maintenance.Outbox.AsNoTracking().SingleAsync(message => message.Id == restoredMessageId, Token);
+        Assert.Equal("cancelled", cancelledOutbox.Status);
+        Assert.Empty(cancelledOutbox.Payload);
+        var invalidationVersion = await maintenance.Database.SqlQueryRaw<string>("SELECT DISTINCT xmin::text AS \"Value\" FROM identity.\"Users\"").SingleAsync(Token);
+        using (var recoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(Token))
+        {
+            recoveryDeadline.CancelAfter(TimeSpan.FromMinutes(5));
+            await new IdentityOperations(maintenance, api.Clock).InvalidateRecoveryAsync(recoveryDeadline.Token);
+        }
+        Assert.Equal(30, maintenance.Database.GetCommandTimeout());
         Assert.Equal(100000, await maintenance.Users.CountAsync(user => user.RevalidationRequired, Token));
+        Assert.Equal(100000, await maintenance.Audit.CountAsync(entry => entry.Action == "account.recovery_invalidated", Token));
+        Assert.Equal(0, await maintenance.Database.SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM identity.\"Users\" WHERE xmin::text <> {invalidationVersion}").SingleAsync(Token));
+    }
+
+    private sealed class CancelAfterInvalidationBatch(CancellationTokenSource interruption) : DbCommandInterceptor
+    {
+        public int CompletedBatches { get; private set; }
+        public int ChangedRows { get; private set; }
+        public override ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            int result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.TrimStart().StartsWith("WITH invalidated_accounts", StringComparison.Ordinal))
+            {
+                CompletedBatches++;
+                ChangedRows += result;
+                interruption.Cancel();
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     private static async Task<Guid> RegisterConfirmed(IdentityApiFactory api, HttpClient client, string email)

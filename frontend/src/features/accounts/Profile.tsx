@@ -12,8 +12,8 @@ export function Profile() {
     <div className="workspace profile-workspace">
       <div className="page-heading">
         <p className="eyebrow">Tu cuenta</p>
-        <h1>Hola, {user.displayName.split(' ')[0]}.</h1>
-        <p className="lead">Un espacio personal para seguir creciendo.</p>
+        <h1>Mi perfil</h1>
+        <p className="lead">Gestiona tus datos y la seguridad de tu cuenta.</p>
       </div>
       <div className="profile-grid">
         <aside className="profile-card">
@@ -34,9 +34,18 @@ export function Profile() {
           </p>
         </aside>
         <div className="profile-sections">
+          <section className="surface">
+            <h2>Mi suscripción</h2>
+            <p className="section-copy">
+              Activa o gestiona tu acceso gratuito a las obras de la mediateca.
+            </p>
+            <Link className="button button-outline" to="/profile/subscription">
+              Ver mi suscripción
+            </Link>
+          </section>
           <section className="surface" aria-labelledby="profile-data">
-            <p className="eyebrow">01 · Datos personales</p>
-            <h2 id="profile-data">Así te presentamos</h2>
+            <p className="eyebrow">Datos personales</p>
+            <h2 id="profile-data">Datos personales</h2>
             {saved && (
               <p className="success-message" role="status">
                 Guardamos tus cambios.
@@ -59,8 +68,8 @@ export function Profile() {
             />
           </section>
           <section className="surface" aria-labelledby="profile-security">
-            <p className="eyebrow">02 · Seguridad</p>
-            <h2 id="profile-security">Cuida tu acceso</h2>
+            <p className="eyebrow">Seguridad</p>
+            <h2 id="profile-security">Contraseña</h2>
             <p className="section-copy">
               Al cambiar la contraseña se cerrarán todas tus sesiones. Después podrás ingresar con
               la nueva.
@@ -99,15 +108,19 @@ export function Profile() {
               }}
             />
           </section>
+          <section className="surface" aria-labelledby="profile-consumption">
+            <h2 id="profile-consumption">Registro de consumo</h2>
+            <p className="section-copy">Cuando está habilitado, el registro de consumo conserva el detalle vinculado a tu cuenta durante 90 fechas UTC, incluida la actual, y estadísticas generales por obra y día durante 1 año (365 fechas UTC). Son observaciones del navegador; el tiempo registrado puede solaparse entre sesiones. El detalle sólo puede consultarse desde el backoffice con los permisos y la verificación en dos pasos necesarios.</p>
+          </section>
           <section className="surface" aria-labelledby="profile-mfa">
-            <p className="eyebrow">03 · Verificación en dos pasos</p>
-            <h2 id="profile-mfa">Protege tu cuenta.</h2>
+            <p className="eyebrow">Verificación en dos pasos</p>
+            <h2 id="profile-mfa">Verificación en dos pasos</h2>
             <p className="section-copy">
               Añade un código de tu autenticador y conserva códigos de recuperación para cuando los
               necesites.
             </p>
             <Link className="text-link mfa-profile-link" to="/profile/security">
-              Verificación en dos pasos <span aria-hidden="true">→</span>
+              Verificación en dos pasos
             </Link>
           </section>
         </div>

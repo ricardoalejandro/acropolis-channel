@@ -1,4 +1,6 @@
 using Acropolis.Api;
+using Acropolis.Subscriptions.Application;
+using Acropolis.Subscriptions.Infrastructure;
 using Npgsql;
 using Acropolis.Catalog.Infrastructure;
 using System.IO.Compression;
@@ -43,6 +45,7 @@ builder.Services.AddSingleton(services => DatabaseDataSource.Create(services.Get
 builder.Services.AddSingleton<ReadinessDiagnostics>();
 builder.Services.AddChannelIdentity(builder.Configuration);
 builder.Services.AddChannelCatalog(builder.Configuration);
+builder.Services.AddChannelSubscriptions(builder.Configuration);
 builder.Services.AddHostedService<IdentityConfigurationValidator>();
 builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddCookie(IdentityConstants.ApplicationScheme, options =>
 {
@@ -59,6 +62,7 @@ builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddCooki
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy(IdentityRules.ManageUsers, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageUsers).RequireClaim("amr", "mfa"));
+    options.AddPolicy(IdentityRules.ManageSubscriptions, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageSubscriptions).RequireClaim("amr", "mfa"));
     options.AddPolicy(IdentityRules.ManageContent, policy => policy.RequireAuthenticatedUser().RequireClaim("permission", IdentityRules.ManageContent).RequireClaim("amr", "mfa"));
 });
 builder.Services.AddAntiforgery(options =>
@@ -83,6 +87,12 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.OnRejected = (context, _) => new ValueTask(IdentityEndpoints.Problem("rate_limited", 429).ExecuteAsync(context.HttpContext));
+    options.AddPolicy("consumption-write", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("subscriptions-write", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("identity-public", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
@@ -97,22 +107,34 @@ builder.Services.AddScoped<ReadinessService>(services =>
 
 var app = builder.Build();
 app.UseForwardedHeaders();
-app.UseExceptionHandler();
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api/v1/identity") || context.Request.Path.StartsWithSegments("/api/v1/admin")) context.Response.Headers.CacheControl = "no-store";
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+    var privateResponse = context.Request.Path.StartsWithSegments("/api/v1/identity") || context.Request.Path.StartsWithSegments("/api/v1/admin") || context.Request.Path.StartsWithSegments("/api/v1/subscriptions") || context.Request.Path.StartsWithSegments("/api/v1/consumption");
+    // Apply at response start, outside the exception handler: it may clear headers.
+    context.Response.OnStarting(() =>
+    {
+        if (privateResponse) context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers["Referrer-Policy"] = "no-referrer";
+        context.Response.Headers["X-Frame-Options"] = "DENY";
+        context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; style-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+        return Task.CompletedTask;
+    });
     await next(context);
 });
+app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
+app.UseMiddleware<ConsumptionBodyLimitMiddleware>();
 app.MapChannelIdentity();
 app.MapChannelCatalog();
+app.MapChannelTopics();
+app.MapChannelSubscriptions();
+app.MapChannelConsumption();
+app.MapChannelConsumptionActivity();
+app.MapChannelOperationalReports();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();

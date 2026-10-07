@@ -10,6 +10,8 @@ public sealed class ChannelUser : IdentityUser<Guid>
     public bool IsDisabled { get; set; }
     public bool UsersManage { get; set; }
     public bool ContentManage { get; set; }
+    public bool SubscriptionsManage { get; set; }
+    public bool IsOwner { get; set; }
     public bool RevalidationRequired { get; set; }
     public DateTimeOffset? RevalidatedUtc { get; set; }
     public string SecurityVersion { get; set; } = Guid.NewGuid().ToString("N");
@@ -19,6 +21,11 @@ public sealed class UserLevel
 {
     public Guid UserId { get; set; }
     public string Level { get; set; } = string.Empty;
+}
+public sealed class AccountAccess
+{
+    public Guid UserId { get; set; }
+    public DateTimeOffset LastSignInUtc { get; set; }
 }
 public sealed class StoredSession
 {
@@ -70,6 +77,7 @@ public sealed partial class IdentityDbContext(DbContextOptions<IdentityDbContext
     public const string Schema = "identity";
     public const string HistoryTable = "__EFMigrationsHistory";
     public DbSet<StoredSession> Sessions => Set<StoredSession>();
+    public DbSet<AccountAccess> AccountAccess => Set<AccountAccess>();
     public DbSet<IdentityFlow> Flows => Set<IdentityFlow>();
     public DbSet<OutboxMessage> Outbox => Set<OutboxMessage>();
     public DbSet<UserAudit> Audit => Set<UserAudit>();
@@ -82,7 +90,9 @@ public sealed partial class IdentityDbContext(DbContextOptions<IdentityDbContext
         builder.HasPostgresExtension(Schema, "pg_trgm");
         builder.Entity<ChannelUser>(entity =>
         {
-            entity.ToTable("Users");
+            entity.ToTable("Users", table => table.HasCheckConstraint("CK_Users_OwnerAuthority",
+                "NOT \"IsOwner\" OR (\"UsersManage\" AND \"ContentManage\" AND \"SubscriptionsManage\" AND \"EmailConfirmed\" AND NOT \"IsDisabled\" AND NOT \"RevalidationRequired\")"));
+            entity.HasIndex(x => x.IsOwner).IsUnique().HasFilter("\"IsOwner\"");
             entity.Property(x => x.DisplayName).HasMaxLength(100);
             entity.Property(x => x.SecurityVersion).HasMaxLength(32);
             entity.Property(x => x.ConcurrencyStamp).HasMaxLength(64);
@@ -97,6 +107,13 @@ public sealed partial class IdentityDbContext(DbContextOptions<IdentityDbContext
         builder.Entity<IdentityUserLogin<Guid>>().ToTable("UserLogins");
         builder.Entity<IdentityUserToken<Guid>>().ToTable("UserTokens");
         builder.Entity<UserLevel>(entity => { entity.ToTable("UserLevels"); entity.HasKey(x => new { x.UserId, x.Level }); entity.Property(x => x.Level).HasMaxLength(32); });
+        builder.Entity<AccountAccess>(entity =>
+        {
+            entity.ToTable("AccountAccess");
+            entity.HasKey(x => x.UserId);
+            entity.Property(x => x.UserId).ValueGeneratedNever();
+            entity.HasOne<ChannelUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         builder.Entity<StoredSession>(entity =>
         {
             entity.HasKey(x => x.Id); entity.Property(x => x.Id).HasMaxLength(64); entity.Property(x => x.SecurityVersion).HasMaxLength(32);

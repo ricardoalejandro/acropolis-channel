@@ -37,3 +37,10 @@ Restaurar una base antigua también puede restaurar permisos, contraseñas y cla
 Las pruebas deben ejercitar HTTP y PostgreSQL real: acceso sin cookie plena, confirmación TOTP previa a activación, secreto cifrado, CSRF y origen, códigos incorrectos, caducidad, bloqueo persistente, carreras de consumo, regeneración, revocación, administración obligatoria, ocho horas absolutas, limpieza y recuperación. QA usa claves y cuentas sintéticas propias, certificados HTTPS confiados y artefactos privados. Generar un TOTP en un helper de pruebas no reemplaza el proveedor oficial productivo ni permite desactivar MFA en el candidato.
 
 Referencias: [MFA de ASP.NET Core Identity](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/mfa?view=aspnetcore-10.0) y [proveedor oficial TOTP](https://github.com/dotnet/aspnetcore/blob/v10.0.0/src/Identity/Extensions.Core/src/AuthenticatorTokenProvider.cs).
+
+
+## Propietario y nuevos gestores
+
+IsOwner no omite MFA. Bootstrap/recuperación de propietario nunca entregan un autenticador ni códigos de recuperación por atajo; la persona debe completar el proceso normal. Subscriptions.Manage también exige MFA tanto en las políticas HTTP como en las decisiones de inicio de sesión y desactivación del segundo factor. Delegar permisos invalida sesiones previas; no reutilizar una cookie de antes del cambio para entrar en backoffice.
+
+El propietario protegido no puede ser deshabilitado o desprivilegiado por otros gestores. Tras restaurar se eliminan también IsOwner y todos los permisos; recuperar su autoridad necesita nueva confirmación/contraseña y decisión explícita. Ninguna copia de seguridad reactiva semillas, códigos o pruebas MFA antiguas.

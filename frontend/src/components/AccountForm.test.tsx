@@ -16,9 +16,10 @@ describe('Account form validation and accessible async state', () => {
   it('blocks missing fields, connects feedback to inputs and focuses the first error', async () => {
     const save = vi.fn();
     render(<AccountForm fields={registration} submit="Guardar" onSubmit={save} />);
-    expect(screen.getByRole('button', { name: 'Guardar' })).toHaveClass('button');
-    expect(screen.getByRole('button', { name: 'Guardar' })).not.toHaveClass('button-outline');
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    const saveButton = screen.getByRole('button', { name: 'Guardar' });
+    expect(saveButton).toHaveClass('button');
+    expect(saveButton).not.toHaveClass('button-outline');
+    await userEvent.click(saveButton);
     expect(save).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Nombre visible')).toHaveFocus();
     expect(screen.getByLabelText('Correo electrónico')).toHaveAttribute('aria-invalid', 'true');

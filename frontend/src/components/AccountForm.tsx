@@ -141,7 +141,6 @@ export function AccountForm({
         disabled={busy}
       >
         {busy ? 'Un momento…' : submit}
-        <span aria-hidden="true">→</span>
       </button>
     </form>
   );

@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using Acropolis.Api;
 using Acropolis.Catalog.Infrastructure;
+using Acropolis.Subscriptions.Infrastructure;
 using Acropolis.Identity.Infrastructure;
 using Acropolis.Platform.Application;
 using Acropolis.Platform.Infrastructure;
@@ -15,6 +16,8 @@ internal sealed class CompositeDatabaseReader : IPlatformStateReader
         SELECT 'identity', "MigrationId" FROM identity."__EFMigrationsHistory"
         UNION ALL
         SELECT 'catalog', "MigrationId" FROM catalog."__EFMigrationsHistory"
+        UNION ALL
+        SELECT 'subscriptions', "MigrationId" FROM subscriptions."__EFMigrationsHistory"
         """;
     private readonly NpgsqlDataSource dataSource;
     private readonly ReadinessDiagnostics diagnostics;
@@ -34,11 +37,15 @@ internal sealed class CompositeDatabaseReader : IPlatformStateReader
         var catalogOptions = new DbContextOptionsBuilder<CatalogDbContext>();
         CatalogRegistration.ConfigureDatabase(catalogOptions, dataSource);
         using var catalog = new CatalogDbContext(catalogOptions.Options);
+        var subscriptionOptions = new DbContextOptionsBuilder<SubscriptionsDbContext>();
+        SubscriptionsRegistration.ConfigureDatabase(subscriptionOptions, dataSource);
+        using var subscriptions = new SubscriptionsDbContext(subscriptionOptions.Options);
         var histories = new[]
         {
             (Module: PlatformDbContext.Schema, Ids: platform.Database.GetMigrations().ToArray()),
             (Module: IdentityDbContext.Schema, Ids: identity.Database.GetMigrations().ToArray()),
-            (Module: CatalogDbContext.Schema, Ids: catalog.Database.GetMigrations().ToArray())
+            (Module: CatalogDbContext.Schema, Ids: catalog.Database.GetMigrations().ToArray()),
+            (Module: SubscriptionsDbContext.Schema, Ids: subscriptions.Database.GetMigrations().ToArray())
         };
         completeMetadata = histories.All(history => history.Ids.Length > 0);
         expected = histories.SelectMany(history => history.Ids.Select(id => (history.Module, id))).ToFrozenSet();

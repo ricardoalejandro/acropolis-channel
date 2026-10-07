@@ -10,7 +10,7 @@ public sealed class CatalogOperations(CatalogDbContext database)
     public async Task SeedQaAsync(int count, CancellationToken token)
     {
         var settings = new NpgsqlConnectionStringBuilder(database.Database.GetConnectionString());
-        if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") != "Testing" || settings.Database is null || !Regex.IsMatch(settings.Database, "^acropolis_test_[a-z0-9_]+$") || count is < 1 or > 100000)
+        if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") != "Testing" || settings.Database is null || !Regex.IsMatch(settings.Database, @"\Aacropolis_test_[a-z0-9_]+\z") || count is < 1 or > 100000)
             throw new InvalidOperationException("Catalog seed is restricted to guarded test databases.");
         await database.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO catalog."Contents" ("Id","Slug","Title","Summary","Body","Category","CoverAsset","DurationSeconds","Status","CreatedUtc","UpdatedUtc","PublishedUtc","Version")

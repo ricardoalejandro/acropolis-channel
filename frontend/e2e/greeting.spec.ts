@@ -18,9 +18,7 @@ test('desktop and mobile render the production home with the real API boundary',
     }
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Conéctate con\s*la sabiduría\s*del mundo\./,
-  );
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Tu mediateca cultural.');
   await expect(page.getByRole('link', { name: 'Crear mi cuenta', exact: true })).toBeVisible();
   expect((await request.get('/api/v1/identity/me')).status()).toBe(401);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(

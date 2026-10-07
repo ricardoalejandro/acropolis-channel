@@ -12,7 +12,7 @@ namespace Acropolis.Identity.Infrastructure;
 
 public sealed class IdentityService(IdentityDbContext database, UserManager<ChannelUser> users, IDataProtectionProvider protection, TimeProvider clock) : IIdentityService
 {
-    public const long AdministrationLockKey = 719283401053L;
+    public const long AdministrationLockKey = IdentityRules.AdministrationLockKey;
     private readonly IDataProtector outboxProtector = protection.CreateProtector("Acropolis.Identity.Outbox.v1");
 
     public async Task<IdentityResult<bool>> RegisterAsync(RegisterRequest request, CancellationToken token)
@@ -145,14 +145,29 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         return user is null ? null : View(user);
     }
 
+    public async Task<IdentityAccountSummary[]> LookupAccountsAsync(IReadOnlyCollection<Guid> userIds, CancellationToken token)
+    {
+        if (userIds.Count is < 1 or > 20 || userIds.Contains(Guid.Empty) || userIds.Distinct().Count() != userIds.Count)
+            throw new ArgumentException("Account lookup requires between one and twenty unique nonempty identifiers.", nameof(userIds));
+        var ids = userIds.ToArray();
+        return await database.Users.AsNoTracking().Where(x => ids.Contains(x.Id)).OrderBy(x => x.Id)
+            .Select(x => new IdentityAccountSummary(x.Id, x.DisplayName, x.Email!,
+                x.IsDisabled || x.RevalidationRequired ? "disabled" : x.EmailConfirmed ? "active" : "pending",
+                x.EmailConfirmed)).ToArrayAsync(token);
+    }
+
     public async Task<IdentityResult<UserView>> UpdateProfileAsync(Guid userId, ProfileRequest request, CancellationToken token)
     {
         if (!IdentityRules.ValidName(request.DisplayName)) return IdentityResult<UserView>.Fail("validation_error", fields: new() { ["displayName"] = ["El nombre debe tener entre 2 y 100 caracteres."] });
+        await using var transaction = await database.Database.BeginTransactionAsync(token);
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
         var user = await database.Users.Include(x => x.Levels).SingleOrDefaultAsync(x => x.Id == userId, token);
-        if (user is null || user.IsDisabled || user.RevalidationRequired) return IdentityResult<UserView>.Fail("invalid_credentials", 401);
+        if (user is null || !user.EmailConfirmed || user.IsDisabled || user.RevalidationRequired) return IdentityResult<UserView>.Fail("invalid_credentials", 401);
+        if (user.DisplayName == request.DisplayName.Trim()) return new(View(user));
         user.DisplayName = request.DisplayName.Trim();
         user.ConcurrencyStamp = Guid.NewGuid().ToString("N");
         await database.SaveChangesAsync(token);
+        await transaction.CommitAsync(token);
         return new(View(user));
     }
 
@@ -182,28 +197,32 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({AdministrationLockKey})", token);
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
-        var actor = await database.Users.SingleOrDefaultAsync(x => x.Id == actorId, token);
-        if (actor is null || !actor.UsersManage || actor.IsDisabled || actor.RevalidationRequired) return IdentityResult<UserView>.Fail("forbidden", 403);
+        var actor = await database.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == actorId, token);
+        if (actor is null || !actor.UsersManage || !Active(actor)) return IdentityResult<UserView>.Fail("forbidden", 403);
         var user = await database.Users.Include(x => x.Levels).SingleOrDefaultAsync(x => x.Id == userId, token);
         if (user is null) return IdentityResult<UserView>.Fail("not_found", 404);
         if (user.ConcurrencyStamp != request.Version) return IdentityResult<UserView>.Fail("concurrency_conflict", 409);
-        if (request.Status == "disabled" && !user.IsDisabled && user.UsersManage)
+        if (user.IsOwner && (actorId != userId || request.Status == "disabled")) return IdentityResult<UserView>.Fail("owner_protected", 409);
+        if (request.Status == "disabled" && Active(user) && user.UsersManage)
         {
             var administrators = await database.Users.CountAsync(x => x.UsersManage && !x.IsDisabled && !x.RevalidationRequired && x.EmailConfirmed, token);
             if (!IdentityRules.CanDisable(true, administrators)) return IdentityResult<UserView>.Fail("last_admin", 409);
         }
         if (request.Status == "active" && user.RevalidationRequired) return IdentityResult<UserView>.Fail("account_unconfirmed", 409);
-        var before = new { status = IdentityRules.Status(user.EmailConfirmed, user.IsDisabled, user.RevalidationRequired), levels = user.Levels.Select(x => x.Level).Order().ToArray() };
         var displayNameChanged = request.DisplayName is not null && user.DisplayName != request.DisplayName.Trim();
-        if (request.DisplayName is not null) user.DisplayName = request.DisplayName.Trim();
-        if (request.Status is not null) user.IsDisabled = request.Status == "disabled";
-        if (request.Levels is not null)
+        var statusChanged = request.Status is not null && user.IsDisabled != (request.Status == "disabled");
+        var levelsChanged = request.Levels is not null && !user.Levels.Select(x => x.Level).ToHashSet(StringComparer.Ordinal).SetEquals(request.Levels);
+        if (!displayNameChanged && !statusChanged && !levelsChanged) return new(View(user));
+        var before = new { status = IdentityRules.Status(user.EmailConfirmed, user.IsDisabled, user.RevalidationRequired), levels = user.Levels.Select(x => x.Level).Order().ToArray() };
+        if (displayNameChanged) user.DisplayName = request.DisplayName!.Trim();
+        if (statusChanged) user.IsDisabled = request.Status == "disabled";
+        if (levelsChanged)
         {
-            database.RemoveRange(user.Levels.Where(x => !request.Levels.Contains(x.Level)).ToArray());
-            user.Levels.RemoveAll(x => !request.Levels.Contains(x.Level));
-            foreach (var level in request.Levels.Except(user.Levels.Select(x => x.Level))) user.Levels.Add(new UserLevel { UserId = user.Id, Level = level });
+            database.RemoveRange(user.Levels.Where(x => !request.Levels!.Contains(x.Level)).ToArray());
+            user.Levels.RemoveAll(x => !request.Levels!.Contains(x.Level));
+            foreach (var level in request.Levels!.Except(user.Levels.Select(x => x.Level))) user.Levels.Add(new UserLevel { UserId = user.Id, Level = level });
         }
-        if (request.Status is not null || request.Levels is not null) await InvalidateUserAsync(user, token);
+        if (statusChanged || levelsChanged) await InvalidateUserAsync(user, token);
         user.ConcurrencyStamp = Guid.NewGuid().ToString("N");
         var after = new { status = IdentityRules.Status(user.EmailConfirmed, user.IsDisabled, user.RevalidationRequired), levels = user.Levels.Select(x => x.Level).Order().ToArray() };
         database.Audit.Add(new UserAudit { Id = Guid.NewGuid(), ActorId = actorId, UserId = userId, Action = "users.updated", Changes = JsonSerializer.Serialize(new { before, after, displayNameChanged }), CreatedUtc = clock.GetUtcNow() });
@@ -211,6 +230,62 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         await transaction.CommitAsync(token);
         return new(View(user));
     }
+
+    public async Task<UserAuditPage> ListAuditAsync(DateTimeOffset? fromUtc, DateTimeOffset? toUtc, string? action, Guid? userId, int page, int pageSize, CancellationToken token)
+    {
+        var query = database.Audit.AsNoTracking();
+        if (fromUtc is not null) query = query.Where(x => x.CreatedUtc >= fromUtc.Value.ToUniversalTime());
+        if (toUtc is not null) query = query.Where(x => x.CreatedUtc <= toUtc.Value.ToUniversalTime());
+        if (action is not null) query = query.Where(x => x.Action == action);
+        if (userId is not null) query = query.Where(x => x.UserId == userId.Value);
+        var total = await query.CountAsync(token);
+        var rows = await query.OrderByDescending(x => x.CreatedUtc).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(x => new { x.Id, x.UserId, x.ActorId, x.Action, x.Changes, x.CreatedUtc }).ToArrayAsync(token);
+        return new UserAuditPage(rows.Select(x => new UserAuditView(x.Id, x.UserId, x.ActorId, x.Action, IdentityRules.AuditSummary(x.Action, x.Changes), x.CreatedUtc)).ToArray(), total, page, pageSize);
+    }
+
+    public async Task<IdentityResult<UserView>> UpdatePermissionsAsync(Guid actorId, Guid userId, AdminPermissionsRequest request, CancellationToken token)
+    {
+        if (!IdentityRules.ValidVersion(request.Version) || !IdentityRules.ValidPermissions(request.Permissions))
+            return IdentityResult<UserView>.Fail("validation_error");
+        await using var transaction = await database.Database.BeginTransactionAsync(token);
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({AdministrationLockKey})", token);
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({UserLock(userId)})", token);
+        var actor = await database.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == actorId, token);
+        if (actor is null || !actor.IsOwner || !Active(actor)) return IdentityResult<UserView>.Fail("forbidden", 403);
+        var user = await database.Users.Include(x => x.Levels).SingleOrDefaultAsync(x => x.Id == userId, token);
+        if (user is null) return IdentityResult<UserView>.Fail("not_found", 404);
+        if (user.ConcurrencyStamp != request.Version) return IdentityResult<UserView>.Fail("concurrency_conflict", 409);
+        if (user.IsOwner && !request.Permissions.ToHashSet(StringComparer.Ordinal).SetEquals(IdentityRules.AdministrativePermissions))
+            return IdentityResult<UserView>.Fail("owner_protected", 409);
+        if (request.Permissions.Length > 0 && !Active(user)) return IdentityResult<UserView>.Fail("account_not_active", 403);
+        var before = Permissions(user);
+        if (before.ToHashSet(StringComparer.Ordinal).SetEquals(request.Permissions)) return new(View(user));
+        if (user.UsersManage && Active(user) && !request.Permissions.Contains(IdentityRules.ManageUsers))
+        {
+            var administrators = await database.Users.CountAsync(x => x.UsersManage && !x.IsDisabled && !x.RevalidationRequired && x.EmailConfirmed, token);
+            if (!IdentityRules.CanDisable(true, administrators)) return IdentityResult<UserView>.Fail("last_admin", 409);
+        }
+        user.UsersManage = request.Permissions.Contains(IdentityRules.ManageUsers);
+        user.ContentManage = request.Permissions.Contains(IdentityRules.ManageContent);
+        user.SubscriptionsManage = request.Permissions.Contains(IdentityRules.ManageSubscriptions);
+        user.ConcurrencyStamp = Guid.NewGuid().ToString("N");
+        await InvalidateUserAsync(user, token);
+        database.Audit.Add(new UserAudit
+        {
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            UserId = userId,
+            Action = "permissions.updated",
+            Changes = JsonSerializer.Serialize(new { before, after = Permissions(user) }),
+            CreatedUtc = clock.GetUtcNow()
+        });
+        await database.SaveChangesAsync(token);
+        await transaction.CommitAsync(token);
+        return new(View(user));
+    }
+
+    private static bool Active(ChannelUser user) => user.EmailConfirmed && !user.IsDisabled && !user.RevalidationRequired;
 
     private static IdentityResult<bool> InvalidCurrentPassword() => IdentityResult<bool>.Fail("current_password_invalid", 400,
         fields: new() { ["currentPassword"] = ["La contraseña actual no es correcta."] });
@@ -242,16 +317,17 @@ public sealed class IdentityService(IdentityDbContext database, UserManager<Chan
         await database.Outbox.Where(x => x.UserId == user.Id && (x.Status == "pending" || x.Status == "sending")).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.Payload, ""), token);
     }
     internal static string Hash(string secret) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
-    public static long UserLock(Guid id) => BitConverter.ToInt64(SHA256.HashData(id.ToByteArray()), 0);
+    public static long UserLock(Guid id) => IdentityRules.UserLock(id);
     internal static UserView View(ChannelUser user) => new(user.Id, user.DisplayName, user.Email!, user.EmailConfirmed,
         IdentityRules.Status(user.EmailConfirmed, user.IsDisabled, user.RevalidationRequired),
         user.Levels.Select(x => x.Level).Order(StringComparer.Ordinal).ToArray(),
-        Permissions(user), user.ConcurrencyStamp!);
+        Permissions(user), user.ConcurrencyStamp!, user.IsOwner);
     private static string[] Permissions(ChannelUser user)
     {
         var permissions = new List<string>();
         if (user.UsersManage) permissions.Add(IdentityRules.ManageUsers);
         if (user.ContentManage) permissions.Add(IdentityRules.ManageContent);
+        if (user.SubscriptionsManage) permissions.Add(IdentityRules.ManageSubscriptions);
         return permissions.ToArray();
     }
 }

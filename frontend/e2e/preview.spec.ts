@@ -27,6 +27,7 @@ test('@preview isolated catalogue is accessible, responsive and explicit about u
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
     const accessibility = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
       .analyze();

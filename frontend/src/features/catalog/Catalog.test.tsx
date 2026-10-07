@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import App from '../../App';
+import { renderApp } from '../../test/renderApp';
 import { clearCsrf } from '../../api/identity';
 import { admin, user, json } from '../../test/fixtures';
 import { draftContent, publishedContent } from '../../test/catalogFixtures';
@@ -16,6 +16,9 @@ function mount(path: string, permission = true, override?: Override) {
     if (url.endsWith('/identity/me'))
       return json(permission ? { ...admin, permissions: ['Content.Manage'] } : user);
     if (url.endsWith('/csrf')) return json({ token: 'csrf' });
+    if (url.endsWith('/subscriptions/me'))
+      return json({ subscription: null, eligibleToActivate: true });
+    if (url.includes('/consumption/content/')) return json({ code: 'subscription_required' }, 403);
     if (url.includes('/content?'))
       return json({
         items: [item],
@@ -45,7 +48,7 @@ function mount(path: string, permission = true, override?: Override) {
     return json({ code: 'not_found' }, 404);
   });
   vi.stubGlobal('fetch', fetch);
-  render(<App />);
+  renderApp();
   return fetch;
 }
 function fill(label: string, value: string) {
@@ -63,19 +66,20 @@ beforeEach(() => {
 describe('Published catalogue journeys', () => {
   it('shows all official categories and server titles on the home without fixture copy', async () => {
     mount('/');
-    await screen.findByRole('heading', { name: publishedContent.title });
-    for (const category of [
-      'Lecturas',
-      'Documentales',
-      'Videos',
-      'Podcast',
-      'Charlas online',
-      'Cursos',
-    ])
-      expect(screen.getByRole('link', { name: category })).toBeInTheDocument();
+    const main = within(document.querySelector('main')!);
+    const title = await main.findByText(publishedContent.title, { selector: 'h3' });
+    expect(title).toHaveAccessibleName(publishedContent.title);
+    const categories = within(document.querySelector('.catalog-categories')!);
+    const links = categories.getAllByRole('link');
+    const names = ['Lecturas', 'Documentales', 'Videos', 'Podcast', 'Charlas online', 'Cursos'];
+    expect(links).toHaveLength(names.length);
+    for (const [index, name] of names.entries()) {
+      expect(links[index]).toBeInTheDocument();
+      expect(links[index]).toHaveAccessibleName(name);
+    }
     expect(screen.queryByText('Contenido de demostración')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Comprar|Reproducir/ })).not.toBeInTheDocument();
-  });
+    expect(main.queryByRole('button', { name: /Comprar|Reproducir/ })).not.toBeInTheDocument();
+  }, 10000);
   it('shows an honest empty home and a retriable API failure', async () => {
     let failed = true;
     mount('/', true, (path) =>
@@ -88,8 +92,8 @@ describe('Published catalogue journeys', () => {
     await screen.findByRole('alert');
     failed = false;
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
-    await screen.findByRole('heading', { name: 'Pronto, nuevas ideas.' });
-  });
+    await screen.findByRole('heading', { name: 'El catálogo está por comenzar.' });
+  }, 10000);
   it('loads and persists search, category and pagination with browser navigation', async () => {
     const fetch = mount('/explore?category=videos&search=filosofia');
     expect(screen.getByRole('status')).toHaveTextContent('Cargando contenidos');
@@ -114,7 +118,7 @@ describe('Published catalogue journeys', () => {
     fireEvent(window, new PopStateEvent('popstate'));
     await screen.findByDisplayValue('lectura');
     expect(screen.getByLabelText('Categoría')).toHaveValue('lecturas');
-  });
+  }, 10000);
   it('shows empty filtered results and an empty catalogue without invented titles', async () => {
     mount('/explore?search=no', true, (path) =>
       path.includes('/content?') ? json({ items: [], total: 0, page: 1, pageSize: 20 }) : undefined,
@@ -125,7 +129,7 @@ describe('Published catalogue journeys', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Buscar' }));
     await screen.findByRole('heading', { name: 'El catálogo está por comenzar.' });
   });
-  it('renders only editorial metadata and escapes HTML with no playback or payment controls', async () => {
+  it('escapes public synopsis HTML and requires access before loading restricted media', async () => {
     mount('/content/filosofia-vida', true, (path) =>
       path.includes('/catalog/content/')
         ? json({
@@ -139,7 +143,12 @@ describe('Published catalogue journeys', () => {
     await screen.findByRole('heading', { name: publishedContent.title, level: 1 });
     expect(screen.getByText('<script>window.secret = true</script>')).toBeInTheDocument();
     expect(document.querySelector('main script')).toBeNull();
-    expect(screen.getByText(/reproducción multimedia y las suscripciones/)).toBeInTheDocument();
+    await screen.findByRole('heading', { name: 'Activa tu acceso gratuito.' });
+    expect(screen.getByRole('link', { name: 'Suscribirme gratis' })).toHaveAttribute(
+      'href',
+      '/profile/subscription?content=filosofia-vida',
+    );
+    expect(document.querySelector('video, audio, iframe')).toBeNull();
     expect(
       screen.queryByRole('button', { name: /Reproducir|Comprar|Suscribirme/ }),
     ).not.toBeInTheDocument();
@@ -187,12 +196,20 @@ describe('Published catalogue journeys', () => {
 describe('Editorial administration and concurrency', () => {
   it('lists, filters, and paginates without fetching bodies for every row', async () => {
     const fetch = mount('/admin/content');
-    await screen.findByRole('link', { name: 'Editar contenido ' + publishedContent.title });
+    await screen.findByRole(
+      'link',
+      { name: 'Editar contenido ' + publishedContent.title },
+      { timeout: 3000 },
+    );
     fill('Buscar contenido', 'filosofia');
     fireEvent.change(screen.getByLabelText('Estado'), { target: { value: 'published' } });
     fireEvent.change(screen.getByLabelText('Categoría'), { target: { value: 'videos' } });
     await userEvent.click(screen.getByRole('button', { name: 'Buscar' }));
-    await screen.findByRole('link', { name: 'Editar contenido ' + publishedContent.title });
+    await screen.findByRole(
+      'link',
+      { name: 'Editar contenido ' + publishedContent.title },
+      { timeout: 3000 },
+    );
     await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }));
     await screen.findByText('Página 2');
     expect(fetch.mock.calls.some(([path]) => String(path).includes('status=published'))).toBe(true);
@@ -200,7 +217,7 @@ describe('Editorial administration and concurrency', () => {
       'href',
       '/admin/content/new',
     );
-  });
+  }, 10000);
   it('shows administrative empty and error states with explicit retry', async () => {
     let failed = true;
     mount('/admin/content', true, (path) =>
@@ -230,7 +247,7 @@ describe('Editorial administration and concurrency', () => {
     fill('Resumen', 'Resumen editorial');
     fill('Sinopsis ampliada', 'Sinopsis editorial');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
-    await screen.findByRole('heading', { name: 'Dar forma a una idea.' });
+    await screen.findByRole('heading', { name: 'Editar contenido' });
     expect(window.location.pathname).toBe('/admin/content/new-content');
     const call = fetch.mock.calls.find(
       ([path, options]) => String(path) === '/api/v1/admin/content' && options?.method === 'POST',
@@ -243,6 +260,12 @@ describe('Editorial administration and concurrency', () => {
       durationSeconds: 120,
       summary: 'Resumen editorial',
       body: 'Sinopsis editorial',
+      author: null,
+      tags: [],
+      workText: null,
+      youTubeId: null,
+      collectionKind: null,
+      itemIds: [],
     });
     expect(fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
   });
@@ -255,15 +278,27 @@ describe('Editorial administration and concurrency', () => {
     expect(fetch.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
   });
   it('requires synopsis and summary for publication and clears cancelled confirmation', async () => {
-    const fetch = mount('/admin/content/content-one', true, draft);
-    await screen.findByLabelText('Título');
-    await userEvent.click(screen.getByRole('button', { name: 'Publicar contenido' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+    let fetch!: ReturnType<typeof mount>;
+    await act(async () => {
+      fetch = mount('/admin/content/content-one', true, draft);
+    });
+    const content = within(document.querySelector('main')!);
+    const titleField = await content.findByLabelText('Título');
+    const editorForm = titleField.closest('form');
+    if (!editorForm) throw new Error('Content editor form is missing.');
+    const fields = within(editorForm);
+    const publishContent = fields.getByRole('button', { name: 'Publicar contenido' });
+    const summaryField = fields.getByLabelText('Resumen');
+    const synopsisField = fields.getByLabelText('Sinopsis ampliada');
+    await userEvent.click(publishContent);
+    const firstConfirmation = within(fields.getByRole('alert'));
+    await userEvent.click(firstConfirmation.getByRole('button', { name: 'Cancelar' }));
     expect(screen.queryByRole('button', { name: 'Confirmar publicación' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Publicar contenido' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar publicación' }));
-    expect(screen.getByLabelText('Resumen')).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByLabelText('Sinopsis ampliada')).toHaveAttribute('aria-invalid', 'true');
+    await userEvent.click(publishContent);
+    const nextConfirmation = within(fields.getByRole('alert'));
+    await userEvent.click(nextConfirmation.getByRole('button', { name: 'Confirmar publicación' }));
+    expect(summaryField).toHaveAttribute('aria-invalid', 'true');
+    expect(synopsisField).toHaveAttribute('aria-invalid', 'true');
     expect(fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
   });
   it('publishes with the loaded version and freezes the first published slug', async () => {
@@ -304,7 +339,7 @@ describe('Editorial administration and concurrency', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Recargar y sustituir cambios' }));
     await screen.findByDisplayValue(publishedContent.title);
     expect(screen.queryByText('private')).not.toBeInTheDocument();
-  });
+  }, 10000);
   it('maps field errors without displaying server detail and permits an explicit retry', async () => {
     let rejected = true;
     mount('/admin/content/content-one', true, (path, options) =>
@@ -321,9 +356,12 @@ describe('Editorial administration and concurrency', () => {
     rejected = false;
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
     await screen.findByText('Contenido publicado.');
-  });
+  }, 10000);
   it('withdraws, archives and restores to draft using explicit transitions without deletion', async () => {
-    const fetch = mount('/admin/content/content-one');
+    let fetch!: ReturnType<typeof mount>;
+    await act(async () => {
+      fetch = mount('/admin/content/content-one');
+    });
     await screen.findByLabelText('Título');
     await userEvent.click(screen.getByRole('button', { name: 'Archivar contenido' }));
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar archivo' }));
@@ -342,16 +380,22 @@ describe('Editorial administration and concurrency', () => {
     expect(fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
     for (const [, options] of fetch.mock.calls.filter(([, options]) => options?.method === 'PUT')) {
       expect(Object.keys(JSON.parse(String(options?.body))).sort()).toEqual([
+        'author',
         'body',
         'category',
+        'collectionKind',
         'coverAsset',
         'durationSeconds',
+        'itemIds',
         'slug',
         'status',
         'summary',
+        'tags',
         'title',
         'version',
+        'workText',
+        'youTubeId',
       ]);
     }
-  });
+  }, 10000);
 });

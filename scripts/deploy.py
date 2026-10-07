@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -19,8 +20,8 @@ ROUTE = Path('/etc/dokploy/traefik/dynamic/acropolis-channel.yml')
 DOMAIN = 'acropolischannel.naperu.cloud'
 PROJECT = 'acropolis-channel'
 
-def command(args, capture=False, env=None, check=True):
-    result = subprocess.run(args, cwd=ROOT, env=env, text=True, capture_output=capture, check=check)
+def command(args, capture=False, env=None, check=True, timeout=None):
+    result = subprocess.run(args, cwd=ROOT, env=env, text=True, capture_output=capture, check=check, timeout=timeout)
     return result.stdout.strip() if capture else result.returncode
 
 def compose(*args, env=None, capture=False, check=True):
@@ -65,9 +66,124 @@ def atomic_copy(source, target):
     temporary.chmod(0o644)
     temporary.replace(target)
 
-def ready():
-    result = subprocess.run(['docker', 'compose', '-p', PROJECT, 'exec', '-T', 'web', 'curl', '--fail', '--silent', '--max-time', '4', 'http://127.0.0.1:8080/health/ready'], cwd=ROOT, capture_output=True, text=True)
-    return result.returncode == 0 and json.loads(result.stdout).get('status') == 'ok'
+def ready(compose_args=None, env=None):
+    prefix = compose_args or ['docker', 'compose', '-p', PROJECT]
+    result = subprocess.run([*prefix, 'exec', '-T', 'web', 'curl', '--fail', '--silent', '--max-time', '4', 'http://127.0.0.1:8080/health/ready'], cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+    if result.returncode != 0:
+        return False
+    payload = json.loads(result.stdout)
+    return isinstance(payload, dict) and payload.get('status') == 'ok'
+
+
+def write_manifest(directory, manifest):
+    temporary = directory / 'manifest.json.tmp'
+    temporary.write_text(json.dumps(manifest, indent=2) + '\n')
+    temporary.chmod(0o600)
+    temporary.replace(directory / 'manifest.json')
+
+
+def recover_previous_deployment(directory, previous_image, previous_active, previous_route, restart_required):
+    # Forward migrations may already have committed, even if the runner failed.
+    # Recover only a runtime that proves it accepts the current database history.
+    recovery = {'verified': False, 'imageVerified': False, 'readinessVerified': False,
+                'configurationRestored': False, 'routingRestored': False,
+                'activePointerRestored': False, 'stopRequested': False,
+                'stopCommandSucceeded': False, 'webStopped': False,
+                'maintenanceRequired': True, 'restartRequired': restart_required, 'errors': []}
+
+    def record_error(stage, error):
+        # No exception message, command arguments, env or private output is retained.
+        recovery['errors'].append({'stage': stage, 'errorType': type(error).__name__})
+
+    try:
+        # Preserve configuration prepared before this attempt, including new key-protector settings.
+        # The recovered container uses its separate previous.env snapshot below.
+        shutil.copy2(directory / 'candidate.env', ROOT / '.env')
+        (ROOT / '.env').chmod(0o600)
+        recovery['configurationRestored'] = True
+    except Exception as error:
+        record_error('restore-configuration', error)
+    try:
+        if previous_route:
+            atomic_copy(directory / 'previous-routing.yml', ROUTE)
+        else:
+            ROUTE.unlink(missing_ok=True)
+        recovery['routingRestored'] = True
+    except Exception as error:
+        record_error('restore-routing', error)
+
+    prefix = ['docker', 'compose', '--project-directory', str(ROOT), '-p', PROJECT,
+              '--env-file', str(directory / 'previous.env'), '-f', str(directory / 'compose.yml')]
+    if previous_image and not recovery['errors']:
+        stage = 'prepare-previous-runtime'
+        try:
+            override = directory / 'rollback.yml'
+            override.write_text(yaml.safe_dump({'services': {'web': {'image': previous_image}}}))
+            previous_prefix = [*prefix, '-f', str(override)]
+            recovery_env = dict(os.environ, IDENTITY_EMAIL_ENABLED=env_values(directory / 'previous.env').get('IDENTITY_EMAIL_ENABLED', 'true'))
+            if restart_required:
+                stage = 'start-previous-runtime'
+                command([*previous_prefix, 'up', '-d', '--no-build', '--no-deps', 'web'], env=recovery_env, capture=True, timeout=30)
+            stage = 'verify-previous-image'
+            container = command([*previous_prefix, 'ps', '-q', 'web'], env=recovery_env, capture=True, timeout=30)
+            if not container or any(character.isspace() for character in container):
+                raise RuntimeError('Previous web runtime was not uniquely identified.')
+            actual = command(['docker', 'inspect', container, '--format', '{{.Image}}|{{.State.Running}}'], capture=True, timeout=30)
+            if actual != previous_image + '|true':
+                raise RuntimeError('Previous web runtime image or running state does not match.')
+            recovery['imageVerified'] = True
+            stage = 'verify-previous-readiness'
+            for attempt in range(30):
+                if ready(compose_args=previous_prefix, env=recovery_env):
+                    recovery['readinessVerified'] = True
+                    break
+                if attempt != 29:
+                    time.sleep(3)
+            if not recovery['readinessVerified']:
+                raise RuntimeError('Previous web runtime does not accept the current database state.')
+            stage = 'restore-active-pointer'
+            pointer = ROOT / '.local/last-active-deployment'
+            if previous_active:
+                pointer.write_text(previous_active + '\n')
+                recovery['activePointerRestored'] = True
+            else:
+                pointer.unlink(missing_ok=True)
+            recovery['verified'] = True
+            recovery['maintenanceRequired'] = False
+        except Exception as error:
+            record_error(stage, error)
+    elif not previous_image:
+        recovery['reason'] = 'no_previous_image'
+
+    if not recovery['verified']:
+        # Stop only this project's web; keep the database, snapshots and published history.
+        recovery['stopRequested'] = True
+        try:
+            command([*prefix, 'stop', 'web'], capture=True, timeout=30)
+            recovery['stopCommandSucceeded'] = True
+        except Exception as error:
+            record_error('stop-own-web', error)
+        if recovery['stopCommandSucceeded']:
+            stage = 'list-own-web-after-stop'
+            try:
+                output = command([*prefix, 'ps', '-a', '-q', 'web'], capture=True, timeout=30)
+                containers = output.splitlines() if output else []
+                if len(set(containers)) != len(containers) or any(not re.fullmatch(r'[a-f0-9]{64}', item) for item in containers):
+                    raise RuntimeError('Own web container inventory could not be verified.')
+                recovery['stopObservedContainers'] = len(containers)
+                stage = 'verify-own-web-state'
+                for container in containers:
+                    running = command(['docker', 'inspect', container, '--format', '{{.State.Running}}'], capture=True, timeout=30)
+                    if running != 'false':
+                        raise RuntimeError('Own web is running or its stopped state could not be verified.')
+                recovery['webStopped'] = True
+            except Exception as error:
+                record_error(stage, error)
+        try:
+            (ROOT / '.local/last-active-deployment').unlink(missing_ok=True)
+        except Exception as error:
+            record_error('clear-active-pointer', error)
+    return recovery
 
 def dns_ok(expected):
     try:
@@ -210,11 +326,10 @@ def main():
             shutil.copy2(ROUTE, backup / 'previous-routing.yml')
         if previous_image:
             command(['docker', 'tag', previous_image, 'acropolis-channel:recovery-' + timestamp.lower()])
-        manifest = {'database_backup': str(local / 'backups' / ('deploy-' + timestamp + '.dump')), 'sha': sha, 'image_id': image_id(web_ref), 'migration_image_id': image_id(migration_ref), 'qa_report': str(valid.relative_to(ROOT)), 'previous_image': previous_image, 'previous_routing': previous_route, 'previous_active': previous_active, 'status': 'starting'}
-        (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        manifest = {'database_backup': str(local / 'backups' / ('deploy-' + timestamp + '.dump')), 'sha': sha, 'image_id': image_id(web_ref), 'migration_image_id': image_id(migration_ref), 'qa_report': str(valid.relative_to(ROOT)), 'previous_image': previous_image, 'previous_routing': previous_route, 'previous_active': previous_active, 'migration_attempted': False, 'status': 'starting'}
+        write_manifest(backup, manifest)
         env = os.environ.copy()
         env.update(APP_IMAGE=web_ref, MIGRATION_IMAGE=migration_ref, IDENTITY_EMAIL_ENABLED=email_mode)
-        active = False
         try:
             compose('config', '--quiet', env=env)
             if email_mode == 'true':
@@ -222,8 +337,9 @@ def main():
             compose('up', '-d', '--no-build', '--wait', '--wait-timeout', '90', 'db', env=env)
             command(['bash', 'scripts/backup-db.sh', '--project', PROJECT, '--database', 'acropolis', '--output', str(local / 'backups' / ('deploy-' + timestamp + '.dump'))], env=env)
             backup_identity_material(backup, previous_container)
+            manifest['migration_attempted'] = True
+            write_manifest(backup, manifest)
             compose('--profile', 'migration', 'run', '--rm', 'migrations', env=env)
-            active = True
             compose('up', '-d', '--no-build', 'web', env=env)
             set_image_refs(web_ref, migration_ref)
             for _ in range(30):
@@ -237,7 +353,7 @@ def main():
             (local / 'last-active-deployment').write_text(str(backup) + '\n')
             if not publication_allowed:
                 manifest['status'] = 'internal_ready_dns_blocked'
-                (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+                write_manifest(backup, manifest)
                 print('Application is internally ready; DNS blocks new publication. Existing routing preserved.')
                 return 2
             atomic_copy(template, ROUTE)
@@ -252,33 +368,19 @@ def main():
             command(['docker', 'tag', web_ref, 'acropolis-channel:local'])
             manifest['status'] = 'published'
             manifest['published_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+            write_manifest(backup, manifest)
             shutil.copy2(ROOT / '.env', backup / 'active.env')
             shutil.copy2(ROOT / 'compose.yml', backup / 'compose.yml')
             shutil.copy2(ROUTE, backup / 'active-routing.yml')
             (local / 'last-deployment').write_text(str(backup) + '\n')
             print(json.dumps({'status': 'published', 'sha': sha, 'image_id': manifest['image_id'], 'url': 'https://' + DOMAIN}))
             return 0
-        except Exception:
-            shutil.copy2(backup / 'candidate.env', ROOT / '.env')
-            if previous_route:
-                atomic_copy(backup / 'previous-routing.yml', ROUTE)
-            elif ROUTE.exists():
-                ROUTE.unlink()
-            if active:
-                if previous_image:
-                    override = backup / 'rollback.yml'
-                    override.write_text(yaml.safe_dump({'services': {'web': {'image': previous_image}}}))
-                    recovery_env = dict(os.environ, IDENTITY_EMAIL_ENABLED=env_values(backup / 'previous.env').get('IDENTITY_EMAIL_ENABLED', 'true'))
-                    command(['docker', 'compose', '--project-directory', str(ROOT), '-p', PROJECT, '--env-file', str(backup / 'previous.env'), '-f', str(backup / 'compose.yml'), '-f', str(override), 'up', '-d', '--no-build', '--no-deps', 'web'], env=recovery_env)
-                else:
-                    compose('stop', 'web', check=False)
-            if previous_active:
-                (local / 'last-active-deployment').write_text(previous_active + '\n')
-            elif (local / 'last-active-deployment').exists():
-                (local / 'last-active-deployment').unlink()
-            manifest['status'] = 'failed_recovery_applied'
-            (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        except Exception as error:
+            manifest['deployment_error_type'] = type(error).__name__
+            recovery = recover_previous_deployment(backup, previous_image, previous_active, previous_route, manifest['migration_attempted'])
+            manifest['recovery'] = recovery
+            manifest['status'] = 'failed_recovery_applied' if recovery['verified'] else 'recovery_incomplete'
+            write_manifest(backup, manifest)
             raise
 
 if __name__ == '__main__':

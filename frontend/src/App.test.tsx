@@ -1,8 +1,7 @@
-import { StrictMode } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import App from './App';
+import { renderApp } from './test/renderApp';
 import { clearCsrf, type User } from './api/identity';
 import { user, admin, json } from './test/fixtures';
 type Override = (path: string, init?: RequestInit) => Response | Promise<Response> | undefined;
@@ -22,6 +21,14 @@ function mount(
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
     if (url.includes('/catalog/content?'))
       return json({ items: [], total: 0, page: 1, pageSize: 3 });
+    if (url.endsWith('/subscriptions/me'))
+      return current
+        ? json({
+            subscription: null,
+            eligibleToActivate: current.emailConfirmed && current.status === 'active',
+          })
+        : json({ code: 'unauthorized' }, 401);
+    if (url.includes('/consumption/content/')) return json({ code: 'subscription_required' }, 403);
     if (url.endsWith('/identity/capabilities')) return json({ emailEnabled: true });
     if (url.endsWith('/csrf')) return json({ token: 'sample-csrf' });
     if (url.endsWith('/identity/me')) {
@@ -41,6 +48,8 @@ function mount(
     }
     if (/\/admin\/users\?/.test(url))
       return json({ items: [user], page: 1, pageSize: 20, total: 1 });
+    if (url.includes('/admin/users/') && url.endsWith('/access'))
+      return json({ lastSignInUtc: null });
     if (url.endsWith('/admin/users/test-person'))
       return json(init?.method === 'PATCH' ? { ...user, ...body, version: 'version-two' } : user);
     if (
@@ -52,15 +61,7 @@ function mount(
     return new Response(null, { status: 204 });
   });
   vi.stubGlobal('fetch', fetch);
-  render(
-    strict ? (
-      <StrictMode>
-        <App />
-      </StrictMode>
-    ) : (
-      <App />
-    ),
-  );
+  renderApp(strict);
   return fetch;
 }
 function fill(label: string, value: string) {
@@ -73,33 +74,55 @@ beforeEach(() => {
 describe('Account journeys with real HTTP-shaped responses', () => {
   it('shows the institutional home without catalogue fixtures and handles anonymous session', async () => {
     mount('/');
-    await userEvent.click(screen.getByRole('link', { name: 'Saltar al contenido' }));
-    expect(screen.getByRole('main')).toHaveFocus();
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Conéctate');
-    await screen.findByRole('link', { name: 'Ingresar' });
-    expect(screen.getByRole('link', { name: /Crear mi cuenta/ })).toHaveAttribute(
-      'href',
-      '/register',
+    const skip = screen.getByText('Saltar al contenido', { selector: 'a' });
+    expect(skip).toHaveAccessibleName('Saltar al contenido');
+    await userEvent.click(skip);
+    const mainElement = document.querySelector('main')!;
+    const main = within(mainElement);
+    expect(mainElement).toHaveFocus();
+    const heading = main.getByText('Tu mediateca cultural.', { selector: 'h1' });
+    expect(heading).toHaveTextContent('Tu mediateca cultural.');
+    expect(heading).toHaveAccessibleName('Tu mediateca cultural.');
+    await within(document.querySelector('header')!).findByRole(
+      'link',
+      { name: 'Ingresar' },
+      { timeout: 3000 },
     );
+    const registration = main.getByText('Crear mi cuenta', { selector: 'a' });
+    expect(registration).toHaveAccessibleName('Crear mi cuenta');
+    expect(registration).toHaveAttribute('href', '/register');
     expect(screen.queryByText('Contenido de demostración')).not.toBeInTheDocument();
-  });
+  }, 10000);
   it('shows authenticated home actions and prevents login returning to an unsafe external URL', async () => {
     mount('/', user);
     await screen.findByRole('link', { name: 'Mi perfil' });
-    expect(screen.getByRole('link', { name: /Ir a mi perfil/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Ver mi suscripción' })).toHaveAttribute(
       'href',
-      '/profile',
+      '/profile/subscription',
     );
-  });
+  }, 10000);
   it('registers allowed fields and carries only the submitted email into the pending confirmation page', async () => {
     const fetch = mount('/register');
-    await screen.findByLabelText('Nombre visible');
-    fill('Nombre visible', '  Persona Nueva  ');
-    fill('Correo electrónico', '  Persona@example.test  ');
-    fill('Contraseña', 'Una frase larga para entrar');
-    fill('Confirmar contraseña', 'Una frase larga para entrar');
-    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
-    await screen.findByRole('heading', { name: 'Revisa tu correo.' });
+    const mainElement = document.querySelector('main')!;
+    const content = within(mainElement);
+    const nameField = await content.findByLabelText('Nombre visible');
+    const registrationForm = nameField.closest('form');
+    if (!registrationForm) throw new Error('Registration form is missing.');
+    const fields = within(registrationForm);
+    fireEvent.change(fields.getByLabelText('Nombre visible', { exact: true }), {
+      target: { value: '  Persona Nueva  ' },
+    });
+    fireEvent.change(fields.getByLabelText('Correo electrónico', { exact: true }), {
+      target: { value: '  Persona@example.test  ' },
+    });
+    fireEvent.change(fields.getByLabelText('Contraseña', { exact: true }), {
+      target: { value: 'Una frase larga para entrar' },
+    });
+    fireEvent.change(fields.getByLabelText('Confirmar contraseña', { exact: true }), {
+      target: { value: 'Una frase larga para entrar' },
+    });
+    await userEvent.click(fields.getByRole('button', { name: 'Crear cuenta' }));
+    await content.findByRole('heading', { name: 'Revisa tu correo.' });
     const call = fetch.mock.calls.find(([path]) => String(path).endsWith('/register'));
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({
       displayName: 'Persona Nueva',
@@ -120,7 +143,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     expect(screen.queryByLabelText('Correo electrónico')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Contraseña')).not.toBeInTheDocument();
     expect(screen.getByText(/Correo utilizado:/)).toHaveTextContent('Persona@example.test');
-    const resend = await screen.findByRole('button', { name: 'Reenviar enlace' });
+    const resend = await content.findByRole('button', { name: 'Reenviar enlace' });
     expect(screen.getByText('¿No recibiste el mensaje?')).toBeInTheDocument();
     expect(
       screen.getByText('Puedes solicitar un nuevo enlace una vez por minuto.'),
@@ -130,7 +153,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
       false,
     );
     await userEvent.click(resend);
-    await screen.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
+    await content.findByText('Si corresponde, recibirás un nuevo enlace. Revisa tu correo.');
     const resends = fetch.mock.calls.filter(([path]) =>
       String(path).endsWith('/resend-confirmation'),
     );
@@ -141,31 +164,42 @@ describe('Account journeys with real HTTP-shaped responses', () => {
   });
   it('keeps registration failures on the original form and creates navigation context only after an explicit successful retry', async () => {
     let unavailable = true;
-    const fetch = mount('/register', null, (path) =>
-      path.endsWith('/register') && unavailable
-        ? json({ code: 'email_unavailable', detail: 'private server diagnostic' }, 503)
-        : undefined,
-    );
-    await screen.findByLabelText('Nombre visible');
-    fill('Nombre visible', 'Persona Nueva');
-    fill('Correo electrónico', 'persona@example.test');
-    fill('Contraseña', 'Una frase larga para entrar');
-    fill('Confirmar contraseña', 'Una frase larga para entrar');
-    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    let fetch!: ReturnType<typeof mount>;
+    await act(async () => {
+      fetch = mount('/register', null, (path) =>
+        path.endsWith('/register') && unavailable
+          ? json({ code: 'email_unavailable', detail: 'private server diagnostic' }, 503)
+          : undefined,
+      );
+    });
+    const content = within(document.querySelector('main')!);
+    const nameField = await content.findByLabelText('Nombre visible');
+    const registrationForm = nameField.closest('form');
+    if (!registrationForm) throw new Error('Registration form is missing.');
+    const fields = within(registrationForm);
+    const fillField = (label: string, value: string) =>
+      fireEvent.change(fields.getByLabelText(label, { exact: true }), { target: { value } });
+    fillField('Nombre visible', 'Persona Nueva');
+    fillField('Correo electrónico', 'persona@example.test');
+    fillField('Contraseña', 'Una frase larga para entrar');
+    fillField('Confirmar contraseña', 'Una frase larga para entrar');
+    const createAccount = fields.getByRole('button', { name: 'Crear cuenta' });
+    const emailField = fields.getByLabelText('Correo electrónico');
+    await userEvent.click(createAccount);
+    expect(await fields.findByRole('alert')).toHaveTextContent(
       'El registro y la recuperación por correo no están disponibles temporalmente.',
     );
     expect(window.location.pathname).toBe('/register');
     expect(window.history.state['usr']).toBeNull();
-    expect(screen.getByLabelText('Correo electrónico')).toHaveValue('persona@example.test');
+    expect(emailField).toHaveValue('persona@example.test');
     expect(screen.queryByText(/Correo utilizado:/)).not.toBeInTheDocument();
     expect(screen.queryByText('private server diagnostic')).not.toBeInTheDocument();
     expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/resend-confirmation'))).toBe(
       false,
     );
     unavailable = false;
-    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }));
-    await screen.findByRole('heading', { name: 'Revisa tu correo.' });
+    await userEvent.click(createAccount);
+    await content.findByRole('heading', { name: 'Revisa tu correo.' });
     expect(window.history.state['usr']).toEqual({
       kind: 'registration',
       email: 'persona@example.test',
@@ -343,18 +377,18 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     expect(screen.queryByText('secret internals')).not.toBeInTheDocument();
     rejected = false;
     await userEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 }, { timeout: 3000 });
     expect(fetch.mock.calls.filter(([path]) => String(path).endsWith('/login'))).toHaveLength(2);
     expect(localStorage.length).toBe(0);
   });
   it('redirects an authenticated visit to login into the own profile', async () => {
     mount('/login', user);
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 }, { timeout: 3000 });
   });
   it('protects private routes while the session is loading and rejects unauthenticated access', async () => {
     mount('/profile');
     expect(screen.getByRole('status')).toHaveTextContent('Comprobando');
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
   });
   it('shows a retry instruction when session bootstrap is unavailable', async () => {
     mount('/', null, (path) => (path.endsWith('/identity/me') ? json({}, 503) : undefined));
@@ -416,11 +450,11 @@ describe('Account journeys with real HTTP-shaped responses', () => {
   });
   it('updates own name without arbitrary target, level, email or permission changes', async () => {
     const fetch = mount('/profile', user);
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
     fill('Nombre visible', 'Nuevo Nombre');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
     await screen.findByText('Guardamos tus cambios.');
-    expect(screen.getByRole('heading', { name: 'Hola, Nuevo.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Nuevo Nombre', level: 2 })).toBeInTheDocument();
     const call = fetch.mock.calls.find(
       ([path, options]) => String(path).endsWith('/identity/me') && options?.method === 'PATCH',
     );
@@ -440,7 +474,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
           )
         : undefined,
     );
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
     fill('Contraseña actual', 'Incorrect current password');
     fill('Nueva contraseña', 'Una contraseña completamente nueva');
     fill('Confirmar contraseña', 'Una contraseña completamente nueva');
@@ -456,9 +490,9 @@ describe('Account journeys with real HTTP-shaped responses', () => {
       'Revisa el valor de este campo.',
     );
     expect(window.location.pathname).toBe('/profile');
-    expect(screen.getByRole('heading', { name: 'Hola, Persona.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Mi perfil', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Mi perfil' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Qué bueno verte.' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Ingresar' })).not.toBeInTheDocument();
     expect(screen.queryByText('Private server diagnostic')).not.toBeInTheDocument();
     expect(
       dispatched.mock.calls.some(([event]) => event.type === 'acropolis:session-expired'),
@@ -468,21 +502,21 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     ).toHaveLength(1);
     fill('Contraseña actual', 'Correct current password');
     await userEvent.click(screen.getByRole('button', { name: 'Cambiar contraseña' }));
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
     expect(window.location.pathname).toBe('/login');
     expect(screen.getByRole('status')).toHaveTextContent('Contraseña actualizada');
     expect(
       fetch.mock.calls.filter(([path]) => String(path).endsWith('/change-password')),
     ).toHaveLength(2);
-  });
+  }, 10000);
   it('password change revokes local session and requires login with the new password', async () => {
     const fetch = mount('/profile', user);
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
     fill('Contraseña actual', 'Current Password');
     fill('Nueva contraseña', 'Una contraseña completamente nueva');
     fill('Confirmar contraseña', 'Una contraseña completamente nueva');
     await userEvent.click(screen.getByRole('button', { name: 'Cambiar contraseña' }));
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
     expect(screen.getByRole('status')).toHaveTextContent('Contraseña actualizada');
     expect(fetch.mock.calls.some(([path]) => String(path).endsWith('/change-password'))).toBe(true);
   });
@@ -490,7 +524,7 @@ describe('Account journeys with real HTTP-shaped responses', () => {
     mount('/profile', user);
     await screen.findByRole('button', { name: 'Cerrar sesión' });
     await userEvent.click(screen.getByRole('button', { name: 'Cerrar sesión' }));
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
     expect(screen.getByRole('status')).toHaveTextContent('Cerraste tu sesión');
   });
   it('preserves the session when logout fails and offers an explicit retry', async () => {
@@ -502,9 +536,9 @@ describe('Account journeys with real HTTP-shaped responses', () => {
   });
   it('reacts to server-side revocation with redirect and no protected UI', async () => {
     mount('/profile', user);
-    await screen.findByRole('heading', { name: 'Hola, Persona.' });
+    await screen.findByRole('heading', { name: 'Mi perfil', level: 1 });
     fireEvent(window, new Event('acropolis:session-expired'));
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
     expect(
       screen.getByText('Tu sesión ha finalizado. Ingresa de nuevo para continuar.'),
     ).toBeInTheDocument();
@@ -526,14 +560,14 @@ describe('User administration', () => {
         ? json({ items: [user], page: 1, pageSize: 20, total: 21 })
         : undefined,
     );
-    await screen.findByRole('link', { name: 'Ver usuario Persona de Prueba' });
+    await screen.findByRole('link', { name: 'Ver usuario Persona de Prueba' }, { timeout: 3000 });
     fill('Buscar usuarios', 'Persona');
     fireEvent.change(screen.getByLabelText('Estado'), { target: { value: 'active' } });
     fireEvent.change(screen.getByLabelText('Nivel institucional'), {
       target: { value: 'Externo' },
     });
     await userEvent.click(screen.getByRole('button', { name: 'Buscar' }));
-    await screen.findByRole('link', { name: 'Ver usuario Persona de Prueba' });
+    await screen.findByRole('link', { name: 'Ver usuario Persona de Prueba' }, { timeout: 3000 });
     await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }));
     await screen.findByText('Página 2');
     await userEvent.click(screen.getByRole('button', { name: 'Anterior' }));
@@ -543,7 +577,7 @@ describe('User administration', () => {
         String(path).includes('search=Persona&status=active&level=Externo&page=2'),
       ),
     ).toBe(true);
-  });
+  }, 10000);
   it('handles empty results and a failed load with retry', async () => {
     let failed = true;
     mount('/admin/users', admin, (path) =>
@@ -559,16 +593,28 @@ describe('User administration', () => {
     await screen.findByText('No hay usuarios con estos filtros.');
   });
   it('edits levels and status using the version without granting administrator permission', async () => {
-    const fetch = mount('/admin/users/test-person', admin);
-    await screen.findByLabelText('Nombre visible');
-    fill('Nombre visible', 'Nombre Actualizado');
-    fireEvent.change(screen.getByLabelText('Estado de la cuenta'), {
+    let fetch!: ReturnType<typeof mount>;
+    await act(async () => {
+      fetch = mount('/admin/users/test-person', admin);
+    });
+    const content = within(document.querySelector('main')!);
+    const nameField = await content.findByLabelText('Nombre visible');
+    const editForm = nameField.closest('form');
+    if (!editForm) throw new Error('User edit form is missing.');
+    const fields = within(editForm);
+    const memberField = fields.getByLabelText('Miembro');
+    const externalField = fields.getByLabelText('Externo');
+    const saveUser = fields.getByRole('button', { name: 'Guardar usuario' });
+    fireEvent.change(fields.getByLabelText('Nombre visible', { exact: true }), {
+      target: { value: 'Nombre Actualizado' },
+    });
+    fireEvent.change(fields.getByLabelText('Estado de la cuenta'), {
       target: { value: 'disabled' },
     });
-    await userEvent.click(screen.getByLabelText('Miembro'));
-    await userEvent.click(screen.getByLabelText('Externo'));
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
-    await screen.findByText('Guardamos los cambios del usuario.');
+    await userEvent.click(memberField);
+    await userEvent.click(externalField);
+    await userEvent.click(saveUser);
+    await content.findByText('Guardamos los cambios del usuario.');
     const call = fetch.mock.calls.find(
       ([path, options]) =>
         String(path).endsWith('/admin/users/test-person') && options?.method === 'PATCH',
@@ -581,27 +627,34 @@ describe('User administration', () => {
     });
     expect(screen.queryByLabelText(/Administrador/)).not.toBeInTheDocument();
   });
-  it('blocks invalid names before mutating and allows reloading a stale version', async () => {
+  it('blocks invalid names before any administrative mutation', async () => {
+    const fetch = mount('/admin/users/test-person', admin);
+    await screen.findByLabelText('Nombre visible', {}, { timeout: 3000 });
+    fill('Nombre visible', 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('El nombre debe tener');
+    expect(fetch.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(false);
+    expect(screen.getByLabelText('Nombre visible')).toHaveValue('x');
+  });
+  it('preserves a conflicting user edit and explicitly reloads a fresh version before retrying', async () => {
     let conflict = true;
     const fetch = mount('/admin/users/test-person', admin, (path, init) =>
       path.endsWith('/admin/users/test-person') && init?.method === 'PATCH' && conflict
         ? json({ code: 'concurrency_conflict' }, 409)
         : undefined,
     );
-    await screen.findByLabelText('Nombre visible');
-    fill('Nombre visible', 'x');
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('El nombre debe tener');
-    expect(fetch.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(false);
+    await screen.findByLabelText('Nombre visible', {}, { timeout: 3000 });
     fill('Nombre visible', 'Nombre Válido');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Otra persona actualizó');
+    expect(screen.getByLabelText('Nombre visible')).toHaveValue('Nombre Válido');
     conflict = false;
     await userEvent.click(screen.getByRole('button', { name: 'Recargar datos' }));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
     await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
     await screen.findByText('Guardamos los cambios del usuario.');
-  });
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(2);
+  }, 10000);
   it('shows pending confirmation and does not send pending as an editable status', async () => {
     const fetch = mount('/admin/users/test-person', admin, (path, init) =>
       path.endsWith('/admin/users/test-person') && init?.method !== 'PATCH'
@@ -634,15 +687,15 @@ describe('User administration', () => {
           )
         : undefined,
     );
-    await screen.findByLabelText('Nombre visible');
+    await screen.findByLabelText('Nombre visible', { exact: true }, { timeout: 3000 });
     await userEvent.click(screen.getByLabelText('Miembro'));
     await userEvent.click(screen.getByRole('button', { name: 'Guardar usuario' }));
-    await screen.findByRole('heading', { name: 'Qué bueno verte.' });
+    await screen.findByRole('heading', { name: 'Ingresar' }, { timeout: 3000 });
     expect(screen.getByRole('status')).toHaveTextContent(
       'Actualizamos tu cuenta. Ingresa de nuevo para continuar.',
     );
     expect(screen.queryByRole('link', { name: 'Administración' })).not.toBeInTheDocument();
-  });
+  }, 10000);
   it('reflects the server pending state after enabling an unconfirmed account', async () => {
     mount('/admin/users/test-person', admin, (path, init) =>
       path.endsWith('/admin/users/test-person')

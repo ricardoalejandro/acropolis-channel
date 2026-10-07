@@ -8,9 +8,14 @@ public sealed record ResetPasswordRequest(Guid UserId, string Token, string NewP
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record ProfileRequest(string DisplayName);
 public sealed record AdminUserRequest(string Version, string? DisplayName = null, string? Status = null, string[]? Levels = null);
-public sealed record UserView(Guid Id, string DisplayName, string Email, bool EmailConfirmed, string Status, string[] Levels, string[] Permissions, string Version);
+public sealed record UserView(Guid Id, string DisplayName, string Email, bool EmailConfirmed, string Status, string[] Levels, string[] Permissions, string Version, bool IsOwner = false);
+public sealed record IdentityAccountSummary(Guid Id, string DisplayName, string Email, string Status, bool EmailConfirmed);
+public sealed record AdminPermissionsRequest(string Version, string[] Permissions);
 public sealed record UserPage(UserView[] Items, int Total, int Page, int PageSize);
 public sealed record AuthenticatedUser(UserView User, string SecurityVersion);
+public sealed record UserAuditChanges(string[] Fields);
+public sealed record UserAuditView(Guid Id, Guid UserId, Guid ActorId, string Action, UserAuditChanges Changes, DateTimeOffset CreatedUtc);
+public sealed record UserAuditPage(UserAuditView[] Items, int Total, int Page, int PageSize);
 public interface IIdentityService
 {
     Task<IdentityResult<bool>> RegisterAsync(RegisterRequest request, CancellationToken token);
@@ -20,9 +25,12 @@ public interface IIdentityService
     Task<IdentityResult<bool>> ResetPasswordAsync(ResetPasswordRequest request, CancellationToken token);
     Task<IdentityResult<bool>> ChangePasswordAsync(Guid userId, ChangePasswordRequest request, CancellationToken token);
     Task<UserView?> GetUserAsync(Guid userId, CancellationToken token);
+    Task<IdentityAccountSummary[]> LookupAccountsAsync(IReadOnlyCollection<Guid> userIds, CancellationToken token);
     Task<IdentityResult<UserView>> UpdateProfileAsync(Guid userId, ProfileRequest request, CancellationToken token);
     Task<UserPage> ListUsersAsync(string? search, string? status, string? level, int page, int pageSize, CancellationToken token);
     Task<IdentityResult<UserView>> UpdateUserAsync(Guid actorId, Guid userId, AdminUserRequest request, CancellationToken token);
+    Task<UserAuditPage> ListAuditAsync(DateTimeOffset? fromUtc, DateTimeOffset? toUtc, string? action, Guid? userId, int page, int pageSize, CancellationToken token);
+    Task<IdentityResult<UserView>> UpdatePermissionsAsync(Guid actorId, Guid userId, AdminPermissionsRequest request, CancellationToken token);
 }
 
 public sealed record MfaChallengeView(bool MfaRequired, bool EnrollmentRequired, string ChallengeToken, DateTimeOffset ExpiresUtc);

@@ -24,7 +24,30 @@ public sealed class ApiTests
         Assert.Equal("Hola mundo", greeting!.Message);
         Assert.Equal("nosniff", Assert.Single(response.Headers.GetValues("X-Content-Type-Options")));
         Assert.Equal("no-referrer", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
-        Assert.Contains("frame-ancestors 'none'", Assert.Single(response.Headers.GetValues("Content-Security-Policy")));
+        var policy = Assert.Single(response.Headers.GetValues("Content-Security-Policy"));
+        Assert.Contains("frame-ancestors 'none'", policy);
+        Assert.Contains("script-src 'self' https://www.youtube.com https://s.ytimg.com;", policy);
+        Assert.Contains("frame-src https://www.youtube-nocookie.com https://www.youtube.com;", policy);
+        Assert.Contains("connect-src 'self';", policy);
+        Assert.DoesNotContain("unsafe-inline", policy);
+        Assert.DoesNotContain("https:", policy.Replace("https://www.youtube.com", "", StringComparison.Ordinal)
+            .Replace("https://s.ytimg.com", "", StringComparison.Ordinal).Replace("https://www.youtube-nocookie.com", "", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("/api/v1/consumption/content/an-official-work")]
+    [InlineData("/api/v1/subscriptions/me")]
+    [InlineData("/api/v1/admin/users/audit")]
+    [InlineData("/api/v1/admin/content/audit")]
+    [InlineData("/api/v1/admin/subscriptions/audit")]
+    public async Task RestrictedRoutesRejectAnonymousRequestsAndCannotBeCached(string path)
+    {
+        await using var factory = new ApiFactory(true);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        Assert.Equal("no-referrer", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
     }
 
     [Fact]

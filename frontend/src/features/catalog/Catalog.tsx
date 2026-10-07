@@ -9,10 +9,17 @@ import {
   type ContentSummary,
 } from '../../api/catalog';
 import { useCatalog } from './useCatalog';
+import { Icon } from '../../components/Icon';
+import { CollectionItems, WorkAccess, SequenceNavigation } from './Work';
 import './catalog.css';
+import './topics.css';
+import { PublicTopicFilter } from './PublicTopicFilter';
 export function ContentCard({ item }: { item: ContentSummary }) {
   return (
-    <Link className="catalog-card" to={'/content/' + encodeURIComponent(item.slug)}>
+    <Link
+      className={'catalog-card catalog-card-' + item.category}
+      to={'/content/' + encodeURIComponent(item.slug)}
+    >
       <div className={'catalog-card-image' + (item.coverAsset ? '' : ' catalog-no-image')}>
         {item.coverAsset ? (
           <img
@@ -23,9 +30,17 @@ export function ContentCard({ item }: { item: ContentSummary }) {
             alt=""
           />
         ) : (
-          <span aria-hidden="true">
-            acrópolis <em>channel</em>
-          </span>
+          <Icon
+            name={
+              item.category === 'lecturas'
+                ? 'book'
+                : item.category === 'podcast'
+                  ? 'audio'
+                  : item.category === 'cursos'
+                    ? 'course'
+                    : 'video'
+            }
+          />
         )}
         {item.durationSeconds !== null && (
           <span className="catalog-duration">{durationLabel(item.durationSeconds)}</span>
@@ -33,13 +48,11 @@ export function ContentCard({ item }: { item: ContentSummary }) {
       </div>
       <div className="catalog-card-meta">
         <span>{categoryLabel(item.category)}</span>
-        <span aria-hidden="true">↗</span>
       </div>
       <h3>{item.title}</h3>
+      {item.author && <p className="catalog-author">{item.author}</p>}
       {item.summary && <p>{item.summary}</p>}
-      <span className="catalog-card-link">
-        Ver contenido <span aria-hidden="true">→</span>
-      </span>
+      <span className="catalog-card-link">Ver ficha</span>
     </Link>
   );
 }
@@ -47,19 +60,28 @@ export function CategoryStrip() {
   return (
     <section className="catalog-categories">
       <div className="catalog-section-heading">
-        <p className="eyebrow">ENCUENTRA TU PRÓXIMA PREGUNTA</p>
-        <h2>Caminos para descubrir.</h2>
+        <p className="eyebrow">Elige qué explorar</p>
+        <h2>Categorías</h2>
       </div>
       <div className="catalog-category-grid">
-        {categories.map((category, index) => (
+        {categories.map((category) => (
           <Link key={category.id} to={'/explore?category=' + category.id}>
-            <span className="catalog-category-number" aria-hidden="true">
-              0{index + 1}
-            </span>
+            <Icon
+              name={
+                category.id === 'lecturas'
+                  ? 'book'
+                  : category.id === 'podcast'
+                    ? 'audio'
+                    : category.id === 'documentales'
+                      ? 'film'
+                      : category.id === 'cursos'
+                        ? 'course'
+                        : category.id === 'charlas-online'
+                          ? 'talk'
+                          : 'video'
+              }
+            />
             <span>{category.label}</span>
-            <span aria-hidden="true" className="catalog-category-arrow">
-              ↗
-            </span>
           </Link>
         ))}
       </div>
@@ -101,13 +123,11 @@ export function LatestContent() {
     <section className="catalog-editorial">
       <div className="catalog-section-heading">
         <div>
-          <p className="eyebrow">UNA PAUSA PARA AMPLIAR LA MIRADA</p>
-          <h2>
-            Ideas que dejan <em>huella.</em>
-          </h2>
+          <p className="eyebrow">Nuevas publicaciones</p>
+          <h2>Novedades de la mediateca</h2>
         </div>
         <Link className="text-link" to="/explore">
-          Explorar todo <span aria-hidden="true">→</span>
+          Explorar todo
         </Link>
       </div>
       <CatalogState loading={state.loading} error={state.error} retry={state.reload}>
@@ -119,10 +139,10 @@ export function LatestContent() {
           </div>
         ) : (
           <div className="catalog-empty">
-            <h3>Pronto, nuevas ideas.</h3>
+            <h3>El catálogo está por comenzar.</h3>
             <p>
-              Aún no hay contenidos publicados. Mientras tanto, conoce nuestra propuesta de
-              filosofía, cultura y voluntariado.
+              Aún no hay contenidos publicados. Puedes recorrer las categorías y preparar tu acceso
+              gratuito.
             </p>
           </div>
         )}
@@ -231,6 +251,7 @@ function ExploreView({
   const query = contentQuery(params);
   const [search, setSearch] = useState(query.search ?? '');
   const [category, setCategory] = useState(query.category ?? '');
+  const [topic, setTopic] = useState(query.topic ?? '');
   const key = params.toString();
   const load = useCallback(() => catalog.list(contentQuery(new URLSearchParams(key))), [key]);
   const state = useCatalog(load, key);
@@ -240,18 +261,17 @@ function ExploreView({
     const selectedCategory = applied ? (query.category ?? '') : category;
     if (selectedSearch) next.set('search', selectedSearch);
     if (selectedCategory) next.set('category', selectedCategory);
+    const selectedTopic = applied ? (query.topic ?? '') : topic;
+    if (selectedTopic) next.set('topic', selectedTopic);
     if (page > 1) next.set('page', String(page));
     setParams(next);
   }
   return (
     <div className="workspace catalog-explore">
       <div className="page-heading">
-        <p className="eyebrow">EXPLORAR ACRÓPOLIS CHANNEL</p>
-        <h1>
-          Una idea puede <br />
-          <em>abrir un camino.</em>
-        </h1>
-        <p className="lead">Lecturas, voces y miradas para seguir descubriendo.</p>
+        <p className="eyebrow">Mediateca</p>
+        <h1>Explorar la mediateca</h1>
+        <p className="lead">Encuentra lecturas, vídeos, podcasts y cursos.</p>
       </div>
       <CatalogFilters
         search={search}
@@ -259,7 +279,7 @@ function ExploreView({
         category={category}
         setCategory={setCategory}
         onSubmit={() => change()}
-      />
+      ><PublicTopicFilter value={topic} change={setTopic} /></CatalogFilters>
       <CatalogState loading={state.loading} error={state.error} retry={state.reload}>
         {state.data && (
           <>
@@ -275,7 +295,7 @@ function ExploreView({
             ) : (
               <div className="catalog-empty">
                 <h2>
-                  {query.search || query.category
+                  {query.search || query.category || query.topic
                     ? 'No encontramos coincidencias.'
                     : 'El catálogo está por comenzar.'}
                 </h2>
@@ -308,16 +328,27 @@ export function ContentPage() {
       <Link className="text-link back-link" to="/explore">
         ← Explorar contenidos
       </Link>
-      {!item && <h1>Contenido</h1>}
+      {item && (
+        <div className="catalog-topline">
+          <span>{categoryLabel(item.category)}</span>
+          {item.durationSeconds !== null && <span>{durationLabel(item.durationSeconds)}</span>}
+        </div>
+      )}
+      <h1>{item?.title ?? 'Contenido'}</h1>
       <CatalogState loading={state.loading} error={state.error} retry={state.reload}>
         {item && (
           <>
-            <div className="catalog-topline">
-              <span>{categoryLabel(item.category)}</span>
-              {item.durationSeconds !== null && <span>{durationLabel(item.durationSeconds)}</span>}
-            </div>
-            <h1>{item.title}</h1>
+            {item.author && <p className="catalog-author">{item.author}</p>}
             <p className="catalog-lead">{item.summary}</p>
+            {Boolean(item.tags?.length) && (
+              <div className="tag-list">
+                {item.tags?.map((tag) => (
+                  <span className="tag" key={tag}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
             {item.coverAsset && (
               <img
                 className="catalog-detail-cover"
@@ -327,25 +358,13 @@ export function ContentPage() {
                 alt=""
               />
             )}
-            <div className="catalog-detail-bottom">
-              <section>
-                <h2>Sobre este contenido</h2>
-                <div className="catalog-body">{item.body}</div>
-              </section>
-              <aside>
-                <p className="eyebrow">SIGUE DESCUBRIENDO</p>
-                <h3>
-                  Siempre hay <br />
-                  <em>otra pregunta.</em>
-                </h3>
-                <Link className="text-link" to="/explore">
-                  Explorar contenidos →
-                </Link>
-              </aside>
-            </div>
-            <p className="catalog-availability">
-              La reproducción multimedia y las suscripciones todavía no están habilitadas.
-            </p>
+            <section className="catalog-synopsis">
+              <h2>Sobre este contenido</h2>
+              <div className="catalog-body">{item.body}</div>
+            </section>
+            <CollectionItems item={item} />
+            <WorkAccess item={item} />
+            <SequenceNavigation slug={item.slug} />
           </>
         )}
       </CatalogState>

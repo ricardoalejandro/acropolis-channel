@@ -222,6 +222,17 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "acropolis.subscriptions.application": {
+        "type": "Project"
+      },
+      "acropolis.subscriptions.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "Acropolis.Identity.Application": "[1.0.0, )",
+          "Acropolis.Subscriptions.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
       "MailKit": {
         "type": "CentralTransitive",
         "requested": "[4.18.1, )",

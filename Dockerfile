@@ -20,7 +20,7 @@ COPY --from=frontend-preview /source/frontend/dist-preview/ /srv/
 EXPOSE 8081
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS sdk
-ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_PROCESSOR_COUNT=1
 WORKDIR /source
 COPY . .
 RUN dotnet restore AcropolisChannel.slnx --locked-mode --disable-parallel

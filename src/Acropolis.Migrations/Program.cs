@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Acropolis.Subscriptions.Infrastructure;
 using Microsoft.Extensions.Options;
 using Acropolis.Identity.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +32,10 @@ internal static class EntryPoint
             Console.Error.WriteLine("{\"error\":\"database_configuration_missing\"}");
             return 1;
         }
-        using var deadline = new CancellationTokenSource(args.FirstOrDefault() is "qa-seed" or "qa-seed-catalog" ? TimeSpan.FromMinutes(15) : TimeSpan.FromSeconds(30));
+        var operationTimeout = args.FirstOrDefault() is "qa-seed" or "qa-seed-catalog" ? TimeSpan.FromMinutes(15)
+            : args is ["recovery-invalidate", "--maintenance"] ? TimeSpan.FromMinutes(5)
+            : TimeSpan.FromSeconds(30);
+        using var deadline = new CancellationTokenSource(operationTimeout);
         try
         {
             if (args.Length == 0)
@@ -49,6 +53,10 @@ internal static class EntryPoint
             {
                 case ["prune-identity"]:
                     await operations.PruneAsync(deadline.Token); break;
+                case ["bootstrap-owner", "--email", var email]:
+                    await operations.BootstrapOwnerAsync(email, Environment.GetEnvironmentVariable("Identity__OwnerEmail"), deadline.Token); break;
+                case ["recover-owner", "--email", var email, "--maintenance"]:
+                    await operations.RecoverOwnerAsync(email, Environment.GetEnvironmentVariable("Identity__OwnerEmail"), true, deadline.Token); break;
                 case ["bootstrap-admin", "--email", var email]:
                     await operations.BootstrapAsync(email, deadline.Token); break;
                 case ["grant-content-manager", "--email", var email]:
@@ -56,7 +64,15 @@ internal static class EntryPoint
                 case ["revoke-content-manager", "--email", var email]:
                     await operations.SetContentManagerAsync(email, false, deadline.Token); break;
                 case ["recovery-invalidate", "--maintenance"]:
-                    await operations.InvalidateRecoveryAsync(deadline.Token); break;
+                    await operations.InvalidateRecoveryAsync(deadline.Token);
+                    var subscriptionsOptions = new DbContextOptionsBuilder<SubscriptionsDbContext>();
+                    SubscriptionsRegistration.ConfigureDatabase(subscriptionsOptions, connection);
+                    await using (var subscriptionsDatabase = new SubscriptionsDbContext(subscriptionsOptions.Options))
+                    {
+                        subscriptionsDatabase.Database.SetCommandTimeout(30);
+                        await new SubscriptionOperations(subscriptionsDatabase, TimeProvider.System).InvalidateRecoveryAsync(deadline.Token);
+                    }
+                    break;
                 case ["recovery-revalidate", "--email", var email, "--maintenance"]:
                     await operations.RevalidateAsync(email, false, deadline.Token); break;
                 case ["recover-admin", "--email", var email, "--maintenance"]:

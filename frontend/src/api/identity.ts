@@ -16,6 +16,7 @@ export type User = {
   levels: Level[];
   permissions: string[];
   version: string;
+  isOwner?: boolean;
 };
 export type MfaChallenge = {
   mfaRequired: true;
@@ -66,6 +67,11 @@ export function errorMessage(code: string): string {
     concurrency_conflict:
       'Otra persona actualizó este usuario. Recarga sus datos antes de guardar.',
     last_admin: 'Debe permanecer al menos un administrador activo.',
+    owner_protected:
+      'La cuenta propietaria está protegida y no se puede modificar desde esta pantalla.',
+    account_not_active: 'Tu cuenta no tiene acceso activo. Contacta con Nueva Acrópolis.',
+    subscription_required: 'Activa tu suscripción gratuita para acceder a esta obra.',
+    subscription_suspended: 'Tu suscripción está suspendida. Contacta con Nueva Acrópolis.',
     invalid_token: 'Este enlace no es válido o ha caducado. Solicita uno nuevo.',
     timeout: 'La respuesta está tardando demasiado. Inténtalo de nuevo.',
     unavailable: 'No pudimos conectar. Comprueba tu conexión e inténtalo de nuevo.',
@@ -99,7 +105,8 @@ export function userFrom(value: unknown): User {
     !value['levels'].every((level) => levels.includes(level as Level)) ||
     !Array.isArray(value['permissions']) ||
     !value['permissions'].every((permission) => typeof permission === 'string') ||
-    typeof value['version'] !== 'string'
+    typeof value['version'] !== 'string' ||
+    (value['isOwner'] !== undefined && typeof value['isOwner'] !== 'boolean')
   )
     throw new ApiError(0, 'invalid_response');
   return value as User;
@@ -126,15 +133,20 @@ export async function request(
   path: string,
   body?: unknown,
   method = body === undefined ? 'GET' : 'POST',
+  options?: { signal?: AbortSignal; cache?: RequestCache },
 ): Promise<unknown> {
   const token = method !== 'GET' ? await csrfToken() : undefined;
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  options?.signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
+    if (options?.signal?.aborted) throw new ApiError(0, 'timeout');
     const response = await fetch('/api/v1' + path, {
       method,
       credentials: 'same-origin',
       signal: controller.signal,
+      ...(options?.cache !== undefined ? { cache: options.cache } : {}),
       headers: {
         Accept: 'application/json',
         ...(method !== 'GET'
@@ -143,6 +155,7 @@ export async function request(
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    if (options?.signal?.aborted) throw new ApiError(0, 'timeout');
     if (response.status === 204) return undefined;
     let data: unknown;
     try {
@@ -150,6 +163,7 @@ export async function request(
     } catch {
       throw new ApiError(response.status, response.ok ? 'invalid_response' : 'unavailable');
     }
+    if (options?.signal?.aborted) throw new ApiError(0, 'timeout');
     if (!response.ok) {
       const code =
         isObject(data) && typeof data['code'] === 'string'
@@ -172,6 +186,7 @@ export async function request(
     if (error instanceof ApiError) throw error;
     throw new ApiError(0, controller.signal.aborted ? 'timeout' : 'unavailable');
   } finally {
+    options?.signal?.removeEventListener('abort', abort);
     clearTimeout(timer);
   }
 }
@@ -219,6 +234,14 @@ export const identity = {
     };
   },
   user: async (id: string) => userFrom(await request('/admin/users/' + encodeURIComponent(id))),
+  permissions: async (id: string, version: string, permissions: string[]) =>
+    userFrom(
+      await request(
+        '/admin/users/' + encodeURIComponent(id) + '/permissions',
+        { version, permissions },
+        'PUT',
+      ),
+    ),
   updateUser: async (id: string, body: unknown) =>
     userFrom(await request('/admin/users/' + encodeURIComponent(id), body, 'PATCH')),
 };

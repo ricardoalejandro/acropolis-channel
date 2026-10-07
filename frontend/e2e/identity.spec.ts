@@ -317,6 +317,8 @@ test.describe('Identity on the real Production candidate', () => {
       await context.storageState({ path: path.join(output, 'revoked.json') });
       fs.chmodSync(path.join(output, 'revoked.json'), 0o600);
     }
+    if (testInfo.project.name === 'mobile-chromium')
+      await page.getByRole('button', { name: 'Menú', exact: true }).click();
     await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
     await expect(page).toHaveURL(/\/login/);
     expect((await page.request.get(`${api}/me`)).status()).toBe(401);
@@ -404,7 +406,7 @@ test.describe('Identity on the real Production candidate', () => {
     test.setTimeout(60_000);
     const origin = process.env['BASE_URL'];
     if (!password || !origin) throw new Error('Isolated QA password and origin are required.');
-    const number = testInfo.project.name === 'desktop-chromium' ? 90 : 91;
+    const number = testInfo.project.name === 'desktop-chromium' ? 92 : 93;
     const email = 'qa-load-' + String(number).padStart(6, '0') + '@example.test';
     const userContext = await browser.newContext({
       baseURL: origin,
@@ -416,8 +418,13 @@ test.describe('Identity on the real Production candidate', () => {
       const target = (await targetLogin.json()) as { id: string };
       await loginQa(page.request, 'qa-load-000000@example.test', password);
       await page.goto('/profile');
+      if (testInfo.project.name === 'mobile-chromium')
+        await page.getByRole('button', { name: 'Menú', exact: true }).click();
       await page.getByRole('link', { name: 'Administración', exact: true }).click();
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Personas que conectan.');
+      if (testInfo.project.name === 'mobile-chromium')
+        await page.getByRole('button', { name: 'Menú de administración', exact: true }).click();
+      await page.getByRole('link', { name: 'Usuarios', exact: true }).click();
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Usuarios');
       await page.getByLabel('Buscar usuarios', { exact: true }).fill(email);
       await page.getByRole('button', { name: 'Buscar', exact: true }).click();
       await expect(page.getByRole('status')).toContainText('1 usuario');

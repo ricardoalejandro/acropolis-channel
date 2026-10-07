@@ -24,6 +24,19 @@ namespace Acropolis.Identity.Infrastructure.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "identity", "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.AccountAccess", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("LastSignInUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("AccountAccess", "identity");
+                });
+
             modelBuilder.Entity("Acropolis.Identity.Infrastructure.BootstrapState", b =>
                 {
                     b.Property<int>("Id")
@@ -72,6 +85,9 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                     b.Property<bool>("IsDisabled")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsOwner")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("boolean");
 
@@ -109,6 +125,9 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<bool>("SubscriptionsManage")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("boolean");
 
@@ -120,6 +139,10 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                         .HasColumnType("boolean");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IsOwner")
+                        .IsUnique()
+                        .HasFilter("\"IsOwner\"");
 
                     b.HasIndex("NormalizedEmail")
                         .IsUnique()
@@ -139,7 +162,10 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "DisplayName" }, "IX_Users_SearchName"), "gin");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "DisplayName" }, "IX_Users_SearchName"), new[] { "identity.gin_trgm_ops" });
 
-                    b.ToTable("Users", "identity");
+                    b.ToTable("Users", "identity", t =>
+                        {
+                            t.HasCheckConstraint("CK_Users_OwnerAuthority", "NOT \"IsOwner\" OR (\"UsersManage\" AND \"ContentManage\" AND \"SubscriptionsManage\" AND \"EmailConfirmed\" AND NOT \"IsDisabled\" AND NOT \"RevalidationRequired\")");
+                        });
                 });
 
             modelBuilder.Entity("Acropolis.Identity.Infrastructure.IdentityFlow", b =>
@@ -455,6 +481,15 @@ namespace Acropolis.Identity.Infrastructure.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("UserTokens", "identity");
+                });
+
+            modelBuilder.Entity("Acropolis.Identity.Infrastructure.AccountAccess", b =>
+                {
+                    b.HasOne("Acropolis.Identity.Infrastructure.ChannelUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Acropolis.Identity.Infrastructure.IdentityFlow", b =>

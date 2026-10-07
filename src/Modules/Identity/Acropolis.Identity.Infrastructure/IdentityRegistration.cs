@@ -75,6 +75,8 @@ public static class IdentityRegistration
             options.Events.OnSignedIn = SessionRotation.CompleteAsync;
         });
         services.AddScoped<IIdentityService, IdentityService>();
+        services.AddScoped<IAccountAccessService, AccountAccessService>();
+        services.AddScoped<IIdentityReportService, IdentityReportService>();
         services.AddScoped<IIdentityMailer, SmtpIdentityMailer>();
         services.AddScoped<OutboxDispatcher>();
         services.AddHostedService<OutboxWorker>();

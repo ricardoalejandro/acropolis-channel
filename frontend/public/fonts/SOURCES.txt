@@ -1,0 +1,8 @@
+Source Sans 3 and Literata: Latin variable WOFF2, served locally.
+Source CSS: https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400..700&family=Literata:wght@400..600&display=swap
+Licenses: https://github.com/google/fonts/tree/main/ofl/sourcesans3 and https://github.com/google/fonts/tree/main/ofl/literata
+No browser request to Google Fonts is made.
+
+SHA-256:
+fde3d14f78c3431ee5e2f676a46dd18a1dd48ee4d0a71cc76c751f9e6f76f58e  literata-latin.woff2
+19143dca075972bc84e3fd9eab7416dd40cc565dccb2435a044bdfabe060c7d5  source-sans-3-latin.woff2

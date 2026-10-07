@@ -1,6 +1,13 @@
 import { useEffect, type ReactNode } from 'react';
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { SessionProvider } from './auth/SessionProvider';
+import {
+  RouterProvider,
+  type RouterProviderProps,
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from 'react-router-dom';
 import { useSession } from './auth/useSession';
 import { Shell } from './components/Shell';
 import {
@@ -13,9 +20,20 @@ import {
 import { MfaSecurity } from './features/accounts/Mfa';
 import { Profile } from './features/accounts/Profile';
 import { UserDetail, UserList } from './features/admin/Admin';
+import { AdminHome } from './features/admin/AdminHome';
+import { ReportsPage } from './features/admin/Reports';
+import { AccountConsumptionPage, ConsumptionReportsPage } from './features/admin/ConsumptionReports';
+import { SubscriptionEventsPage } from './features/admin/SubscriptionEvents';
+import { AuditPage } from './features/admin/Audit';
+import { SubscriptionPage } from './features/subscriptions/Subscription';
+import {
+  SubscriptionAdminList,
+  SubscriptionAdminDetail,
+} from './features/subscriptions/SubscriptionAdmin';
 import { Home } from './features/home/Home';
 import { Explore, ContentPage } from './features/catalog/Catalog';
 import { ContentAdminList, ContentEditor } from './features/catalog/ContentAdmin';
+import { TopicList, TopicEditor, ContentTopicsEditor } from './features/catalog/TopicsAdmin';
 function RouteFocus() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -23,6 +41,8 @@ function RouteFocus() {
     if (heading) {
       heading.tabIndex = -1;
       heading.focus({ preventScroll: true });
+    } else {
+      document.querySelector<HTMLElement>('main')?.focus({ preventScroll: true });
     }
     window.scrollTo(0, 0);
   }, [pathname]);
@@ -90,6 +110,61 @@ export function AppRoutes() {
             </Protected>
           }
         />
+        <Route path="/admin/topics" element={<Protected permission="Content.Manage"><TopicList /></Protected>} />
+        <Route path="/admin/topics/new" element={<Protected permission="Content.Manage"><TopicEditor /></Protected>} />
+        <Route path="/admin/topics/:id" element={<Protected permission="Content.Manage"><TopicEditor /></Protected>} />
+        <Route path="/admin/content/:id/topics" element={<Protected permission="Content.Manage"><ContentTopicsEditor /></Protected>} />
+        <Route path="/profile/subscription" element={<SubscriptionPage />} />
+        <Route
+          path="/admin"
+          element={
+            <Protected>
+              <AdminHome />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/reports"
+          element={
+            <Protected>
+              <ReportsPage />
+            </Protected>
+          }
+        />
+        <Route path="/admin/reports/consumption" element={<Protected permission="Content.Manage"><ConsumptionReportsPage /></Protected>} />
+        <Route path="/admin/users/:id/consumption" element={<Protected permission="Users.Manage"><AccountConsumptionPage /></Protected>} />
+        <Route
+          path="/admin/reports/subscription-events"
+          element={
+            <Protected permission="Subscriptions.Manage">
+              <SubscriptionEventsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/audit"
+          element={
+            <Protected>
+              <AuditPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/subscriptions"
+          element={
+            <Protected permission="Subscriptions.Manage">
+              <SubscriptionAdminList />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/subscriptions/:id"
+          element={
+            <Protected permission="Subscriptions.Manage">
+              <SubscriptionAdminDetail />
+            </Protected>
+          }
+        />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/email-pending" element={<EmailPending />} />
@@ -137,12 +212,6 @@ export function AppRoutes() {
     </Shell>
   );
 }
-export default function App() {
-  return (
-    <BrowserRouter>
-      <SessionProvider>
-        <AppRoutes />
-      </SessionProvider>
-    </BrowserRouter>
-  );
+export default function App({ router }: { router: RouterProviderProps['router'] }) {
+  return <RouterProvider router={router} />;
 }

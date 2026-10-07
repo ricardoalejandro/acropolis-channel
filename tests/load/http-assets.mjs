@@ -40,13 +40,13 @@ for (const path of assets) {
   ensure(directives.get('public') === '' && directives.get('immutable') === '' && /^\d+$/.test(maxAge) && Number(maxAge) >= 31536000, 'Hashed asset must have an immutable one-year cache.');
   ensure((await response.text()).length > 0, 'Compressed asset did not decode.');
 }
-for (const path of ['/api/v1/identity/csrf', '/api/v1/identity/me', '/api/v1/admin/users']) {
+for (const path of ['/api/v1/identity/csrf', '/api/v1/identity/me', '/api/v1/admin/users', '/api/v1/subscriptions/me', '/api/v1/consumption/content/qa-restricted-work', '/api/v1/admin/subscriptions/audit']) {
   const response = await get(path);
-  ensure(path.endsWith('/csrf') ? response.status === 200 : response.status === 401, 'Unexpected anonymous Identity HTTP boundary.');
+  ensure(path.endsWith('/csrf') ? response.status === 200 : response.status === 401, 'Unexpected anonymous restricted HTTP boundary.');
   const { header, directives } = cacheControl(response);
-  ensure(directives.get('no-store') === '' && !directives.has('public'), `Identity response must never be cached: ${path} Cache-Control=${JSON.stringify(header)}.`);
+  ensure(directives.get('no-store') === '' && !directives.has('public'), `Restricted response must never be cached: ${path} Cache-Control=${JSON.stringify(header)}.`);
   console.log(`${path} Cache-Control=${JSON.stringify(header)}; private no-store response.`);
-  ensure(response.headers.get('Content-Encoding') === null, 'Identity response must not compress secrets or reflected values.');
+  ensure(response.headers.get('Content-Encoding') === null, 'Restricted response must not compress secrets or reflected values.');
   security(response);
 }
 console.log('Production assets validate gzip/Vary/immutable hashes; HTML revalidates and Identity remains private and uncompressed.');

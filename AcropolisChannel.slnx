@@ -15,4 +15,8 @@
   <Project Path="src/Modules/Catalog/Acropolis.Catalog.Infrastructure/Acropolis.Catalog.Infrastructure.csproj" />
   <Project Path="tests/backend/Acropolis.Catalog.UnitTests/Acropolis.Catalog.UnitTests.csproj" />
   <Project Path="tests/backend/Acropolis.Catalog.IntegrationTests/Acropolis.Catalog.IntegrationTests.csproj" />
+  <Project Path="src/Modules/Subscriptions/Acropolis.Subscriptions.Application/Acropolis.Subscriptions.Application.csproj" />
+  <Project Path="src/Modules/Subscriptions/Acropolis.Subscriptions.Infrastructure/Acropolis.Subscriptions.Infrastructure.csproj" />
+  <Project Path="tests/backend/Acropolis.Subscriptions.UnitTests/Acropolis.Subscriptions.UnitTests.csproj" />
+  <Project Path="tests/backend/Acropolis.Subscriptions.IntegrationTests/Acropolis.Subscriptions.IntegrationTests.csproj" />
 </Solution>

@@ -11,14 +11,14 @@ Leer `AGENTS.md`, `docs/architecture.md`, `docs/quality.md` y el documento del m
 
 Retomar desde `.local/continuation-current.md` y comprobar Git/runtime. Conservar trabajo existente y sincronizar ff-only cuando sea compatible. Las instrucciones locales sólo cargan esta versión canónica; actualizar reglas completas aquí.
 
-Backend modular .NET10/EF10/Npgsql, React19/TypeScript/Vite, PostgreSQL18. Usar SDK10/Node22 en Docker y conservar Node20 host. Los módulos actuales son Platform, Identity y Catalog; no añadir módulos de negocio sin contrato real. Multimedia futura AWS.
+Backend modular .NET 10/EF 10/Npgsql, React 19/TypeScript/Vite, PostgreSQL 18. Usar SDK 10/Node 22 en Docker y conservar Node 20 host. Los módulos actuales son Platform, Identity, Catalog y Subscriptions; no añadir módulos de negocio sin contrato real. El WIP incluye YouTube oficial y lecturas completas en un piloto gratuito. Leer `docs/modernization-scope.md` para los procesos solicitados y sus pendientes; sólo los pagos están aplazados. No convertir el estado WIP en aprobación de reglas de planes ni en exclusión de facturación, AWS o integración institucional.
 
 ## Desarrollo y pruebas
 
 - Respetar propiedad modular y contratos; verificar reglas y límites, casos de uso, persistencia/transacciones, HTTP, autorización, errores y recorrido del usuario. Concurrencia, deduplicación e idempotencia son obligatorias para procesos que lo requieran, especialmente pagos.
 - Backend xUnit/WebApplicationFactory; persistencia PostgreSQL real, sin fallback en memoria. Interfaz Vitest/React Testing Library; recorridos Playwright escritorio/móvil y revisión de teclado, contraste, imágenes, cargas y errores.
 - Cobertura mínima 80% de líneas/ramas de lógica propia y métricas frontend de docs/quality.md. Comprobar casos críticos aun con buen porcentaje; no omitir tests por falta de base ni inflar cobertura con DTOs/pruebas ficticias.
-- Preservar diseño editorial aprobado y seis categorías oficiales. El contenido y las APIs de producción son reales; estados vacíos son válidos. El prototipo `dist-preview`, multimedia y cobros demostrativos no entran en la aplicación productiva.
+- Aplicar acropolis-design y preservar las seis categorías oficiales y la dirección vigente de docs/design.md. El contenido y las APIs de producción son reales; estados vacíos son válidos. El prototipo `dist-preview`, multimedia y cobros demostrativos no entran en la aplicación productiva.
 
 ## Gate y evidencias
 
@@ -39,12 +39,13 @@ Cambios únicamente documentales/de skills requieren validación de contenido, r
 Leer `docs/identity-operations.md`, `docs/mfa-operations.md` y `docs/catalog-operations.md` cuando esos procesos cambien.
 
 - SMTP propio está autorizado: leer `docs/smtp-integration.md`; no pedir credenciales por chat ni usar las productivas en QA aislada. Probar `IDENTITY_EMAIL_ENABLED=false`, respuestas 503/email_unavailable en emisión, ninguna cuenta nueva/envío y acceso de confirmados. Protector/key ring/HTTPS/proxies exactos siguen obligatorios. Los tests con correo usan sólo SMTP aislado con TLS/CA validada.
-- Identity: confirmación/tokens de un uso, lockout, CSRF/origen, ocho horas absolutas, revocación y rotación de sesiones, perfiles, permisos/último administrador y concurrencia. MFA TOTP obligatorio para Users.Manage/Content.Manage; verificar desafíos sin sesión plena, caducidad, replay, códigos de recuperación concurrentes y reautenticación. No registrar semillas, URI/QR ni códigos.
-- Catalog: categorías, límites, búsqueda literal/paginación estable, borrador/publicación/retirada/archivo, slug estable, conflictos sin pérdida de texto y auditoría atómica. Separar Content.Manage de Users.Manage/niveles. Sólo sinopsis públicas escapadas; borradores/archivados404, sin URLs AWS ni obras restringidas.
-- Restauración: invalidar cuentas, sesiones, enlaces/outbox y todo material MFA restaurado; revalidar sin recuperar automáticamente permisos. Guardas de producción obligatorias, sin pruebas destructivas sobre datos reales.
+- Identity: confirmación/tokens de un uso, lockout, CSRF/origen, ocho horas absolutas, revocación y rotación de sesiones, perfiles, permisos/último administrador y concurrencia. MFA TOTP obligatorio para Users.Manage/Content.Manage/Subscriptions.Manage; verificar desafíos sin sesión plena, caducidad, replay, códigos de recuperación concurrentes y reautenticación. No registrar semillas, URI/QR ni códigos.
+- Catalog: categorías, límites, búsqueda literal/paginación estable, borrador/publicación/retirada/archivo, slug estable, conflictos sin pérdida de texto y auditoría atómica. Separar Content.Manage de Users.Manage/niveles. Sinopsis públicas escapadas; borradores/archivados404. Obra/YouTube separados, sin filtración pública; consumo sólo confirmed+active+subscriptionactive+published. Cursos→obras y programas→cursos ordenados sin ciclos, referencias inválidas ni contenido retirado. Auditoría de sólo lectura paginada por permiso.
+- Subscriptions: activación gratuita explícita idempotente, un registro por usuario, cancelación/versionado, suspensión no eludible y auditoría. Probar permisos independientes y concurrencia real. Propietario protegido: bootstrap/recovery auditados, delegación owner-only, prohibición de suspenderlo por otros y ausencia de atajos MFA.
+- Restauración: invalidar propiedad protegida, todos los permisos y acceso restaurado; invalidar cuentas, sesiones, enlaces/outbox y todo material MFA restaurado; revalidar sin recuperar automáticamente permisos. Guardas de producción obligatorias, sin pruebas destructivas sobre datos reales.
 
 ## Cierre
 
-Informar sólo resultados comprobados, actualizar continuidad privada y conservar capturas seguras. Las mediciones de 100.000 cuentas/10.000 fichas con 50 sesiones/lectores son limitadas; no acreditan 1.000 concurrentes ni reproducción AWS. Si una política impide navegador público, no eludirla y distinguir QA de la inspección pública faltante.
+Informar sólo resultados comprobados, actualizar continuidad privada y conservar capturas seguras. Las 100.000 cuentas son una meta de capacidad: no precargar producción ni añadir semillas al arranque o migraciones. Los datos sintéticos masivos existen sólo en bases temporales de QA que se eliminan al cerrar. Las mediciones de 100.000 cuentas/10.000 fichas con 50 sesiones/lectores son limitadas; no acreditan 1.000 concurrentes ni reproducción AWS. Si una política impide navegador público, no eludirla y distinguir QA de la inspección pública faltante.
 
 Para un despliegue solicitado aplicar la [skill de despliegue](../acropolis-vps-deploy/SKILL.md). QA y push no autorizan por sí solos cambiar producción.

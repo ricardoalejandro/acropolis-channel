@@ -7,5 +7,7 @@
     <ProjectReference Include="../Modules/Identity/Acropolis.Identity.Infrastructure/Acropolis.Identity.Infrastructure.csproj" />
     <ProjectReference Include="../Modules/Catalog/Acropolis.Catalog.Application/Acropolis.Catalog.Application.csproj" />
     <ProjectReference Include="../Modules/Catalog/Acropolis.Catalog.Infrastructure/Acropolis.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="../Modules/Subscriptions/Acropolis.Subscriptions.Application/Acropolis.Subscriptions.Application.csproj" />
+    <ProjectReference Include="../Modules/Subscriptions/Acropolis.Subscriptions.Infrastructure/Acropolis.Subscriptions.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

@@ -13,12 +13,14 @@ public static class CatalogEndpoints
             return await next(context);
         });
         catalog.MapGet("/categories", () => Results.Ok(new { items = CatalogRules.Categories }));
-        catalog.MapGet("/content", async (string? search, string? category, int? page, int? pageSize, ICatalogService service, CancellationToken token) =>
+        catalog.MapGet("/content", async (string? search, string? category, string? topic, int? page, int? pageSize, ICatalogService service, ITopicService topics, CancellationToken token) =>
         {
             var number = page ?? 1; var size = pageSize ?? 20;
             var errors = CatalogRules.ValidateQuery(search, category, null, number, size);
+            if (topic is not null && !CatalogRules.ValidSlug(topic)) errors["topic"] = ["Tema no válido."];
             return errors.Count > 0 ? IdentityEndpoints.Problem("validation_error", 400, errors)
-                : Results.Ok(await service.ListPublishedAsync(search, category, number, size, token));
+                : Results.Ok(topic is null ? await service.ListPublishedAsync(search, category, number, size, token)
+                    : await topics.ListPublishedByTopicAsync(topic, search, category, number, size, token));
         });
         catalog.MapGet("/content/{slug}", async (string slug, ICatalogService service, CancellationToken token) =>
         {
@@ -35,10 +37,30 @@ public static class CatalogEndpoints
             return errors.Count > 0 ? IdentityEndpoints.Problem("validation_error", 400, errors)
                 : Results.Ok(await service.ListAdminAsync(search, category, status, number, size, token));
         });
+        admin.MapGet("/audit", async (DateTimeOffset? fromUtc, DateTimeOffset? toUtc, string? action, Guid? contentId, int? page, int? pageSize, ICatalogService service, CancellationToken token) =>
+        {
+            var number = page ?? 1; var size = pageSize ?? 20;
+            var errors = CatalogRules.ValidateAuditQuery(fromUtc, toUtc, action, contentId, number, size);
+            return errors.Count > 0 ? IdentityEndpoints.Problem("validation_error", 400, errors)
+                : Results.Ok(await service.ListModuleAuditAsync(fromUtc, toUtc, action, contentId, number, size, token));
+        });
         admin.MapGet("/{id:guid}", async (Guid id, ICatalogService service, CancellationToken token) =>
         {
             var entry = await service.GetAdminAsync(id, token);
             return entry is null ? IdentityEndpoints.Problem("not_found", 404) : Results.Ok(entry);
+        });
+        admin.MapGet("/{id:guid}/summary", async (Guid id, ICatalogService service, CancellationToken token) =>
+        {
+            var entry = await service.GetAdminSummaryAsync(id, token);
+            return entry is null ? IdentityEndpoints.Problem("not_found", 404) : Results.Ok(entry);
+        });
+        admin.MapGet("/{id:guid}/audit", async (Guid id, int? page, int? pageSize, ICatalogService service, CancellationToken token) =>
+        {
+            var number = page ?? 1; var size = pageSize ?? 20;
+            var errors = CatalogRules.ValidateQuery(null, null, null, number, size);
+            if (errors.Count > 0) return IdentityEndpoints.Problem("validation_error", 400, errors);
+            var audit = await service.ListAuditAsync(id, number, size, token);
+            return audit is null ? IdentityEndpoints.Problem("not_found", 404) : Results.Ok(audit);
         });
         admin.MapPost("/", async (CreateContentRequest request, ICatalogService service, HttpContext context, CancellationToken token) =>
         {

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using Acropolis.Catalog.Infrastructure;
+using Acropolis.Subscriptions.Infrastructure;
 using Acropolis.Identity.Infrastructure;
 using Acropolis.Migrations;
 using Microsoft.AspNetCore.Hosting;
@@ -24,12 +25,15 @@ public sealed class CompositeReadinessTests(PostgresFixture database)
     [InlineData("platform", "missing")]
     [InlineData("identity", "missing")]
     [InlineData("catalog", "missing")]
+    [InlineData("subscriptions", "missing")]
     [InlineData("platform", "extra")]
     [InlineData("identity", "extra")]
     [InlineData("catalog", "extra")]
+    [InlineData("subscriptions", "extra")]
     [InlineData("platform", "replacement")]
     [InlineData("identity", "replacement")]
     [InlineData("catalog", "replacement")]
+    [InlineData("subscriptions", "replacement")]
     public async Task EveryHistoryMustMatchExactlyAndEachProbeReadsTheCurrentDatabase(string module, string change)
     {
         await PrepareAsync();
@@ -165,6 +169,10 @@ public sealed class CompositeReadinessTests(PostgresFixture database)
         await catalog.Database.OpenConnectionAsync(Token);
         Assert.Equal(identityId, ((NpgsqlConnection)catalog.Database.GetDbConnection()).ProcessID);
         await catalog.Database.CloseConnectionAsync();
+        var subscriptions = scope.ServiceProvider.GetRequiredService<SubscriptionsDbContext>();
+        await subscriptions.Database.OpenConnectionAsync(Token);
+        Assert.Equal(identityId, ((NpgsqlConnection)subscriptions.Database.GetDbConnection()).ProcessID);
+        await subscriptions.Database.CloseConnectionAsync();
         var concurrent = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => client.GetAsync("/health/ready", Token)));
         foreach (var response in concurrent)
         {

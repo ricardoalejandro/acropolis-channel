@@ -54,6 +54,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
             """
+            DROP SCHEMA IF EXISTS subscriptions CASCADE;
             DROP SCHEMA IF EXISTS catalog CASCADE;
             DROP SCHEMA IF EXISTS identity CASCADE;
             DROP SCHEMA IF EXISTS platform CASCADE;

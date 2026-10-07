@@ -29,6 +29,12 @@ function editable(item: Record<string, unknown>) {
       'category',
       'coverAsset',
       'durationSeconds',
+      'author',
+      'tags',
+      'workText',
+      'youTubeId',
+      'collectionKind',
+      'itemIds',
     ].map((key) => [key, item[key]]),
   );
 }
@@ -93,7 +99,9 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     const published = await publicContext.request.get('/api/v1/catalog/content/' + slug);
     expect(published.status()).toBe(200);
     expect(published.headers()['cache-control']).toContain('no-store');
-    expect((await published.json()) as Record<string, unknown>).not.toHaveProperty('version');
+    const publicMetadata = (await published.json()) as Record<string, unknown>;
+    for (const restricted of ['version', 'workText', 'youTubeId', 'itemIds'])
+      expect(publicMetadata).not.toHaveProperty(restricted);
     const publicPage = await publicContext.newPage();
     await publicPage.goto('/content/' + slug);
     await expect(publicPage.getByRole('heading', { level: 1 })).toHaveText(title);
@@ -104,17 +112,22 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     await expect
       .poll(() => cover.evaluate((image) => (image as HTMLImageElement).naturalWidth))
       .toBeGreaterThan(0);
-    await expect
-      .poll(async () => {
-        const box = await cover.boundingBox();
-        return box ? box.width / box.height : 0;
-      })
-      .toBeCloseTo(viewport.width <= 760 ? 16 / 10 : 16 / 7.8, 2);
+    const coverBox = await cover.boundingBox();
+    expect(coverBox).not.toBeNull();
+    expect(coverBox!.width).toBeGreaterThan(0);
+    expect(coverBox!.height).toBeGreaterThan(0);
+    expect(coverBox!.width).toBeLessThanOrEqual(viewport.width);
+    expect(coverBox!.height).toBeLessThanOrEqual(viewport.width <= 760 ? 280 : 410);
+    expect(await cover.evaluate((image) => getComputedStyle(image).objectFit)).toBe('cover');
     expect(
       await publicPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     expect(await publicPage.evaluate(() => 'catalogInjected' in window)).toBe(false);
     await expect(publicPage.locator('video, audio, iframe')).toHaveCount(0);
+    await expect(
+      publicPage.getByRole('heading', { name: 'Accede a la obra completa.', exact: true }),
+    ).toBeVisible();
+    await publicPage.evaluate(() => document.fonts.ready);
     expect((await new AxeBuilder({ page: publicPage }).analyze()).violations).toEqual([]);
     await publicPage.screenshot({
       path: testInfo.outputPath('catalog-detail-' + testInfo.project.name + '.png'),

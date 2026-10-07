@@ -12,6 +12,13 @@ public static class CatalogRegistration
     {
         services.AddDbContext<CatalogDbContext>((provider, options) => ConfigureDatabase(options, provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddScoped<ICatalogService, CatalogService>();
+        services.AddScoped<ITopicService, TopicService>();
+        services.AddScoped<ICatalogReportService, CatalogReportService>();
+        services.Configure<ConsumptionRecordingOptions>(configuration.GetSection("Catalog:Consumption"));
+        services.AddScoped<IConsumptionRecordingService, ConsumptionRecordingService>();
+        services.AddScoped<IConsumptionActivityReportService, ConsumptionActivityReportService>();
+        services.AddScoped<IConsumptionRetentionService, ConsumptionRetentionService>();
+        services.AddHostedService<ConsumptionRetentionWorker>();
         return services;
     }
     public static void ConfigureDatabase(DbContextOptionsBuilder options, string connectionString) =>

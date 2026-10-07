@@ -1,36 +1,39 @@
-# Catálogo editorial
+# Catálogo y obras
 
-La estructura se deriva de las capturas oficiales y del documento Proyecto Acrópolis Channel v1.0.0 (borrador, 09/09/2026). El documento no define la matriz de acceso por obra, plan y nivel. Esta entrega publica únicamente fichas y sinopsis editoriales: nunca lecturas completas, archivos privados ni URLs de reproducción.
+La estructura conserva las seis categorías oficiales y el documento funcional. La implementación actual es un piloto gratuito WIP sin vencimiento, pendiente de confirmar frente a las reglas del documento funcional; consultar docs/modernization-scope.md. No sembrar datos de demostración en producción ni confundir el prototipo con contenido disponible.
 
-## Trabajo editorial
+## Ficha y obra completa
 
-Categorías: Lecturas, Documentales, Videos, Podcast, Charlas online y Cursos. La portada y /explore consultan datos reales, con estados de carga, error y ausencia de resultados; no se incorporan datos de demostración al catálogo productivo. /content/{slug} muestra sólo contenido publicado.
+Body es siempre una sinopsis pública de texto plano (máximo 50.000 caracteres), Summary un resumen de hasta 600. WorkText es otro campo para la lectura completa; no insertar material protegido en Body. Author y Tags son metadatos opcionales acotados. Las cubiertas siguen limitadas a assets permitidos, con alternativa sin imagen; duración es opcional (segundos, 1 a 86.400).
 
-Crear contenido en /admin/content genera un borrador. Para publicarlo deben existir título, slug, resumen y sinopsis. Las cubiertas se limitan a los assets editoriales aprobados del proyecto, con opción sin imagen. Duración es opcional y se expresa en segundos (1 a 86.400). El texto se muestra escapado; no se interpreta HTML. La sinopsis tiene un máximo de 50.000 caracteres y el resumen de 600.
+El campo interno YouTubeId acepta exclusivamente identificadores válidos de once caracteres, nunca una URL arbitraria, HTML de embed o credencial. Los formatos audiovisuales usan el reproductor oficial de YouTube y sus controles; Podcast alojado allí usa ese mismo reproductor completo. No extraer audio, descargar el vídeo ni ocultar controles. La reproducción sólo se inicia por elección del visitante. Si no está disponible o no admite embed, informar y ofrecer su enlace de origen. El piloto no garantiza exclusividad de recursos públicos.
 
-Estados: draft→published; published→draft o archived; archived→draft. Es posible editar dentro del mismo estado. Para volver a publicar un archivado debe pasar por borrador. La primera fecha de publicación y el slug se conservan después de retirar o archivar. No hay borrado físico desde la aplicación.
+Una ficha antigua sin obra puede conservarse publicada; no afirmar que ya permite reproducción. Nuevas publicaciones editoriales deben incluir el material autorizado del formato que se pretende ofrecer. Los DTO públicos nunca contienen WorkText o YouTubeId. /api/v1/consumption/content/{slug} exige identidad activa confirmada, suscripción activa y publicación vigente, sin caché compartida.
 
-Cada actualización requiere la versión recibida del servidor. Un conflicto devuelve 409 y la interfaz conserva lo escrito, permitiendo decidir si se recarga. Publicar, retirar y archivar requieren una confirmación concreta en la interfaz. La API pública nunca devuelve borradores/archivados ni metadatos internos de concurrencia. Sus respuestas no-store permiten reflejar la retirada sin caché persistente.
+## Añadir un vídeo
 
-## Acceso editorial
+1. En **Contenidos**, crea o abre una ficha. En **Categoría del contenido**, selecciona **Videos**, **Documentales**, **Podcast** o **Charlas online**, según corresponda, para que aparezca el campo de YouTube. Completa el título y la sinopsis.
+2. En **Enlace o identificador de YouTube**, pega la dirección HTTPS del vídeo. Se admiten el enlace habitual de YouTube, el enlace corto de youtu.be, Shorts, directos y enlaces de inserción. También puedes introducir su identificador de once caracteres. Pega la dirección, no el código HTML de inserción.
+3. Para una ficha nueva, elige **Guardar borrador**; al editar una existente, **Guardar cambios**. Cuando esté lista para publicarse, elige **Publicar contenido** y confirma la acción.
 
-El nivel institucional y Users.Manage no conceden Content.Manage. Para una cuenta exacta ya registrada, confirmada y activa, un operador autorizado puede usar la imagen de migraciones validada:
+La aplicación conserva sólo el identificador del vídeo. Que el enlace sea válido no garantiza su reproducción: la disponibilidad y el permiso para verlo dentro de Acrópolis Channel dependen de YouTube. Si la reproducción no está disponible, se ofrece el enlace al vídeo de origen.
 
-```bash
-docker compose -p acropolis-channel --profile migration run --rm migrations grant-content-manager --email CORREO_EXACTO
-docker compose -p acropolis-channel --profile migration run --rm migrations revoke-content-manager --email CORREO_EXACTO
-```
+El alojamiento en AWS será una modalidad futura. Esta preparación no crea recursos ni configura ese servicio.
 
-Estos comandos cambian permisos y revocan sesiones; ejecutarlos sólo para cuentas cuya autoridad se haya comprobado. El acceso editorial exige MFA. Con SMTP pospuesto no se crean cuentas confirmadas por atajo. La revalidación de una cuenta restaurada retira Content.Manage; una concesión posterior sigue siendo una decisión explícita.
+## Cursos y programas
 
-## Datos y verificación
+La categoría Cursos admite CollectionKind course o program y ItemIds ordenados. Un curso referencia obras publicadas utilizables; un programa referencia cursos publicados utilizables. No hay ciclos, referencias duplicadas, grupos dentro de cursos ni programas dentro de programas. Se verifica la disponibilidad de sus descendientes al publicar y al consumir; una retirada impide entregar ese recorrido. No se incluyen exámenes, diplomas o avance pedagógico avanzado en esta entrega. Programas no se convierte en séptima categoría principal.
 
-El schema catalog conserva Contents, Audit y su historial EF. Las migraciones se aplican después de Platform e Identity bajo el mismo bloqueo exclusivo. El runtime no tiene DDL, DELETE de contenidos ni UPDATE/DELETE de auditoría. El respaldo conserva contenido, estados, versiones e historial; QA compara también un digest completo de contenidos y auditoría después de restaurar.
+## Edición y auditoría
 
-qa-seed-catalog --count 10000 sólo admite entorno Testing y base acropolis_test_*. Crea 8.000 publicados, 1.000 borradores y 1.000 archivados en seis categorías, con nombres inequívocos de QA; repetirlo no sobrescribe datos existentes. Nunca ejecutar semillas en producción. La carga de QA es acotada y no certifica capacidad multimedia o comercial.
+Crear en /admin/content genera un borrador. Estados draft→published, published→draft/archived y archived→draft; se puede editar sin cambiar estado. La primera publicación fija slug y fecha. No existe DELETE físico desde la aplicación.
 
-## Dependencias de las siguientes entregas
+Cada modificación exige la versión devuelta por servidor; 409 conserva el texto para decidir si recargar. Publicar, retirar o archivar exige intención clara. No confiar en botones ocultos: Content.Manage y MFA se comprueban en API, de forma independiente a niveles y Users.Manage. Sólo el propietario delega permisos por la API estrecha; la CLI editorial existente se conserva para operaciones administrativas autorizadas y no permite quitar autoridad al propietario.
 
-Para reproducción y acceso a obras se necesita definir matriz de permisos por plan/nivel/contenido, material autorizado y la entrega privada en AWS. Cursos/programas deberán agrupar obras ordenadas una vez definido su contrato. No convertir el campo de sinopsis en almacén de material protegido.
+Auditoría atómica inmutable, de sólo lectura y paginada, por objeto o módulo con filtros de fecha/acción/objeto. No guardar la obra completa ni claves en Changes. El schema catalog conserva Contents, Audit y su historia EF; migraciones sólo runner bajo bloqueo. Runtime sin DDL, DELETE de obras ni UPDATE/DELETE de auditoría.
 
-El documento contempla gratuito, Probacionismo de tres meses y anual; pagos con tarjeta (únicos/recurrentes), transferencia, Yape y efectivo validado, junto con facturación. Faltan proveedor, precios y moneda definitivos, reglas de renovación, validación institucional y contrato de facturación. Los precios del sitio antiguo son sólo referencia. Implementar esos cobros exige estas decisiones, idempotencia, conciliación y pruebas de fallos; no simular una integración ni crear recursos cloud como parte del catálogo.
+## QA y continuidad
+
+qa-seed-catalog --count 10000 exige Testing y base acropolis_test_*. Mantiene 8.000 públicos, 1.000 borradores y 1.000 archivados en seis categorías; repetir no sobrescribe datos. Nunca ejecutar semillas en producción. La carga acotada mide catálogo, no streaming ni mil usuarios simultáneos.
+
+Verificar límites, autorización, ausencia de filtración pública, referencias/orden, conflictos, retirada y auditoría, componentes y recorridos escritorio/móvil. Restaurar conserva exactamente obras/auditoría; la invalidación de identidad/suscripción posterior impide reabrir acceso revocado. El material AWS real, matriz comercial y precios siguen pendientes; los pagos están aplazados. La facturación electrónica sigue en el alcance solicitado y requiere identificar su mecanismo existente; no simular integraciones, comprobantes o tarifas del sitio anterior.

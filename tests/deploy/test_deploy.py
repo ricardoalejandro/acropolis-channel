@@ -23,6 +23,7 @@ MIGRATION_REF = "acropolis-channel-migrations:" + SHA
 WEB_ID = "sha256:qa-approved-web"
 MIGRATION_ID = "sha256:qa-approved-migrations"
 OLD_ID = "sha256:previous-web"
+STOP_CONTAINER_ID = "d" * 64
 
 
 class Clock(REAL_DATETIME):
@@ -81,6 +82,7 @@ class DeploymentTests(unittest.TestCase):
         self.head = SHA
         self.remote_sha = SHA
         self.running_image = None
+        self.web_container_exists = False
         self.images = {WEB_REF: WEB_ID, MIGRATION_REF: MIGRATION_ID}
         self.operations = []
         Clock.ticks = 0
@@ -94,6 +96,7 @@ class DeploymentTests(unittest.TestCase):
         self.command = self.stack.enter_context(patch.object(DEPLOY, "command", side_effect=self.fake_command))
         self.compose = self.stack.enter_context(patch.object(DEPLOY, "compose", side_effect=self.fake_compose))
         self.image_id = self.stack.enter_context(patch.object(DEPLOY, "image_id", side_effect=self.fake_image_id))
+        self.original_ready = DEPLOY.ready
         self.ready = self.stack.enter_context(patch.object(DEPLOY, "ready", return_value=True))
         self.dns = self.stack.enter_context(patch.object(DEPLOY, "dns_ok", return_value=True))
         self.smoke = self.stack.enter_context(patch.object(DEPLOY, "public_smoke"))
@@ -113,7 +116,7 @@ class DeploymentTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, ["simulated", "image", "inspect"])
         return self.images[reference]
 
-    def fake_command(self, args, capture=False, env=None, check=True):
+    def fake_command(self, args, capture=False, env=None, check=True, timeout=None):
         self.operations.append(("command", tuple(args)))
         if args[:3] == ["git", "status", "--porcelain"]:
             return self.dirty
@@ -126,7 +129,13 @@ class DeploymentTests(unittest.TestCase):
         if args in (["git", "fetch", "origin"], ["git", "pull", "--ff-only", "origin", "main"]):
             return 0
         if args[:2] == ["docker", "inspect"]:
+            if args[-1] == "{{.State.Running}}":
+                self.assertEqual(args[2], STOP_CONTAINER_ID)
+                self.assertEqual(timeout, 30)
+                return "true" if self.running_image else "false"
             self.assertEqual(args[2], "simulated-web-container")
+            if args[-1] == "{{.Image}}|{{.State.Running}}":
+                return str(self.running_image) + "|true"
             return self.running_image
         if args[:2] == ["docker", "tag"]:
             return 0
@@ -144,13 +153,23 @@ class DeploymentTests(unittest.TestCase):
             output.write_bytes(b"only a temporary mocked backup")
             return 0
         if args[:2] == ["docker", "compose"]:
-            self.assertIn("--no-deps", args)
+            self.assertEqual(args[args.index("-p") + 1], "acropolis-channel")
             self.assertEqual(args[-1], "web")
             self.assertNotIn("db", args)
+            self.assertEqual(timeout, 30)
+            if args[-3:] == ["ps", "-q", "web"]:
+                return "simulated-web-container" if self.running_image else ""
+            if args[-4:] == ["ps", "-a", "-q", "web"]:
+                return STOP_CONTAINER_ID if self.web_container_exists else ""
+            if args[-2:] == ["stop", "web"]:
+                self.running_image = None
+                return ""
+            self.assertIn("--no-deps", args)
             override_path = Path(args[args.index("-f", args.index("-f") + 1) + 1])
             override = DEPLOY.yaml.safe_load(override_path.read_text())
             self.running_image = override["services"]["web"]["image"]
-            return 0
+            self.web_container_exists = True
+            return ""
         raise AssertionError("Unexpected mocked command: " + repr(args))
 
     def fake_compose(self, *args, env=None, capture=False, check=True):
@@ -169,6 +188,7 @@ class DeploymentTests(unittest.TestCase):
         if args == ("up", "-d", "--no-build", "web"):
             self.assertEqual(env["APP_IMAGE"], WEB_REF)
             self.running_image = self.images[env["APP_IMAGE"]]
+            self.web_container_exists = True
             return 0
         if args == ("stop", "web"):
             self.running_image = None
@@ -199,6 +219,7 @@ class DeploymentTests(unittest.TestCase):
         (self.local / "last-deployment").write_text(str(prior) + "\n")
         (self.local / "last-active-deployment").write_text(str(prior) + "\n")
         self.running_image = OLD_ID
+        self.web_container_exists = True
         return prior, previous_env, previous_compose
 
     def deployment_manifest(self):
@@ -340,7 +361,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue(mutations)
         for entry in mutations:
             self.assertEqual(entry.kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "false")
-        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"]]
+        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"] and "up" in entry.args[0]]
         self.assertEqual(len(rollback), 1)
         self.assertEqual(rollback[0].kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "true")
         self.assertEqual(self.running_image, OLD_ID)
@@ -361,7 +382,7 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Public HTTPS"):
                 self.execute()
         self.assertTrue(any(kind == "compose" and "smtp-check" in args for kind, args in self.operations))
-        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"]]
+        rollback = [entry for entry in self.command.call_args_list if entry.args[0][:2] == ["docker", "compose"] and "up" in entry.args[0]]
         self.assertEqual(len(rollback), 1)
         self.assertEqual(rollback[0].kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "false")
         directory, manifest = self.deployment_manifest()
@@ -395,7 +416,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.running_image, OLD_ID)
         self.assertFalse(any(kind == "compose" and args[0] == "up" for kind, args in self.operations))
         self.assertFalse(any(args[:2] == ("bash", "scripts/backup-db.sh") for _, args in self.operations))
-        self.ready.assert_not_called()
+        self.ready.assert_called_once()
+        self.assertIn("compose_args", self.ready.call_args.kwargs)
+        self.assertFalse(any(kind == "command" and args[:2] == ("docker", "compose") and "up" in args for kind, args in self.operations))
+        _, manifest = self.deployment_manifest()
+        self.assertFalse(manifest["migration_attempted"])
+        self.assertTrue(manifest["recovery"]["verified"])
 
     def test_recovery_preserves_new_private_configuration_and_uses_previous_runtime_snapshot(self):
         _, previous_env, _ = self.seed_previous_deployment()
@@ -514,7 +540,7 @@ class DeploymentTests(unittest.TestCase):
     def assert_recovers_previous(self, phase):
         previous, previous_env, previous_compose = self.seed_previous_deployment()
         if phase == "readiness":
-            self.ready.return_value = False
+            self.ready.side_effect = lambda **kwargs: kwargs.get("compose_args") is not None
         else:
             self.smoke.side_effect = RuntimeError("simulated certificate failure")
         with self.assertRaisesRegex(RuntimeError, "Readiness failed|Public HTTPS verification failed"):
@@ -528,12 +554,16 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual((self.local / "last-deployment").read_text().strip(), str(previous))
         self.assertEqual((self.local / "last-active-deployment").read_text().strip(), str(previous))
         rollback = [args for kind, args in self.operations if kind == "command" and args[:2] == ("docker", "compose")]
-        self.assertEqual(len(rollback), 1)
+        self.assertEqual(len(rollback), 2)
         self.assertIn("--no-deps", rollback[0])
         self.assertEqual(rollback[0][rollback[0].index("--project-directory") + 1], str(self.root))
         self.assertEqual(rollback[0][-1], "web")
         self.assertFalse(any("restore-db" in str(args) or "down" in args for _, args in self.operations))
-        self.assertEqual(self.ready.call_count, 30 if phase == "readiness" else 1)
+        self.assertEqual(self.ready.call_count, 31 if phase == "readiness" else 2)
+        self.assertTrue(manifest["recovery"]["verified"])
+        self.assertTrue(manifest["recovery"]["imageVerified"])
+        self.assertTrue(manifest["recovery"]["readinessVerified"])
+        self.assertFalse(manifest["recovery"]["maintenanceRequired"])
         self.assertEqual(self.smoke.call_count, 0 if phase == "readiness" else 36)
 
     def test_failed_fresh_publication_removes_only_its_route_and_stops_only_web(self):
@@ -547,7 +577,338 @@ class DeploymentTests(unittest.TestCase):
         self.assertFalse((self.local / "last-active-deployment").exists())
         self.assertEqual((self.root / ".env").read_text(), self.environment)
         self.assertIsNone(self.running_image)
-        self.compose.assert_any_call("stop", "web", check=False)
+        self.assertTrue(any(kind == "command" and args[:2] == ("docker", "compose") and args[-2:] == ("stop", "web") for kind, args in self.operations))
+        _, manifest = self.deployment_manifest()
+        self.assertEqual(manifest["status"], "recovery_incomplete")
+        self.assertEqual(manifest["recovery"]["reason"], "no_previous_image")
+        self.assertTrue(manifest["recovery"]["webStopped"])
+
+    def assert_incomplete_recovery(self, previous, previous_env):
+        directory, manifest = self.deployment_manifest()
+        self.assertEqual(manifest["status"], "recovery_incomplete")
+        self.assertFalse(manifest["recovery"]["verified"])
+        self.assertTrue(manifest["recovery"]["maintenanceRequired"])
+        self.assertFalse((self.local / "last-active-deployment").exists())
+        self.assertEqual((self.local / "last-deployment").read_text().strip(), str(previous))
+        self.assertEqual((self.root / ".env").read_text(), previous_env)
+        self.assertEqual(self.route.read_text(), self.previous_route)
+        self.assertTrue(Path(manifest["database_backup"]).is_file())
+        self.assertTrue((directory / "previous.env").is_file())
+        self.assertTrue((previous / "active.env").is_file())
+        self.assertFalse(any("restore-db" in str(args) or "down" in args for _, args in self.operations))
+        self.assertNotIn("private-recovery-value", json.dumps(manifest))
+        return manifest
+
+    def fail_migration(self):
+        original = self.compose.side_effect
+
+        def partial(*args, **kwargs):
+            if args == ("--profile", "migration", "run", "--rm", "migrations"):
+                self.operations.append(("compose", args))
+                raise RuntimeError("partial migration private-recovery-value")
+            return original(*args, **kwargs)
+
+        self.compose.side_effect = partial
+
+    def test_partial_migration_failure_verifies_compatible_previous_runtime(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        _, manifest = self.deployment_manifest()
+        self.assertTrue(manifest["migration_attempted"])
+        self.assertEqual(manifest["status"], "failed_recovery_applied")
+        self.assertTrue(manifest["recovery"]["imageVerified"])
+        self.assertTrue(manifest["recovery"]["readinessVerified"])
+        self.assertEqual((self.local / "last-active-deployment").read_text().strip(), str(previous))
+        self.assertEqual((self.root / ".env").read_text(), previous_env)
+        self.assertEqual(self.running_image, OLD_ID)
+        self.ready.assert_called_once()
+        self.assertIn("compose_args", self.ready.call_args.kwargs)
+
+    def test_partial_migration_with_incompatible_schema_stops_only_own_web(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["migration_attempted"])
+        self.assertTrue(manifest["recovery"]["imageVerified"])
+        self.assertFalse(manifest["recovery"]["readinessVerified"])
+        self.assertTrue(manifest["recovery"]["stopRequested"])
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["stopObservedContainers"], 1)
+        self.assertIsNone(self.running_image)
+        self.assertEqual(self.ready.call_count, 30)
+        self.assertEqual(self.sleep.call_count, 29)
+
+    def test_recovery_command_error_keeps_honest_manifest_and_attempts_stop(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.smoke.side_effect = RuntimeError("simulated upstream failure")
+        original = self.command.side_effect
+
+        def broken_start(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and "up" in args:
+                self.operations.append(("command", tuple(args)))
+                raise subprocess.CalledProcessError(7, args, stderr="private-recovery-value")
+            return original(args, **kwargs)
+
+        self.command.side_effect = broken_start
+        with self.assertRaisesRegex(RuntimeError, "Public HTTPS"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertEqual(manifest["recovery"]["errors"], [{"stage": "start-previous-runtime", "errorType": "CalledProcessError"}])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+        self.assertIsNone(self.running_image)
+
+    def test_wrong_previous_image_cannot_restore_active_pointer(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        original = self.command.side_effect
+
+        def wrong_image(args, **kwargs):
+            if args[:2] == ["docker", "inspect"] and args[-1] == "{{.Image}}|{{.State.Running}}":
+                self.operations.append(("command", tuple(args)))
+                return WEB_ID + "|true"
+            return original(args, **kwargs)
+
+        self.command.side_effect = wrong_image
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertFalse(manifest["recovery"]["imageVerified"])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+        self.ready.assert_not_called()
+
+    def test_readiness_exception_is_sanitized_and_does_not_skip_manifest(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.side_effect = RuntimeError("private-recovery-value")
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertEqual(manifest["recovery"]["errors"], [{"stage": "verify-previous-readiness", "errorType": "RuntimeError"}])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+
+    def test_malformed_previous_readiness_json_never_claims_recovery(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.side_effect = self.original_ready
+        with patch.object(DEPLOY.subprocess, "run", return_value=subprocess.CompletedProcess(["mock"], 0, stdout="private-recovery-value", stderr="")) as probe:
+            with self.assertRaisesRegex(RuntimeError, "partial migration"):
+                self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertEqual(manifest["recovery"]["errors"], [{"stage": "verify-previous-readiness", "errorType": "JSONDecodeError"}])
+        self.assertEqual(probe.call_args.kwargs["timeout"], 10)
+        self.assertIn(str(self.root), probe.call_args.args[0])
+
+    def test_recovery_stop_error_still_clears_active_and_preserves_published_history(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def broken_stop(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and args[-2:] == ["stop", "web"]:
+                self.operations.append(("command", tuple(args)))
+                raise subprocess.TimeoutExpired(args, 30, stderr="private-recovery-value")
+            return original(args, **kwargs)
+
+        self.command.side_effect = broken_stop
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "stop-own-web", "errorType": "TimeoutExpired"})
+
+    def test_recovery_uses_actual_previous_config_and_preserves_prepared_updates(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        prepared_env = self.environment + "IDENTITY_EMAIL_ENABLED=false\nCANDIDATE_ONLY=private-recovery-value\n"
+        (self.root / ".env").write_text(prepared_env)
+        self.fail_migration()
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        _, manifest = self.deployment_manifest()
+        self.assertEqual(manifest["status"], "failed_recovery_applied")
+        self.assertEqual((self.root / ".env").read_text(), prepared_env)
+        self.assertEqual((previous / "active.env").read_text(), previous_env)
+        self.assertEqual(self.route.read_text(), self.previous_route)
+        self.assertEqual((self.local / "last-deployment").read_text().strip(), str(previous))
+        self.assertNotIn("private-recovery-value", json.dumps(manifest))
+        self.assertEqual(self.ready.call_args.kwargs["env"]["IDENTITY_EMAIL_ENABLED"], "true")
+
+    def test_readiness_timeout_leaves_honest_maintenance_state(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.side_effect = subprocess.TimeoutExpired(["mock"], 10, stderr="private-recovery-value")
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertEqual(manifest["recovery"]["errors"], [{"stage": "verify-previous-readiness", "errorType": "TimeoutExpired"}])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+
+    def test_routing_recovery_exception_does_not_prevent_stop_and_manifest(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        with patch.object(DEPLOY, "atomic_copy", side_effect=PermissionError("private-recovery-value")):
+            with self.assertRaisesRegex(RuntimeError, "partial migration"):
+                self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertEqual(manifest["recovery"]["errors"], [{"stage": "restore-routing", "errorType": "PermissionError"}])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+        self.ready.assert_not_called()
+
+    def test_stop_exit_zero_with_running_container_does_not_claim_stopped(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def acknowledge_without_stop(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and args[-2:] == ["stop", "web"]:
+                self.operations.append(("command", tuple(args)))
+                return ""
+            return original(args, **kwargs)
+
+        self.command.side_effect = acknowledge_without_stop
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopRequested"])
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "verify-own-web-state", "errorType": "RuntimeError"})
+        self.assertEqual(self.running_image, OLD_ID)
+
+    def test_post_stop_inventory_failure_does_not_claim_stopped(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def broken_inventory(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and args[-4:] == ["ps", "-a", "-q", "web"]:
+                self.operations.append(("command", tuple(args)))
+                raise subprocess.CalledProcessError(1, args, stderr="private-recovery-value")
+            return original(args, **kwargs)
+
+        self.command.side_effect = broken_inventory
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "list-own-web-after-stop", "errorType": "CalledProcessError"})
+
+    def test_post_stop_inspection_timeout_does_not_claim_stopped(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def unknown_state(args, **kwargs):
+            if args[:2] == ["docker", "inspect"] and args[-1] == "{{.State.Running}}":
+                self.operations.append(("command", tuple(args)))
+                raise subprocess.TimeoutExpired(args, 30, stderr="private-recovery-value")
+            return original(args, **kwargs)
+
+        self.command.side_effect = unknown_state
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "verify-own-web-state", "errorType": "TimeoutExpired"})
+
+    def test_post_stop_inspection_nonzero_does_not_claim_stopped(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def failed_inspection(args, **kwargs):
+            if args[:2] == ["docker", "inspect"] and args[-1] == "{{.State.Running}}":
+                self.operations.append(("command", tuple(args)))
+                raise subprocess.CalledProcessError(1, args, stderr="private-recovery-value")
+            return original(args, **kwargs)
+
+        self.command.side_effect = failed_inspection
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "verify-own-web-state", "errorType": "CalledProcessError"})
+
+    def test_any_remaining_web_replica_prevents_verified_stop(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+        other = "e" * 64
+
+        def one_remaining_replica(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and args[-4:] == ["ps", "-a", "-q", "web"]:
+                self.operations.append(("command", tuple(args)))
+                return STOP_CONTAINER_ID + "\n" + other
+            if args[:2] == ["docker", "inspect"] and args[2] == other:
+                self.operations.append(("command", tuple(args)))
+                self.assertEqual(args[-1], "{{.State.Running}}")
+                return "true"
+            return original(args, **kwargs)
+
+        self.command.side_effect = one_remaining_replica
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["stopObservedContainers"], 2)
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "verify-own-web-state", "errorType": "RuntimeError"})
+
+    def test_post_stop_empty_inventory_is_valid_absence(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def remove_own_container(args, **kwargs):
+            result = original(args, **kwargs)
+            if args[:2] == ["docker", "compose"] and args[-2:] == ["stop", "web"]:
+                self.web_container_exists = False
+            return result
+
+        self.command.side_effect = remove_own_container
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopRequested"])
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertTrue(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["stopObservedContainers"], 0)
+        self.assertFalse(any(kind == "command" and args[-1:] == ("{{.State.Running}}",) for kind, args in self.operations))
+
+    def test_post_stop_unknown_inventory_output_does_not_claim_absence(self):
+        previous, previous_env, _ = self.seed_previous_deployment()
+        self.fail_migration()
+        self.ready.return_value = False
+        original = self.command.side_effect
+
+        def malformed_inventory(args, **kwargs):
+            if args[:2] == ["docker", "compose"] and args[-4:] == ["ps", "-a", "-q", "web"]:
+                self.operations.append(("command", tuple(args)))
+                return "unexpected diagnostic output"
+            return original(args, **kwargs)
+
+        self.command.side_effect = malformed_inventory
+        with self.assertRaisesRegex(RuntimeError, "partial migration"):
+            self.execute()
+        manifest = self.assert_incomplete_recovery(previous, previous_env)
+        self.assertTrue(manifest["recovery"]["stopCommandSucceeded"])
+        self.assertFalse(manifest["recovery"]["webStopped"])
+        self.assertEqual(manifest["recovery"]["errors"][-1], {"stage": "list-own-web-after-stop", "errorType": "RuntimeError"})
 
     def test_set_image_refs_preserves_unrelated_values_and_private_permissions(self):
         original = self.environment + "APP_IMAGE=old\nMIGRATION_IMAGE=old-migrations\n"

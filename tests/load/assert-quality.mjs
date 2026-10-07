@@ -38,13 +38,13 @@ if (mode === 'coverage') {
 } else if (mode === 'migration-history') {
   const observed = JSON.parse(fs.readFileSync(input, 'utf8'));
   const expected = JSON.parse(fs.readFileSync(value, 'utf8'));
-  for (const module of ['platform', 'identity', 'catalog']) {
+  for (const module of ['platform', 'identity', 'catalog', 'subscriptions']) {
     if (!Array.isArray(expected[module]) || expected[module].length === 0) fail(`Missing expected ${module} migrations.`);
     if (!Array.isArray(observed[module])) fail(`Missing ${module} migration history.`);
     const ids = observed[module].map((row) => row.id).sort();
     if (new Set(ids).size !== ids.length || JSON.stringify(ids) !== JSON.stringify([...expected[module]].sort())) fail(`Migration history differs from the candidate assembly for ${module}.`);
   }
-  console.log('All three module histories match the candidate migration manifest.');
+  console.log('All four module histories match the candidate migration manifest.');
 } else if (mode === 'dotnet-audit') {
   const report = JSON.parse(fs.readFileSync(input, 'utf8'));
   if (!Array.isArray(report.projects) || report.projects.length === 0) fail('Missing NuGet audit projects.');

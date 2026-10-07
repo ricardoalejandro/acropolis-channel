@@ -1,0 +1,114 @@
+.reports-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.report-scope {
+  color: var(--muted);
+  font-size: 16px;
+  margin-bottom: 24px;
+  max-width: 720px;
+}
+.report-panel {
+  min-width: 0;
+}
+.report-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.report-heading h2 {
+  margin-bottom: 0;
+}
+.report-heading .button {
+  flex-shrink: 0;
+}
+.report-total {
+  margin-bottom: 24px;
+}
+.report-total dt {
+  color: var(--muted);
+  font-size: 15px;
+}
+.report-total dd {
+  color: var(--ink);
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.report-panel caption {
+  text-align: left;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0 0 12px;
+}
+.report-counts + .report-counts,
+.report-table-scroll {
+  margin-top: 28px;
+}
+.report-panel tbody th {
+  background: transparent;
+  font-weight: 400;
+  color: var(--ink);
+}
+.report-panel th,
+.report-panel td {
+  padding: 11px 12px;
+}
+.report-panel th:first-child {
+  padding-left: 0;
+}
+.report-panel th:not(:first-child),
+.report-panel td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.report-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.report-matrix {
+  min-width: 460px;
+}
+.report-note,
+.report-updated,
+.report-empty {
+  color: var(--muted);
+  font-size: 15px;
+  margin-top: 18px;
+}
+.report-updated {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin-top: 28px;
+}
+.admin-report-link {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.admin-report-link p {
+  color: var(--muted);
+  font-size: 16px;
+  margin-top: 8px;
+}
+@media (max-width: 1100px) {
+  .reports-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 760px) {
+  .report-heading {
+    gap: 16px;
+  }
+  .report-total dd {
+    font-size: 32px;
+  }
+}
