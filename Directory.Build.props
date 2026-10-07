@@ -9,5 +9,8 @@
     <NuGetAuditLevel>high</NuGetAuditLevel>
     <NuGetAuditMode>all</NuGetAuditMode>
     <Deterministic>true</Deterministic>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <BuildInParallel>false</BuildInParallel>
+    <CompilerResponseFile>$(MSBuildThisFileDirectory)build/compiler-serial.rsp</CompilerResponseFile>
   </PropertyGroup>
 </Project>

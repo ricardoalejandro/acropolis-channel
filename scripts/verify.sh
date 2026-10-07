@@ -216,7 +216,7 @@ run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-to
 run_step integration_database_start env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" up -d --wait --wait-timeout 90 db
 run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" run --rm --no-deps sdk '
   mkdir -p /workspace && cp -a /source/. /workspace/ && cd /workspace
-  dotnet restore AcropolisChannel.slnx --locked-mode -warnaserror:NU1903,NU1904 -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=high -p:TreatWarningsAsErrors=true
+  dotnet restore AcropolisChannel.slnx --locked-mode --disable-parallel -warnaserror:NU1903,NU1904 -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=high -p:TreatWarningsAsErrors=true
   dotnet build AcropolisChannel.slnx -c Release --no-restore -m:1 -p:BuildInParallel=false
   dotnet format AcropolisChannel.slnx --verify-no-changes --no-restore
   dotnet list AcropolisChannel.slnx package --vulnerable --include-transitive --format json > /artifacts/dotnet-audit.json

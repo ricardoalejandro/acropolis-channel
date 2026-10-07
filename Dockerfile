@@ -24,6 +24,7 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_PROCESSOR_COUNT=1
 WORKDIR /source
 # Copy restore inputs first so code changes reuse the locked NuGet dependency layer.
 COPY AcropolisChannel.slnx global.json Directory.Build.props Directory.Packages.props NuGet.Config ./
+COPY build/compiler-serial.rsp build/
 COPY src/Acropolis.Api/Acropolis.Api.csproj src/Acropolis.Api/packages.lock.json src/Acropolis.Api/
 COPY src/Acropolis.Migrations/Acropolis.Migrations.csproj src/Acropolis.Migrations/packages.lock.json src/Acropolis.Migrations/
 COPY src/Modules/Catalog/Acropolis.Catalog.Application/Acropolis.Catalog.Application.csproj src/Modules/Catalog/Acropolis.Catalog.Application/packages.lock.json src/Modules/Catalog/Acropolis.Catalog.Application/
