@@ -1405,9 +1405,13 @@ describe('Explicit free works and effective plan access', () => {
         ),
       ).toBeVisible();
       expect(screen.queryByRole('button', { name: 'Suscribirme gratis' })).not.toBeInTheDocument();
-      expect(planSummary.queryByRole('link', { name: 'Explorar la mediateca' })).not.toBeInTheDocument();
       expect(
-        within(screen.getByRole('contentinfo')).getByRole('link', { name: 'Explorar la mediateca' }),
+        planSummary.queryByRole('link', { name: 'Explorar la mediateca' }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(screen.getByRole('contentinfo')).getByRole('link', {
+          name: 'Explorar la mediateca',
+        }),
       ).toHaveAttribute('href', '/explore');
       expect(writes(fetch, '/subscriptions/activate')).toHaveLength(0);
     },
@@ -1669,7 +1673,10 @@ describe('Manual plan assignment is reviewed, versioned and recoverable', () => 
     expect(
       await screen.findByRole('heading', { name: 'Este espacio requiere autorización.', level: 1 }),
     ).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Ir a mi perfil' })).toHaveAttribute('href', '/profile');
+    expect(screen.getByRole('link', { name: 'Ir a mi perfil' })).toHaveAttribute(
+      'href',
+      '/profile',
+    );
     expect(fetch.mock.calls.some(([path]) => String(path).includes('/admin/subscriptions'))).toBe(
       false,
     );
