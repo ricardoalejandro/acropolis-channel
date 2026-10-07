@@ -515,7 +515,10 @@ describe('Bounded subscription account lookup', () => {
 });
 
 describe('authorized work version binding', () => {
-  it.each([undefined, 'v1', 'A'.repeat(32), '1234567890abcdef1234567890abcdef\n'])('rejects missing or noncanonical protected-work version %#', (version) => {
-    expect(() => workFrom({ ...work, version })).toThrow(ApiError);
-  });
+  it.each([undefined, 'v1', 'A'.repeat(32), '1234567890abcdef1234567890abcdef\n'])(
+    'rejects missing or noncanonical protected-work version %#',
+    (version) => {
+      expect(() => workFrom({ ...work, version })).toThrow(ApiError);
+    },
+  );
 });

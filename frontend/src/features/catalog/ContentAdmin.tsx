@@ -803,7 +803,14 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
             Historial editorial
           </Link>
         )}
-        {current && <Link className="text-link editor-public-link" to={'/admin/content/' + current.id + '/topics'}>Gestionar temas del contenido</Link>}
+        {current && (
+          <Link
+            className="text-link editor-public-link"
+            to={'/admin/content/' + current.id + '/topics'}
+          >
+            Gestionar temas del contenido
+          </Link>
+        )}
         {current?.status === 'published' && (
           <Link className="text-link editor-public-link" to={'/content/' + current.slug}>
             Ver ficha pública

@@ -24,7 +24,9 @@ export function workFrom(value: unknown): ContentWork {
     !(data['workText'] === null || typeof data['workText'] === 'string') ||
     !(
       data['youTubeId'] === null ||
-      (typeof data['youTubeId'] === 'string' && data['youTubeId'].length === 11 && /^[A-Za-z0-9_-]{11}$/.test(data['youTubeId']))
+      (typeof data['youTubeId'] === 'string' &&
+        data['youTubeId'].length === 11 &&
+        /^[A-Za-z0-9_-]{11}$/.test(data['youTubeId']))
     ) ||
     !(
       data['collectionKind'] === null ||

@@ -1,26 +1,44 @@
 import { ApiError, request } from './identity';
 export const subscriptionEventKeys = [
-  'activated', 'reactivated', 'cancelled',
-  'updated_active_cancelled', 'updated_active_suspended',
-  'updated_cancelled_active', 'updated_cancelled_suspended',
-  'updated_suspended_active', 'updated_suspended_cancelled',
-  'recovery_suspended', 'unclassified',
+  'activated',
+  'reactivated',
+  'cancelled',
+  'updated_active_cancelled',
+  'updated_active_suspended',
+  'updated_cancelled_active',
+  'updated_cancelled_suspended',
+  'updated_suspended_active',
+  'updated_suspended_cancelled',
+  'recovery_suspended',
+  'unclassified',
 ] as const;
 export type SubscriptionEventKey = (typeof subscriptionEventKeys)[number];
 export type EventCount = { key: SubscriptionEventKey; count: number };
 export type EventDay = { dayUtc: string; totalEvents: number; byEvent: EventCount[] };
 export type SubscriptionEventReport = {
-  scope: 'recorded_events'; generatedUtc: string; fromUtc: string; toUtc: string;
-  totalEvents: number; byEvent: EventCount[]; days: EventDay[];
+  scope: 'recorded_events';
+  generatedUtc: string;
+  fromUtc: string;
+  toUtc: string;
+  totalEvents: number;
+  byEvent: EventCount[];
+  days: EventDay[];
 };
 export type EventInterval = { from: string; to: string };
 const dayMs = 86400000;
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-function invalid(): never { throw new ApiError(0, 'invalid_response'); }
+function invalid(): never {
+  throw new ApiError(0, 'invalid_response');
+}
 export function eventDate(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}(?![\s\S])/.test(value) || value.startsWith('0000-')) return false;
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}(?![\s\S])/.test(value) ||
+    value.startsWith('0000-')
+  )
+    return false;
   const instant = Date.parse(value + 'T00:00:00Z');
   return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === value;
 }
@@ -33,7 +51,8 @@ export function shiftEventDate(value: string, days: number): string | null {
 }
 export function eventIntervalDays(interval: EventInterval): number | null {
   if (!eventDate(interval.from) || !eventDate(interval.to)) return null;
-  const days = (Date.parse(interval.to + 'T00:00:00Z') - Date.parse(interval.from + 'T00:00:00Z')) / dayMs;
+  const days =
+    (Date.parse(interval.to + 'T00:00:00Z') - Date.parse(interval.from + 'T00:00:00Z')) / dayMs;
   return Number.isInteger(days) && days >= 1 && days <= 366 ? days : null;
 }
 export function inclusiveEventInterval(from: string, through: string): EventInterval | null {
@@ -63,14 +82,30 @@ function counts(value: unknown, total: number): EventCount[] {
   return result;
 }
 function boundary(value: unknown, expected: string): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0{1,7})?(?:Z|\+00:00)(?![\s\S])/.test(value) || value.slice(0, 10) !== expected) invalid();
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0{1,7})?(?:Z|\+00:00)(?![\s\S])/.test(value) ||
+    value.slice(0, 10) !== expected
+  )
+    invalid();
   return value;
 }
 function generated(value: unknown): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,7})?(?:Z|\+00:00)(?![\s\S])/.test(value) || !eventDate(value.slice(0, 10)) || !Number.isFinite(Date.parse(value))) invalid();
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,7})?(?:Z|\+00:00)(?![\s\S])/.test(
+      value,
+    ) ||
+    !eventDate(value.slice(0, 10)) ||
+    !Number.isFinite(Date.parse(value))
+  )
+    invalid();
   return value;
 }
-export function subscriptionEventReportFrom(value: unknown, interval: EventInterval): SubscriptionEventReport {
+export function subscriptionEventReportFrom(
+  value: unknown,
+  interval: EventInterval,
+): SubscriptionEventReport {
   const length = eventIntervalDays(interval);
   if (length === null || !object(value) || value['scope'] !== 'recorded_events') invalid();
   const fromUtc = boundary(value['fromUtc'], interval.from);
@@ -90,13 +125,25 @@ export function subscriptionEventReportFrom(value: unknown, interval: EventInter
   });
   if (sum(days.map((day) => day.totalEvents)) !== totalEvents) invalid();
   for (const bucket of byEvent) {
-    if (sum(days.map((day) => day.byEvent.find((row) => row.key === bucket.key)!.count)) !== bucket.count) invalid();
+    if (
+      sum(days.map((day) => day.byEvent.find((row) => row.key === bucket.key)!.count)) !==
+      bucket.count
+    )
+      invalid();
   }
   return { scope: 'recorded_events', generatedUtc, fromUtc, toUtc, totalEvents, byEvent, days };
 }
-export async function subscriptionEvents(interval: EventInterval, signal?: AbortSignal): Promise<SubscriptionEventReport> {
+export async function subscriptionEvents(
+  interval: EventInterval,
+  signal?: AbortSignal,
+): Promise<SubscriptionEventReport> {
   if (eventIntervalDays(interval) === null) throw new ApiError(0, 'invalid_interval');
   const query = new URLSearchParams({ from: interval.from, to: interval.to });
-  const result = await request('/admin/reports/subscriptions/events?' + query.toString(), undefined, 'GET', { ...(signal !== undefined ? { signal } : {}), cache: 'no-store' });
+  const result = await request(
+    '/admin/reports/subscriptions/events?' + query.toString(),
+    undefined,
+    'GET',
+    { ...(signal !== undefined ? { signal } : {}), cache: 'no-store' },
+  );
   return subscriptionEventReportFrom(result, interval);
 }

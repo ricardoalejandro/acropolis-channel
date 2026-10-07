@@ -15,26 +15,46 @@ const reportPath = '/api/v1/admin/reports/subscriptions/events';
 const route = '/admin/reports/subscription-events';
 const number = new Intl.NumberFormat('es-PE');
 const labels = [
-  'Primera activación', 'Reactivación por el usuario', 'Cancelación por el usuario',
-  'Activa → cancelada', 'Activa → suspendida', 'Cancelada → activa',
-  'Cancelada → suspendida', 'Suspendida → activa', 'Suspendida → cancelada',
-  'Suspensión por recuperación', 'Otros eventos registrados',
+  'Primera activación',
+  'Reactivación por el usuario',
+  'Cancelación por el usuario',
+  'Activa → cancelada',
+  'Activa → suspendida',
+  'Cancelada → activa',
+  'Cancelada → suspendida',
+  'Suspendida → activa',
+  'Suspendida → cancelada',
+  'Suspensión por recuperación',
+  'Otros eventos registrados',
 ];
 function guard() {
   const value = process.env['BASE_URL'];
-  if (!password || !/^acropolis_test_[a-z0-9_]+(?![\s\S])/.test(process.env['QA_PROJECT'] ?? '') ||
-    !/^qa-load-\d{6}@example\.test(?![\s\S])/.test(ownerEmail) || !value)
+  if (
+    !password ||
+    !/^acropolis_test_[a-z0-9_]+(?![\s\S])/.test(process.env['QA_PROJECT'] ?? '') ||
+    !/^qa-load-\d{6}@example\.test(?![\s\S])/.test(ownerEmail) ||
+    !value
+  )
     throw new Error('Subscription events E2E requires isolated synthetic QA.');
   const origin = new URL(value);
-  if (origin.protocol !== 'https:' || !/^qa-[a-z0-9]+\.test(?![\s\S])/.test(origin.hostname) ||
-    origin.username || origin.password || origin.port !== '8443' || origin.pathname !== '/' || origin.search || origin.hash)
+  if (
+    origin.protocol !== 'https:' ||
+    !/^qa-[a-z0-9]+\.test(?![\s\S])/.test(origin.hostname) ||
+    origin.username ||
+    origin.password ||
+    origin.port !== '8443' ||
+    origin.pathname !== '/' ||
+    origin.search ||
+    origin.hash
+  )
     throw new Error('Subscription events E2E requires the isolated HTTPS QA origin.');
   return origin.origin;
 }
 function dayUtc(offset = 0, initial = Date.now()) {
   const date = new Date(initial);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + offset))
-    .toISOString().slice(0, 10);
+    .toISOString()
+    .slice(0, 10);
 }
 function observeReportRequests(page: Page) {
   const requests: { method: string; query: [string, string][] }[] = [];
@@ -51,11 +71,23 @@ function record(value: unknown, keys: string[]): Record<string, unknown> {
   expect(Object.keys(result).sort()).toEqual([...keys].sort());
   return result;
 }
-async function readReport(http: APIResponse | Response, interval: EventInterval, privateValues: string[]) {
+async function readReport(
+  http: APIResponse | Response,
+  interval: EventInterval,
+  privateValues: string[],
+) {
   expect(http.status()).toBe(200);
   expect(http.headers()['cache-control']).toContain('no-store');
   const raw: unknown = await http.json();
-  const root = record(raw, ['scope', 'generatedUtc', 'fromUtc', 'toUtc', 'totalEvents', 'byEvent', 'days']);
+  const root = record(raw, [
+    'scope',
+    'generatedUtc',
+    'fromUtc',
+    'toUtc',
+    'totalEvents',
+    'byEvent',
+    'days',
+  ]);
   expect(Array.isArray(root['byEvent'])).toBe(true);
   for (const value of root['byEvent'] as unknown[]) record(value, ['key', 'count']);
   expect(Array.isArray(root['days'])).toBe(true);
@@ -69,18 +101,28 @@ async function readReport(http: APIResponse | Response, interval: EventInterval,
   expect(report.scope).toBe('recorded_events');
   expect(report.byEvent.map((row) => row.key)).toEqual([...subscriptionEventKeys]);
   expect(report.byEvent.reduce((sum, row) => sum + row.count, 0)).toBe(report.totalEvents);
-  expect(report.days.map((row) => row.dayUtc)).toEqual([interval.from, dayUtc(1, Date.parse(interval.from + 'T00:00:00Z'))]);
+  expect(report.days.map((row) => row.dayUtc)).toEqual([
+    interval.from,
+    dayUtc(1, Date.parse(interval.from + 'T00:00:00Z')),
+  ]);
   expect(report.days.reduce((sum, row) => sum + row.totalEvents, 0)).toBe(report.totalEvents);
   for (const day of report.days) {
     expect(day.byEvent.map((row) => row.key)).toEqual([...subscriptionEventKeys]);
     expect(day.byEvent.reduce((sum, row) => sum + row.count, 0)).toBe(day.totalEvents);
   }
   for (const row of report.byEvent)
-    expect(report.days.reduce((sum, day) => sum + day.byEvent.find((bucket) => bucket.key === row.key)!.count, 0)).toBe(row.count);
+    expect(
+      report.days.reduce(
+        (sum, day) => sum + day.byEvent.find((bucket) => bucket.key === row.key)!.count,
+        0,
+      ),
+    ).toBe(row.count);
   return report;
 }
 async function consult(page: Page, interval: EventInterval, privateValues: string[]) {
-  const response = page.waitForResponse((http) => new URL(http.url()).pathname === reportPath && http.request().method() === 'GET');
+  const response = page.waitForResponse(
+    (http) => new URL(http.url()).pathname === reportPath && http.request().method() === 'GET',
+  );
   await page.getByRole('button', { name: 'Consultar período', exact: true }).click();
   const report = await readReport(await response, interval, privateValues);
   const results = page.getByRole('region', { name: 'Cambios registrados', exact: true });
@@ -90,14 +132,21 @@ async function consult(page: Page, interval: EventInterval, privateValues: strin
 }
 async function movement(page: Page, action: 'activate' | 'cancel', previous: Subscription | null) {
   const path = '/api/v1/subscriptions/' + action;
-  const response = page.waitForResponse((http) => new URL(http.url()).pathname === path && http.request().method() === 'POST');
-  await page.getByRole('button', {
-    name: action === 'cancel' ? 'Confirmar cancelación' : 'Suscribirme gratis', exact: true,
-  }).click();
+  const response = page.waitForResponse(
+    (http) => new URL(http.url()).pathname === path && http.request().method() === 'POST',
+  );
+  await page
+    .getByRole('button', {
+      name: action === 'cancel' ? 'Confirmar cancelación' : 'Suscribirme gratis',
+      exact: true,
+    })
+    .click();
   const http = await response;
   expect(http.status()).toBe(200);
   expect(http.headers()['cache-control']).toContain('no-store');
-  expect(http.request().postDataJSON()).toEqual(action === 'cancel' ? { version: previous!.version } : {});
+  expect(http.request().postDataJSON()).toEqual(
+    action === 'cancel' ? { version: previous!.version } : {},
+  );
   const subscription = subscriptionFrom(await http.json());
   expect(subscription.status).toBe(action === 'cancel' ? 'cancelled' : 'active');
   if (previous) {
@@ -105,25 +154,37 @@ async function movement(page: Page, action: 'activate' | 'cancel', previous: Sub
     expect(subscription.userId).toBe(previous.userId);
     expect(subscription.version).not.toBe(previous.version);
   }
-  await expect(page.locator('.subscription-status .status-badge')).toHaveText(action === 'cancel' ? 'Cancelada' : 'Activa');
-  await expect(page.getByRole('status')).toHaveText(action === 'cancel' ? 'Cancelaste tu suscripción gratuita.' : 'Tu acceso gratuito está activo.');
+  await expect(page.locator('.subscription-status .status-badge')).toHaveText(
+    action === 'cancel' ? 'Cancelada' : 'Activa',
+  );
+  await expect(page.getByRole('status')).toHaveText(
+    action === 'cancel' ? 'Cancelaste tu suscripción gratuita.' : 'Tu acceso gratuito está activo.',
+  );
   return subscription;
 }
 
 test.use({ trace: 'off' });
-test('@modernization subscription event periods reflect three real QA transitions without exposing accounts', async ({ page, browser }, testInfo) => {
+test('@modernization subscription event periods reflect three real QA transitions without exposing accounts', async ({
+  page,
+  browser,
+}, testInfo) => {
   test.setTimeout(180_000);
   const origin = guard();
   const started = Date.now();
   const interval = { from: dayUtc(0, started), to: dayUtc(2, started) };
   const through = dayUtc(1, started);
-  const memberEmail = testInfo.project.use.isMobile ? 'qa-load-000100@example.test' : 'qa-load-000099@example.test';
+  const memberEmail = testInfo.project.use.isMobile
+    ? 'qa-load-000100@example.test'
+    : 'qa-load-000099@example.test';
   expect(memberEmail).not.toBe(ownerEmail);
   const owner = await loginQa(page.request, ownerEmail, password!);
   expect(owner.permissions).toContain('Subscriptions.Manage');
   const options = {
-    baseURL: origin, ignoreHTTPSErrors: false, viewport: page.viewportSize()!,
-    isMobile: Boolean(testInfo.project.use.isMobile), hasTouch: testInfo.project.use.hasTouch ?? false,
+    baseURL: origin,
+    ignoreHTTPSErrors: false,
+    viewport: page.viewportSize()!,
+    isMobile: Boolean(testInfo.project.use.isMobile),
+    hasTouch: testInfo.project.use.hasTouch ?? false,
     deviceScaleFactor: testInfo.project.use.deviceScaleFactor ?? 1,
     ...(testInfo.project.use.userAgent ? { userAgent: testInfo.project.use.userAgent } : {}),
   };
@@ -149,41 +210,71 @@ test('@modernization subscription event periods reflect three real QA transition
     expect(forbidden.headers()['cache-control']).toContain('no-store');
     expect((await forbidden.json()) as unknown).toMatchObject({ code: 'forbidden' });
     await memberPage.goto(route);
-    await expect(memberPage.getByRole('heading', { name: 'Este espacio requiere autorización.', level: 1 })).toBeVisible();
+    await expect(
+      memberPage.getByRole('heading', { name: 'Este espacio requiere autorización.', level: 1 }),
+    ).toBeVisible();
     await expect(memberPage.getByRole('form', { name: 'Período de movimientos' })).toHaveCount(0);
     expect(memberReports).toEqual([]);
 
     const requests = observeReportRequests(page);
     await page.goto(route);
-    await expect(page.getByRole('heading', { name: 'Movimientos de suscripción', level: 1 })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Movimientos de suscripción', level: 1 }),
+    ).toBeVisible();
     const form = page.getByRole('form', { name: 'Período de movimientos', exact: true });
     await expect(form).toBeVisible();
     expect(requests).toEqual([]);
     await form.getByLabel('Desde', { exact: true }).fill(interval.from);
     await form.getByLabel('Hasta (incluido)', { exact: true }).fill(through);
     expect(requests).toEqual([]);
-    const privateValues = [ownerEmail, owner.id, owner.displayName, memberEmail, member.id, member.displayName];
+    const privateValues = [
+      ownerEmail,
+      owner.id,
+      owner.displayName,
+      memberEmail,
+      member.id,
+      member.displayName,
+    ];
     const baseline = await consult(page, interval, privateValues);
-    expect(requests).toEqual([{ method: 'GET', query: [['from', interval.from], ['to', interval.to]] }]);
+    expect(requests).toEqual([
+      {
+        method: 'GET',
+        query: [
+          ['from', interval.from],
+          ['to', interval.to],
+        ],
+      },
+    ]);
     await form.getByLabel('Hasta (incluido)', { exact: true }).fill(interval.from);
-    await expect(page.getByRole('region', { name: 'Cambios registrados', exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'Cambios registrados', exact: true }),
+    ).toHaveCount(0);
     await form.getByLabel('Hasta (incluido)', { exact: true }).fill(through);
     expect(requests).toHaveLength(1);
 
     const writes: { path: string; method: string }[] = [];
     memberPage.on('request', (request) => {
       const path = new URL(request.url()).pathname;
-      if (path.startsWith('/api/v1/subscriptions/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method()))
+      if (
+        path.startsWith('/api/v1/subscriptions/') &&
+        ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())
+      )
         writes.push({ path, method: request.method() });
     });
-    const initialResponse = memberPage.waitForResponse((http) => new URL(http.url()).pathname === '/api/v1/subscriptions/me' && http.request().method() === 'GET');
+    const initialResponse = memberPage.waitForResponse(
+      (http) =>
+        new URL(http.url()).pathname === '/api/v1/subscriptions/me' &&
+        http.request().method() === 'GET',
+    );
     await memberPage.goto('/profile/subscription');
     const initialHttp = await initialResponse;
     expect(initialHttp.status()).toBe(200);
     const initial = subscriptionMeFrom(await initialHttp.json());
     expect(initial.subscription).toBeNull();
     expect(initial.eligibleToActivate).toBe(true);
-    await expect(memberPage.locator('.subscription-status .status-badge')).toHaveText('Sin suscripción');
+    await expect(memberPage.locator('.subscription-status .status-badge')).toHaveText(
+      'Sin suscripción',
+    );
     const activated = await movement(memberPage, 'activate', null);
     expect(activated.userId).toBe(member.id);
     await memberPage.getByRole('button', { name: 'Cancelar suscripción', exact: true }).click();
@@ -203,12 +294,16 @@ test('@modernization subscription event periods reflect three real QA transition
     for (const [index, key] of subscriptionEventKeys.entries()) {
       const delta = ['activated', 'reactivated', 'cancelled'].includes(key) ? 1 : 0;
       expect(final.byEvent[index]!.count - baseline.byEvent[index]!.count).toBe(delta);
-      const row = page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: labels[index]!, exact: true }) });
+      const row = page
+        .getByRole('row')
+        .filter({ has: page.getByRole('rowheader', { name: labels[index]!, exact: true }) });
       await expect(row).toHaveCount(1);
       await expect(row).toBeVisible();
       await expect(row.locator('td')).toHaveText(number.format(final.byEvent[index]!.count));
       for (const [dayIndex, day] of final.days.entries())
-        expect(day.byEvent[index]!.count - baseline.days[dayIndex]!.byEvent[index]!.count).toBeGreaterThanOrEqual(0);
+        expect(
+          day.byEvent[index]!.count - baseline.days[dayIndex]!.byEvent[index]!.count,
+        ).toBeGreaterThanOrEqual(0);
     }
     await page.getByText('Ver detalle diario (2 días)', { exact: true }).click();
     const daily = page.getByRole('table', { name: 'Eventos registrados por día UTC', exact: true });
@@ -223,23 +318,52 @@ test('@modernization subscription event periods reflect three real QA transition
     const main = page.locator('main');
     for (const value of privateValues) await expect(main).not.toContainText(value);
     await expect(main).toContainText('las fechas se consultan en UTC');
-    await expect(main).toContainText('no equivalen a personas únicas, suscripciones activas ni renovaciones');
+    await expect(main).toContainText(
+      'no equivalen a personas únicas, suscripciones activas ni renovaciones',
+    );
     await expect(main).toContainText('sin reconstruir períodos anteriores');
     const results = page.getByRole('region', { name: 'Cambios registrados', exact: true });
-    await expect(results.locator('.event-updated time')).toHaveAttribute('datetime', final.generatedUtc);
+    await expect(results.locator('.event-updated time')).toHaveAttribute(
+      'datetime',
+      final.generatedUtc,
+    );
     expect(requests).toEqual([
-      { method: 'GET', query: [['from', interval.from], ['to', interval.to]] },
-      { method: 'GET', query: [['from', interval.from], ['to', interval.to]] },
+      {
+        method: 'GET',
+        query: [
+          ['from', interval.from],
+          ['to', interval.to],
+        ],
+      },
+      {
+        method: 'GET',
+        query: [
+          ['from', interval.from],
+          ['to', interval.to],
+        ],
+      },
     ]);
     const finishedDay = dayUtc();
     expect(finishedDay >= interval.from && finishedDay < interval.to).toBe(true);
     for (const subscription of [activated, cancelled, reactivated])
-      expect(subscription.updatedUtc.slice(0, 10) >= interval.from && subscription.updatedUtc.slice(0, 10) < interval.to).toBe(true);
-    await page.evaluate(async () => { await document.fonts.ready; });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(
+        subscription.updatedUtc.slice(0, 10) >= interval.from &&
+          subscription.updatedUtc.slice(0, 10) < interval.to,
+      ).toBe(true);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     const screenshot = testInfo.outputPath('subscription-events-' + testInfo.project.name + '.png');
-    await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled', caret: 'hide' });
+    await page.screenshot({
+      path: screenshot,
+      fullPage: true,
+      animations: 'disabled',
+      caret: 'hide',
+    });
     fs.chmodSync(screenshot, 0o600);
   } finally {
     await Promise.all([memberContext.close(), anonymousContext.close()]);

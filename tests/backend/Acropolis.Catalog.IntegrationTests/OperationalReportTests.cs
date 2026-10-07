@@ -95,9 +95,16 @@ public sealed class OperationalReportTests(CatalogFixture database)
 
     private static EditorialContent Content(string category, string state, DateTimeOffset now) => new()
     {
-        Id = Guid.NewGuid(), Slug = "report-" + Guid.NewGuid().ToString("N"), Title = "Synthetic editorial report",
-        Summary = "Synthetic public summary", Body = "Synthetic public synopsis", Category = category, Status = state,
-        CreatedUtc = now.AddYears(-1), UpdatedUtc = now.AddDays(-1), PublishedUtc = now.AddMonths(-6)
+        Id = Guid.NewGuid(),
+        Slug = "report-" + Guid.NewGuid().ToString("N"),
+        Title = "Synthetic editorial report",
+        Summary = "Synthetic public summary",
+        Body = "Synthetic public synopsis",
+        Category = category,
+        Status = state,
+        CreatedUtc = now.AddYears(-1),
+        UpdatedUtc = now.AddDays(-1),
+        PublishedUtc = now.AddMonths(-6)
     };
     private sealed class ReportProjection : DbCommandInterceptor
     {

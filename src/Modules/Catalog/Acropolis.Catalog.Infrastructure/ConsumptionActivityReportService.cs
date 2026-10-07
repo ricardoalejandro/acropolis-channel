@@ -113,7 +113,10 @@ public sealed class ConsumptionActivityReportService(CatalogDbContext database, 
               FROM facts GROUP BY "ContentId","ContentVersion","CategoryAtStart","SourceKind"
             )
             """;
-        var total = await database.Database.SqlQueryRaw<long>(cte + "SELECT COUNT(*) AS \"Value\" FROM aggregates", Parameters(interval, window, accountId)).SingleAsync(token);
+        // CTEs and projection are fixed SQL; every request value remains an NpgsqlParameter.
+        const string countProjection = "SELECT COUNT(*) AS \"Value\" FROM aggregates";
+        var countSql = cte + countProjection;
+        var total = await database.Database.SqlQueryRaw<long>(countSql, Parameters(interval, window, accountId)).SingleAsync(token);
         if (total < 0 || total > 9007199254740991) throw new InvalidOperationException("Consumption content total exceeds supported numeric bounds.");
         var sql = cte + """
             SELECT a.*, 'content'::text AS "GroupType",''::text AS "Key",NULL::date AS "DayUtc",

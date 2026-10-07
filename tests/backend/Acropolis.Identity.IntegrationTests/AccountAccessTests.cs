@@ -35,8 +35,15 @@ public sealed class AccountAccessTests(IdentityFixture database)
         await migration.GetService<IMigrator>().MigrateAsync("20261006074206_AddProtectedOwner", Token);
         var user = User("access-legacy");
         migration.Users.Add(user);
-        migration.Sessions.Add(new StoredSession { Id = new string('a', 64), UserId = user.Id, SecurityVersion = user.SecurityVersion,
-            Ticket = [1], CreatedUtc = DateTimeOffset.UtcNow.AddDays(-1), ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1) });
+        migration.Sessions.Add(new StoredSession
+        {
+            Id = new string('a', 64),
+            UserId = user.Id,
+            SecurityVersion = user.SecurityVersion,
+            Ticket = [1],
+            CreatedUtc = DateTimeOffset.UtcNow.AddDays(-1),
+            ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1)
+        });
         await migration.SaveChangesAsync(Token);
         var xmin = await UserXmin(migration, user.Id);
         await new ChannelMigrationRunner().RunAsync(database.MigrationConnection, Token);
@@ -120,7 +127,7 @@ public sealed class AccountAccessTests(IdentityFixture database)
         clock.Advance(TimeSpan.FromMinutes(1));
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(Token);
         var fail = new BeforeAccess(cancel ? () => { cancelled.Cancel(); cancelled.Token.ThrowIfCancellationRequested(); }
-            : () => throw new InvalidOperationException("Synthetic access failure after session persistence"));
+        : () => throw new InvalidOperationException("Synthetic access failure after session persistence"));
         var failing = Store(clock, fail);
         if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => failing.StoreAsync(Ticket(user, clock), cancelled.Token));
         else await Assert.ThrowsAsync<InvalidOperationException>(() => failing.StoreAsync(Ticket(user, clock), Token));
@@ -276,9 +283,15 @@ public sealed class AccountAccessTests(IdentityFixture database)
     private static DateTimeOffset PgUtc(DateTimeOffset value) => new(value.UtcTicks - value.UtcTicks % 10, TimeSpan.Zero);
     private static ChannelUser User(string suffix) => new()
     {
-        Id = Guid.NewGuid(), DisplayName = "Synthetic account", UserName = suffix + "@example.test", NormalizedUserName = (suffix + "@example.test").ToUpperInvariant(),
-        Email = suffix + "@example.test", NormalizedEmail = (suffix + "@example.test").ToUpperInvariant(), EmailConfirmed = true,
-        ConcurrencyStamp = Guid.NewGuid().ToString("N"), SecurityStamp = Guid.NewGuid().ToString("N")
+        Id = Guid.NewGuid(),
+        DisplayName = "Synthetic account",
+        UserName = suffix + "@example.test",
+        NormalizedUserName = (suffix + "@example.test").ToUpperInvariant(),
+        Email = suffix + "@example.test",
+        NormalizedEmail = (suffix + "@example.test").ToUpperInvariant(),
+        EmailConfirmed = true,
+        ConcurrencyStamp = Guid.NewGuid().ToString("N"),
+        SecurityStamp = Guid.NewGuid().ToString("N")
     };
     private static AuthenticationTicket Ticket(ChannelUser user, TestClock clock, string? method = "pwd")
     {

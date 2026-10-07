@@ -135,8 +135,16 @@ public sealed class TopicHttpTests
     }
     private sealed class TopicSpy : ITopicService
     {
-        public int Calls { get; private set; } public bool Fail { get; set; } public bool Conflict { get; set; }
-        public string? LastTopic { get; private set; } public string? LastSearch { get; private set; } public string? LastCategory { get; private set; } public string? LastName { get; private set; } public string? LastState { get; private set; } public Guid? LastBefore { get; private set; } public Guid[] LastIds { get; private set; } = [];
+        public int Calls { get; private set; }
+        public bool Fail { get; set; }
+        public bool Conflict { get; set; }
+        public string? LastTopic { get; private set; }
+        public string? LastSearch { get; private set; }
+        public string? LastCategory { get; private set; }
+        public string? LastName { get; private set; }
+        public string? LastState { get; private set; }
+        public Guid? LastBefore { get; private set; }
+        public Guid[] LastIds { get; private set; } = [];
         private static AdminTopicView Topic => new(TopicId, "tema-qa", "Tema QA", "active", 0, Version);
         private Task<T> Value<T>(T value, CancellationToken token) { Calls++; token.ThrowIfCancellationRequested(); if (Fail) throw new Npgsql.NpgsqlException("synthetic-private-connection"); return Task.FromResult(value); }
         public Task<PublicTopicPage> ListPublicAsync(int page, int pageSize, CancellationToken token) => Value(new PublicTopicPage([new(TopicId, "tema-qa", "Tema QA", 0)], 1, page, pageSize), token);

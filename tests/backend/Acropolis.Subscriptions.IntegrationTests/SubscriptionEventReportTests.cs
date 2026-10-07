@@ -348,8 +348,15 @@ public sealed class SubscriptionEventReportTests(IdentityFixture database)
     private static Subscription Stock(DateTimeOffset at) => new() { Id = Guid.NewGuid(), UserId = Guid.NewGuid(), CreatedUtc = at, ActivatedUtc = at, UpdatedUtc = at };
     private static SubscriptionAudit Event(Subscription stock, string action, string? before, string after, DateTimeOffset at) => new()
     {
-        Id = Guid.NewGuid(), SubscriptionId = stock.Id, UserId = stock.UserId, ActorId = Guid.NewGuid(),
-        Action = action, BeforeStatus = before, AfterStatus = after, Reason = PrivateMarker, CreatedUtc = at
+        Id = Guid.NewGuid(),
+        SubscriptionId = stock.Id,
+        UserId = stock.UserId,
+        ActorId = Guid.NewGuid(),
+        Action = action,
+        BeforeStatus = before,
+        AfterStatus = after,
+        Reason = PrivateMarker,
+        CreatedUtc = at
     };
     private static Task<string[]> AuditVersions(SubscriptionsDbContext context) => context.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM subscriptions.\"Audit\" ORDER BY \"Id\"").ToArrayAsync(Token);
     private static async Task<ChannelUser> Create(IdentityApiFactory api, string email, bool manage = false)

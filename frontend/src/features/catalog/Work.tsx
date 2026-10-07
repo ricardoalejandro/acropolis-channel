@@ -114,10 +114,27 @@ function RecordedReading({ work }: { work: ContentWork }) {
   const read = useCallback(() => {
     if (!article.current) return null;
     const bounds = article.current.getBoundingClientRect();
-    return { now: performance.now(), visible: document.visibilityState === 'visible', focused: document.hasFocus(), articleTop: bounds.top, articleHeight: bounds.height, viewportHeight: window.innerHeight };
+    return {
+      now: performance.now(),
+      visible: document.visibilityState === 'visible',
+      focused: document.hasFocus(),
+      articleTop: bounds.top,
+      articleHeight: bounds.height,
+      viewportHeight: window.innerHeight,
+    };
   }, []);
   useConsumptionRecording({ slug: work.slug, version: work.version }, 'reading', read);
-  return <article ref={article} className="reading-work" aria-label="Lectura completa"><h2>Lectura completa</h2>{work.workText!.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</article>;
+  return (
+    <article ref={article} className="reading-work" aria-label="Lectura completa">
+      <h2>Lectura completa</h2>
+      {work
+        .workText!.split(/\n\s*\n/)
+        .filter(Boolean)
+        .map((paragraph, index) => (
+          <p key={index}>{paragraph}</p>
+        ))}
+    </article>
+  );
 }
 export function SequenceNavigation({ slug }: { slug: string }) {
   const [params] = useSearchParams();

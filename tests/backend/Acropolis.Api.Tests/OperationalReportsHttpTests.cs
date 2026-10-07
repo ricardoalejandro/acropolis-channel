@@ -234,7 +234,8 @@ public sealed class OperationalReportsHttpTests
     };
     private static HttpClient Client(ReportFactory factory) => factory.CreateClient(new WebApplicationFactoryClientOptions
     {
-        BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false
+        BaseAddress = new Uri("https://localhost"),
+        AllowAutoRedirect = false
     });
     private static void PrivateHeaders(HttpResponseMessage response)
     {

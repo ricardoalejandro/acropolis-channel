@@ -14,15 +14,25 @@ public sealed class TopicTests(CatalogFixture database)
     private static TopicService Service(CatalogDbContext context) => new(context, TimeProvider.System);
     private static EditorialContent Content(string slug = "qa-tema-obra", string state = "published") => new()
     {
-        Id = Guid.NewGuid(), Slug = slug, Title = "Lectura sintética", Summary = "Resumen literal 50%_\\", Body = "Sinopsis pública", Category = "lecturas", Tags = ["etiqueta libre"], WorkText = "Obra privada preservada", Status = state,
-        CreatedUtc = DateTimeOffset.UtcNow, UpdatedUtc = DateTimeOffset.UtcNow, PublishedUtc = state == "published" ? DateTimeOffset.UtcNow : null
+        Id = Guid.NewGuid(),
+        Slug = slug,
+        Title = "Lectura sintética",
+        Summary = "Resumen literal 50%_\\",
+        Body = "Sinopsis pública",
+        Category = "lecturas",
+        Tags = ["etiqueta libre"],
+        WorkText = "Obra privada preservada",
+        Status = state,
+        CreatedUtc = DateTimeOffset.UtcNow,
+        UpdatedUtc = DateTimeOffset.UtcNow,
+        PublishedUtc = state == "published" ? DateTimeOffset.UtcNow : null
     };
     [Fact]
     public async Task MigrationStartsEmptyIsIdempotentAndRuntimeCannotDeleteTopicsOrRewriteAudit()
     {
         await database.ResetAsync(Token);
         await using var context = database.Context();
-        Assert.True(context.Database.GetMigrations().Contains("20261007040000_AddTopics"));
+        Assert.Contains("20261007040000_AddTopics", context.Database.GetMigrations());
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Empty((await Service(context).ListPublicAsync(1, 20, Token)).Items);
         Assert.Equal(0, await context.Topics.CountAsync(Token));
@@ -124,7 +134,7 @@ public sealed class TopicTests(CatalogFixture database)
         }
         async Task<CatalogResult<ContentTopicsView>> Assign(Guid topic) { await using var scope = database.Context(); await scope.Database.OpenConnectionAsync(Token); return await Service(scope).AssignAsync(Actor, id, new(version, [topic]), Token); }
         var results = await Task.WhenAll(Assign(topics[0]), Assign(topics[1]));
-        Assert.Single(results.Where(x => x.Succeeded)); Assert.Equal("concurrency_conflict", Assert.Single(results.Where(x => !x.Succeeded)).Error);
+        Assert.Single(results, x => x.Succeeded); Assert.Equal("concurrency_conflict", Assert.Single(results, x => !x.Succeeded).Error);
         await using var verify = database.Context(); Assert.Single((await Service(verify).GetContentTopicsAsync(id, Token))!.Items); Assert.Equal(1, await verify.Audit.CountAsync(Token));
     }
     [Fact]
@@ -141,9 +151,11 @@ public sealed class TopicTests(CatalogFixture database)
         var assignTask = Service(assignScope).AssignAsync(Actor, id, new(contentVersion, [topic.Id]), Token);
         var archiveTask = Service(archiveScope).SetStateAsync(Actor, topic.Id, new(topic.Version, "archived"), Token);
         await Task.WhenAll(assignTask, archiveTask);
-        Assert.True(archiveTask.Result.Succeeded); Assert.True(assignTask.Result.Succeeded || assignTask.Result.Error == "topic_unavailable");
+        var assigned = await assignTask;
+        var archived = await archiveTask;
+        Assert.True(archived.Succeeded); Assert.True(assigned.Succeeded || assigned.Error == "topic_unavailable");
         await using var verify = database.Context(); Assert.Equal("archived", (await Service(verify).GetAdminAsync(topic.Id, Token))!.Status);
-        Assert.Equal(assignTask.Result.Succeeded ? 1 : 0, await verify.ContentTopics.CountAsync(Token)); Assert.Equal("published", (await verify.Contents.SingleAsync(Token)).Status);
+        Assert.Equal(assigned.Succeeded ? 1 : 0, await verify.ContentTopics.CountAsync(Token)); Assert.Equal("published", (await verify.Contents.SingleAsync(Token)).Status);
     }
     [Fact]
     public async Task FailureAfterSqlRollsBackAssociationsContentVersionAndAuditTogether()
@@ -189,7 +201,7 @@ public sealed class TopicTests(CatalogFixture database)
         }
         await using var left = database.Context(); await using var right = database.Context(); await left.Database.OpenConnectionAsync(Token); await right.Database.OpenConnectionAsync(Token);
         var results = await Task.WhenAll(Service(left).MoveAsync(Actor, new(version, first.Id, null), Token), Service(right).MoveAsync(Actor, new(version, second.Id, first.Id), Token));
-        Assert.Single(results.Where(result => result.Succeeded)); Assert.Equal("concurrency_conflict", Assert.Single(results.Where(result => !result.Succeeded)).Error);
+        Assert.Single(results, result => result.Succeeded); Assert.Equal("concurrency_conflict", Assert.Single(results, result => !result.Succeeded).Error);
         await using var verify = database.Context(); var directory = await Service(verify).ListAdminAsync(null, null, 1, 20, Token);
         Assert.Equal(new[] { 0, 1, 2 }, directory.Items.Select(item => item.Position)); Assert.Equal(3, directory.Items.Select(item => item.Id).Distinct().Count()); Assert.Equal(1, await verify.TopicAudit.CountAsync(item => item.Action == "topic.moved", Token));
     }

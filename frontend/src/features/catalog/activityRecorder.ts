@@ -1,6 +1,19 @@
 import { ApiError } from '../../api/identity';
-import { consumptionActivity, type ConsumptionPulse, type ConsumptionReceipt, type ConsumptionSession, type ConsumptionSource } from '../../api/consumptionActivity';
-import { mergeObservedRanges, readingStep, youtubeStep, type ObservedRange, type ReadingSample, type YouTubeSample } from './activitySampling';
+import {
+  consumptionActivity,
+  type ConsumptionPulse,
+  type ConsumptionReceipt,
+  type ConsumptionSession,
+  type ConsumptionSource,
+} from '../../api/consumptionActivity';
+import {
+  mergeObservedRanges,
+  readingStep,
+  youtubeStep,
+  type ObservedRange,
+  type ReadingSample,
+  type YouTubeSample,
+} from './activitySampling';
 export type ActivitySample = ReadingSample | YouTubeSample;
 export type ActivityTransport = {
   start: typeof consumptionActivity.start;
@@ -9,7 +22,12 @@ export type ActivityTransport = {
 const PERIOD_MS = 10000;
 const MAX_ATTEMPTS = 3;
 function retryable(error: unknown) {
-  return error instanceof ApiError && (error.status === 429 || error.status === 503 || (error.status === 0 && error.code !== 'invalid_response'));
+  return (
+    error instanceof ApiError &&
+    (error.status === 429 ||
+      error.status === 503 ||
+      (error.status === 0 && error.code !== 'invalid_response'))
+  );
 }
 export class ActivityRecorder {
   private session: ConsumptionSession | null = null;
@@ -36,35 +54,65 @@ export class ActivityRecorder {
     private readonly clock = () => performance.now(),
   ) {}
   private reset(now: number) {
-    this.previous = null; this.began = now; this.activeMs = 0; this.ranges = []; this.position = 0;
+    this.previous = null;
+    this.began = now;
+    this.activeMs = 0;
+    this.ranges = [];
+    this.position = 0;
   }
   private async open() {
     if (this.opening || this.stopped || this.session || this.clock() < this.retryAt) return;
     this.opening = true;
     try {
-      const session = await this.transport.start(this.slug, this.visitId, this.version, this.controller.signal);
+      const session = await this.transport.start(
+        this.slug,
+        this.visitId,
+        this.version,
+        this.controller.signal,
+      );
       if (this.stopped) return;
-      if (session.sourceKind !== this.source) { this.stop(); return; }
-      this.session = session; this.attempts = 0; this.retryAt = 0; this.reset(this.clock());
+      if (session.sourceKind !== this.source) {
+        this.stop();
+        return;
+      }
+      this.session = session;
+      this.attempts = 0;
+      this.retryAt = 0;
+      this.reset(this.clock());
     } catch (error) {
       if (!this.stopped && retryable(error) && ++this.attempts < MAX_ATTEMPTS)
-        this.retryAt = this.clock() + (error instanceof ApiError && error.status === 429 ? 60000 : PERIOD_MS);
+        this.retryAt =
+          this.clock() + (error instanceof ApiError && error.status === 429 ? 60000 : PERIOD_MS);
       else this.stop();
-    } finally { this.opening = false; }
+    } finally {
+      this.opening = false;
+    }
   }
   observe(sample: ActivitySample, transition = false) {
     if (this.stopped) return;
     if (this.source === 'youtube' && this.latest) {
-      const previous = this.latest as YouTubeSample; const current = sample as YouTubeSample;
-      const durationChanged = previous.durationMs !== current.durationMs && (previous.durationMs === null || current.durationMs === null || Math.abs(previous.durationMs - current.durationMs) > 1000);
-      if (previous.playbackRateMilli !== current.playbackRateMilli || durationChanged) { this.flush(); transition = true; }
+      const previous = this.latest as YouTubeSample;
+      const current = sample as YouTubeSample;
+      const durationChanged =
+        previous.durationMs !== current.durationMs &&
+        (previous.durationMs === null ||
+          current.durationMs === null ||
+          Math.abs(previous.durationMs - current.durationMs) > 1000);
+      if (previous.playbackRateMilli !== current.playbackRateMilli || durationChanged) {
+        this.flush();
+        transition = true;
+      }
     }
     this.latest = sample;
-    if (transition) { this.stateDirty = true; this.previous = null; }
+    if (transition) {
+      this.stateDirty = true;
+      this.previous = null;
+    }
     if (!this.session) {
-      const eligible = this.source === 'reading'
-        ? readingStep(null, sample as ReadingSample).exposedRanges.length > 0
-        : (sample as YouTubeSample).state === 'playing' && sample.visible && sample.focused;
+      const eligible =
+        this.source === 'reading'
+          ? readingStep(null, sample as ReadingSample).exposedRanges.length > 0
+          : (sample as YouTubeSample).state === 'playing' && sample.visible && sample.focused;
       if (eligible) void this.open();
       return;
     }
@@ -91,38 +139,87 @@ export class ActivityRecorder {
   flush() {
     if (this.stopped || !this.session || !this.latest || this.pending || this.inFlight) return;
     const intervalMs = Math.floor(this.latest.now - this.began);
-    if (intervalMs < 1 || intervalMs > 15000) { this.reset(this.clock()); return; }
+    if (intervalMs < 1 || intervalMs > 15000) {
+      this.reset(this.clock());
+      return;
+    }
     const activeMs = Math.min(intervalMs, Math.floor(this.activeMs));
     const ranges = this.ranges.slice(0, 16);
     if (this.source === 'reading') {
-      if (!ranges.length && activeMs === 0) { this.reset(this.clock()); return; }
-      this.pending = { sequence: this.session.nextSequence, intervalMs, activeMs, reading: { positionBasisPoints: this.position, exposedRanges: ranges } };
+      if (!ranges.length && activeMs === 0) {
+        this.reset(this.clock());
+        return;
+      }
+      this.pending = {
+        sequence: this.session.nextSequence,
+        intervalMs,
+        activeMs,
+        reading: { positionBasisPoints: this.position, exposedRanges: ranges },
+      };
     } else {
       const sample = this.latest as YouTubeSample;
-      if (sample.state === 'unstarted' || (!ranges.length && activeMs === 0 && !this.stateDirty)) { this.reset(this.clock()); return; }
-      this.pending = { sequence: this.session.nextSequence, intervalMs, activeMs, media: { state: sample.state, positionMs: sample.positionMs, durationMs: sample.durationMs, playbackRateMilli: sample.playbackRateMilli, segments: ranges } };
+      if (sample.state === 'unstarted' || (!ranges.length && activeMs === 0 && !this.stateDirty)) {
+        this.reset(this.clock());
+        return;
+      }
+      this.pending = {
+        sequence: this.session.nextSequence,
+        intervalMs,
+        activeMs,
+        media: {
+          state: sample.state,
+          positionMs: sample.positionMs,
+          durationMs: sample.durationMs,
+          playbackRateMilli: sample.playbackRateMilli,
+          segments: ranges,
+        },
+      };
     }
-    this.stateDirty = false; this.attempts = 0; this.retryAt = 0; this.reset(this.clock()); void this.send();
+    this.stateDirty = false;
+    this.attempts = 0;
+    this.retryAt = 0;
+    this.reset(this.clock());
+    void this.send();
   }
   private async send() {
     if (this.stopped || !this.session || !this.pending || this.inFlight) return;
     this.inFlight = true;
     const packet = this.pending;
     try {
-      const receipt: ConsumptionReceipt = await this.transport.pulse(this.session.sessionId, packet, this.controller.signal);
+      const receipt: ConsumptionReceipt = await this.transport.pulse(
+        this.session.sessionId,
+        packet,
+        this.controller.signal,
+      );
       if (this.stopped) return;
-      if (receipt.sequence !== packet.sequence || receipt.creditedMs > packet.activeMs) { this.stop(); return; }
+      if (receipt.sequence !== packet.sequence || receipt.creditedMs > packet.activeMs) {
+        this.stop();
+        return;
+      }
       this.session = { ...this.session, nextSequence: receipt.sequence + 1 };
-      this.pending = null; this.retryAt = 0; this.attempts = 0; this.reset(this.clock());
+      this.pending = null;
+      this.retryAt = 0;
+      this.attempts = 0;
+      this.reset(this.clock());
     } catch (error) {
       if (!this.stopped && retryable(error) && ++this.attempts < MAX_ATTEMPTS)
-        this.retryAt = this.clock() + (error instanceof ApiError && error.status === 429 ? 60000 : PERIOD_MS);
+        this.retryAt =
+          this.clock() + (error instanceof ApiError && error.status === 429 ? 60000 : PERIOD_MS);
       else this.stop();
-    } finally { this.inFlight = false; }
+    } finally {
+      this.inFlight = false;
+    }
   }
   transition(sample: ActivitySample) {
     // Flush the last observed state first; a pause must not relabel already sampled playback.
-    this.flush(); this.observe(sample, true);
+    this.flush();
+    this.observe(sample, true);
   }
-  stop() { this.stopped = true; this.controller.abort(); this.pending = null; this.previous = null; this.ranges = []; }
+  stop() {
+    this.stopped = true;
+    this.controller.abort();
+    this.pending = null;
+    this.previous = null;
+    this.ranges = [];
+  }
 }

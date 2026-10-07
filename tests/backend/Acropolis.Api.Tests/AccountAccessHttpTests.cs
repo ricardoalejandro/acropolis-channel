@@ -100,7 +100,8 @@ public sealed class AccountAccessHttpTests
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:Database"] = "Host=127.0.0.1;Port=1;Database=acropolis_test_access_http;Username=synthetic_access_http;Timeout=1;Command Timeout=1",
-                ["Identity:EmailEnabled"] = "false", ["Identity:PublicOrigin"] = "https://localhost"
+                ["Identity:EmailEnabled"] = "false",
+                ["Identity:PublicOrigin"] = "https://localhost"
             }));
             builder.ConfigureTestServices(services =>
             {

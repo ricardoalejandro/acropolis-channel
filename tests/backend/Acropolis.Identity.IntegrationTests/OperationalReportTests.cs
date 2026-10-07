@@ -130,9 +130,14 @@ public sealed class OperationalReportTests(IdentityFixture database)
         var email = suffix + "@example.test";
         return new ChannelUser
         {
-            Id = Guid.NewGuid(), UserName = email, NormalizedUserName = email.ToUpperInvariant(),
-            Email = email, NormalizedEmail = email.ToUpperInvariant(), EmailConfirmed = true,
-            DisplayName = "Synthetic report account", SecurityStamp = Guid.NewGuid().ToString("N")
+            Id = Guid.NewGuid(),
+            UserName = email,
+            NormalizedUserName = email.ToUpperInvariant(),
+            Email = email,
+            NormalizedEmail = email.ToUpperInvariant(),
+            EmailConfirmed = true,
+            DisplayName = "Synthetic report account",
+            SecurityStamp = Guid.NewGuid().ToString("N")
         };
     }
     private sealed class AfterAccountAggregate(Func<CancellationToken, Task> action) : DbCommandInterceptor

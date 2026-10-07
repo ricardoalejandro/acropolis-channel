@@ -348,7 +348,17 @@ export function UserDetail() {
             {sessionUser?.permissions.includes('Users.Manage') && (
               <LastSignIn key={visibleUser.id} userId={visibleUser.id} />
             )}
-            {sessionUser?.permissions.includes('Users.Manage') && sessionUser.permissions.includes('Content.Manage') && <p><Link className="text-link" to={'/admin/users/' + encodeURIComponent(id) + '/consumption'}>Consultar consumo de esta cuenta</Link></p>}
+            {sessionUser?.permissions.includes('Users.Manage') &&
+              sessionUser.permissions.includes('Content.Manage') && (
+                <p>
+                  <Link
+                    className="text-link"
+                    to={'/admin/users/' + encodeURIComponent(id) + '/consumption'}
+                  >
+                    Consultar consumo de esta cuenta
+                  </Link>
+                </p>
+              )}
             {visibleUser.isOwner && <p className="protected-owner">Propietario protegido</p>}
             <ul className="permission-list">
               {visibleUser.permissions.map((permission) => (

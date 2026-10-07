@@ -22,7 +22,10 @@ import { Profile } from './features/accounts/Profile';
 import { UserDetail, UserList } from './features/admin/Admin';
 import { AdminHome } from './features/admin/AdminHome';
 import { ReportsPage } from './features/admin/Reports';
-import { AccountConsumptionPage, ConsumptionReportsPage } from './features/admin/ConsumptionReports';
+import {
+  AccountConsumptionPage,
+  ConsumptionReportsPage,
+} from './features/admin/ConsumptionReports';
 import { SubscriptionEventsPage } from './features/admin/SubscriptionEvents';
 import { AuditPage } from './features/admin/Audit';
 import { SubscriptionPage } from './features/subscriptions/Subscription';
@@ -110,10 +113,38 @@ export function AppRoutes() {
             </Protected>
           }
         />
-        <Route path="/admin/topics" element={<Protected permission="Content.Manage"><TopicList /></Protected>} />
-        <Route path="/admin/topics/new" element={<Protected permission="Content.Manage"><TopicEditor /></Protected>} />
-        <Route path="/admin/topics/:id" element={<Protected permission="Content.Manage"><TopicEditor /></Protected>} />
-        <Route path="/admin/content/:id/topics" element={<Protected permission="Content.Manage"><ContentTopicsEditor /></Protected>} />
+        <Route
+          path="/admin/topics"
+          element={
+            <Protected permission="Content.Manage">
+              <TopicList />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/topics/new"
+          element={
+            <Protected permission="Content.Manage">
+              <TopicEditor />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/topics/:id"
+          element={
+            <Protected permission="Content.Manage">
+              <TopicEditor />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/content/:id/topics"
+          element={
+            <Protected permission="Content.Manage">
+              <ContentTopicsEditor />
+            </Protected>
+          }
+        />
         <Route path="/profile/subscription" element={<SubscriptionPage />} />
         <Route
           path="/admin"
@@ -131,8 +162,22 @@ export function AppRoutes() {
             </Protected>
           }
         />
-        <Route path="/admin/reports/consumption" element={<Protected permission="Content.Manage"><ConsumptionReportsPage /></Protected>} />
-        <Route path="/admin/users/:id/consumption" element={<Protected permission="Users.Manage"><AccountConsumptionPage /></Protected>} />
+        <Route
+          path="/admin/reports/consumption"
+          element={
+            <Protected permission="Content.Manage">
+              <ConsumptionReportsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/users/:id/consumption"
+          element={
+            <Protected permission="Users.Manage">
+              <AccountConsumptionPage />
+            </Protected>
+          }
+        />
         <Route
           path="/admin/reports/subscription-events"
           element={

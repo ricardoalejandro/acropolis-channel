@@ -1,17 +1,88 @@
-.consumption-query { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 20px; align-items: end; margin-bottom: 24px; }
-.consumption-reports > .surface { margin-top: 24px; min-width: 0; }
-.consumption-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 24px; margin: 24px 0; }
-.consumption-totals dt { color: var(--muted); font-size: 15px; }
-.consumption-totals dd { margin: 6px 0 0; font-size: 28px; line-height: 1.3; font-weight: 600; font-variant-numeric: tabular-nums; }
-.consumption-table-scroll { overflow-x: auto; max-width: 100%; margin-top: 24px; }
-.consumption-table-scroll table { min-width: 760px; }
-.consumption-table-scroll caption { text-align: left; font-size: 17px; font-weight: 600; padding-bottom: 12px; }
-.consumption-table-scroll th { text-align: left; }
-.consumption-table-scroll th, .consumption-table-scroll td { padding: 12px; vertical-align: top; }
-.consumption-table-scroll td { text-align: right; font-variant-numeric: tabular-nums; }
-.consumption-table-scroll th:first-child { min-width: 180px; max-width: 280px; }
-.consumption-table-scroll small { display: block; font-weight: 400; color: var(--muted); margin-top: 5px; }
-.consumption-table-scroll code { overflow-wrap: anywhere; font-size: 12px; }
-@media (max-width: 760px) { .consumption-query { grid-template-columns: minmax(0, 1fr); } .consumption-totals { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; } .consumption-totals dd { font-size: 24px; overflow-wrap: anywhere; } }
+.consumption-query {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+.consumption-reports > .surface {
+  margin-top: 24px;
+  min-width: 0;
+}
+.consumption-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 24px;
+  margin: 24px 0;
+}
+.consumption-totals dt {
+  color: var(--muted);
+  font-size: 15px;
+}
+.consumption-totals dd {
+  margin: 6px 0 0;
+  font-size: 28px;
+  line-height: 1.3;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.consumption-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin-top: 24px;
+}
+.consumption-table-scroll table {
+  min-width: 760px;
+}
+.consumption-table-scroll caption {
+  text-align: left;
+  font-size: 17px;
+  font-weight: 600;
+  padding-bottom: 12px;
+}
+.consumption-table-scroll th {
+  text-align: left;
+}
+.consumption-table-scroll th,
+.consumption-table-scroll td {
+  padding: 12px;
+  vertical-align: top;
+}
+.consumption-table-scroll td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.consumption-table-scroll th:first-child {
+  min-width: 180px;
+  max-width: 280px;
+}
+.consumption-table-scroll small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.consumption-table-scroll code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .consumption-query {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .consumption-totals {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 20px;
+  }
+  .consumption-totals dd {
+    font-size: 24px;
+    overflow-wrap: anywhere;
+  }
+}
 
-.consumption-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 0 16px; }
+.consumption-presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block: 0 16px;
+}

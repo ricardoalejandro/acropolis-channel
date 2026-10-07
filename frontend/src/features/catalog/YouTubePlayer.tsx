@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConsumptionRecording, type RecordingWork } from './useConsumptionRecording';
 import { mediaDuration, mediaMilliseconds, type YouTubeSample } from './activitySampling';
-type Player = { destroy: () => void; getPlayerState?: () => number; getCurrentTime?: () => number; getDuration?: () => number; getPlaybackRate?: () => number };
+type Player = {
+  destroy: () => void;
+  getPlayerState?: () => number;
+  getCurrentTime?: () => number;
+  getDuration?: () => number;
+  getPlaybackRate?: () => number;
+};
 type YouTubeApi = {
   Player: new (
     element: HTMLIFrameElement,
@@ -76,16 +82,43 @@ export function YouTubePlayer({
   const activePlayer = useRef<Player | null>(null);
   const read = useCallback((): YouTubeSample | null => {
     const player = activePlayer.current;
-    if (!player || typeof player.getPlayerState !== 'function' || typeof player.getCurrentTime !== 'function' || typeof player.getDuration !== 'function' || typeof player.getPlaybackRate !== 'function') return null;
+    if (
+      !player ||
+      typeof player.getPlayerState !== 'function' ||
+      typeof player.getCurrentTime !== 'function' ||
+      typeof player.getDuration !== 'function' ||
+      typeof player.getPlaybackRate !== 'function'
+    )
+      return null;
     try {
       const positionMs = mediaMilliseconds(player.getCurrentTime());
       const rate = Math.round(player.getPlaybackRate() * 1000);
-      if (positionMs === null || !Number.isSafeInteger(rate) || rate < 250 || rate > 4000) return null;
+      if (positionMs === null || !Number.isSafeInteger(rate) || rate < 250 || rate > 4000)
+        return null;
       const durationMs = mediaDuration(player.getDuration());
       if (durationMs !== null && positionMs > durationMs + 1000) return null;
       const state = player.getPlayerState();
-      return { now: performance.now(), visible: document.visibilityState === 'visible', focused: document.hasFocus(), state: state === 1 ? 'playing' : state === 2 ? 'paused' : state === 3 ? 'buffering' : state === 0 ? 'ended' : 'unstarted', positionMs, durationMs, playbackRateMilli: rate };
-    } catch { return null; }
+      return {
+        now: performance.now(),
+        visible: document.visibilityState === 'visible',
+        focused: document.hasFocus(),
+        state:
+          state === 1
+            ? 'playing'
+            : state === 2
+              ? 'paused'
+              : state === 3
+                ? 'buffering'
+                : state === 0
+                  ? 'ended'
+                  : 'unstarted',
+        positionMs,
+        durationMs,
+        playbackRateMilli: rate,
+      };
+    } catch {
+      return null;
+    }
   }, []);
   const { transition, stop } = useConsumptionRecording(recording, 'youtube', read);
   useEffect(() => {
@@ -99,7 +132,10 @@ export function YouTubePlayer({
           activePlayer.current = player = new api.Player(element, {
             events: {
               onError: () => {
-                if (alive) { setError(true); stop(); }
+                if (alive) {
+                  setError(true);
+                  stop();
+                }
               },
               onStateChange: (event) => {
                 if (alive)
@@ -114,7 +150,9 @@ export function YouTubePlayer({
                   );
                 if (alive) transition();
               },
-              onPlaybackRateChange: () => { if (alive) transition(); },
+              onPlaybackRateChange: () => {
+                if (alive) transition();
+              },
             },
           });
       })

@@ -38,8 +38,12 @@ public sealed class OperationalReportTests(IdentityFixture database)
             foreach (var state in new[] { "active", "active", "cancelled", "suspended" })
                 seed.Subscriptions.Add(new Subscription
                 {
-                    Id = Guid.NewGuid(), UserId = Guid.NewGuid(), Status = state,
-                    CreatedUtc = now.AddYears(-1), ActivatedUtc = now.AddMonths(-6), UpdatedUtc = now,
+                    Id = Guid.NewGuid(),
+                    UserId = Guid.NewGuid(),
+                    Status = state,
+                    CreatedUtc = now.AddYears(-1),
+                    ActivatedUtc = now.AddMonths(-6),
+                    UpdatedUtc = now,
                     CancelledUtc = state == "cancelled" ? now : null
                 });
             await seed.SaveChangesAsync(Token);

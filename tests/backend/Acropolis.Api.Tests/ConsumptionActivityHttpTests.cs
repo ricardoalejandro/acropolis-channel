@@ -259,8 +259,15 @@ public sealed class ConsumptionActivityHttpFixture : WebApplicationFactory<Progr
     {
         private static readonly DateTimeOffset Now = new(2026, 10, 7, 12, 0, 0, TimeSpan.Zero);
         private static ConsumptionMetrics Zero => new(0, 0, 0, 0, 0, 0, 0, 0);
-        public Guid Session { get; } = Guid.NewGuid(); public int StartCalls { get; set; } public int PulseCalls { get; set; } public int ReportCalls { get; set; }
-        public string? LastReport { get; set; } public Guid Account { get; set; } public string? Binding { get; set; } public StartConsumptionRequest? Start { get; set; } public ConsumptionPulseRequest? Pulse { get; set; } public bool Fail { get; set; }
+        public Guid Session { get; } = Guid.NewGuid(); public int StartCalls { get; set; }
+        public int PulseCalls { get; set; }
+        public int ReportCalls { get; set; }
+        public string? LastReport { get; set; }
+        public Guid Account { get; set; }
+        public string? Binding { get; set; }
+        public StartConsumptionRequest? Start { get; set; }
+        public ConsumptionPulseRequest? Pulse { get; set; }
+        public bool Fail { get; set; }
         public void Reset() { StartCalls = PulseCalls = ReportCalls = 0; LastReport = Binding = null; Start = null; Pulse = null; Fail = false; }
         public ConsumptionCapabilitiesView GetCapabilities() => new(false, 90, 365);
         public Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid id, string binding, string slug, StartConsumptionRequest request, CancellationToken token) { StartCalls++; Account = id; Binding = binding; Start = request; return Task.FromResult(new CatalogResult<ConsumptionSessionView>(new(Session, Now, 1, "reading"))); }

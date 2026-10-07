@@ -19,13 +19,15 @@ export function AdminHome() {
                 <Icon name={link.icon} />
                 <h2>{link.label}</h2>
                 <p>
-                  {link.path === '/admin/topics' ? 'Mantener temas y organizar la exploración del catálogo.' : link.permission === 'Users.Manage'
-                    ? user?.isOwner
-                      ? 'Buscar cuentas, gestionar niveles y delegar permisos.'
-                      : 'Buscar cuentas y gestionar sus datos y niveles.'
-                    : link.permission === 'Content.Manage'
-                      ? 'Preparar obras, ordenar colecciones y publicar el catálogo.'
-                      : 'Gestionar el acceso gratuito y consultar su historial.'}
+                  {link.path === '/admin/topics'
+                    ? 'Mantener temas y organizar la exploración del catálogo.'
+                    : link.permission === 'Users.Manage'
+                      ? user?.isOwner
+                        ? 'Buscar cuentas, gestionar niveles y delegar permisos.'
+                        : 'Buscar cuentas y gestionar sus datos y niveles.'
+                      : link.permission === 'Content.Manage'
+                        ? 'Preparar obras, ordenar colecciones y publicar el catálogo.'
+                        : 'Gestionar el acceso gratuito y consultar su historial.'}
                 </p>
               </Link>
             ))}

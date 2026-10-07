@@ -110,7 +110,13 @@ export function Profile() {
           </section>
           <section className="surface" aria-labelledby="profile-consumption">
             <h2 id="profile-consumption">Registro de consumo</h2>
-            <p className="section-copy">Cuando está habilitado, el registro de consumo conserva el detalle vinculado a tu cuenta durante 90 fechas UTC, incluida la actual, y estadísticas generales por obra y día durante 1 año (365 fechas UTC). Son observaciones del navegador; el tiempo registrado puede solaparse entre sesiones. El detalle sólo puede consultarse desde el backoffice con los permisos y la verificación en dos pasos necesarios.</p>
+            <p className="section-copy">
+              Cuando está habilitado, el registro de consumo conserva el detalle vinculado a tu
+              cuenta durante 90 fechas UTC, incluida la actual, y estadísticas generales por obra y
+              día durante 1 año (365 fechas UTC). Son observaciones del navegador; el tiempo
+              registrado puede solaparse entre sesiones. El detalle sólo puede consultarse desde el
+              backoffice con los permisos y la verificación en dos pasos necesarios.
+            </p>
           </section>
           <section className="surface" aria-labelledby="profile-mfa">
             <p className="eyebrow">Verificación en dos pasos</p>

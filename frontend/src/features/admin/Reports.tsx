@@ -164,8 +164,20 @@ export function ReportsPage() {
       <div className="page-heading">
         <h1>Reportes</h1>
         <p className="lead">Estado actual de la plataforma.</p>
-        {content && <p className="admin-report-link"><Link className="text-link" to="/admin/reports/consumption">Consultar consumo registrado →</Link></p>}
-        {subscriptions && <p className="admin-report-link"><Link className="text-link" to="/admin/reports/subscription-events">Ver movimientos de suscripción →</Link></p>}
+        {content && (
+          <p className="admin-report-link">
+            <Link className="text-link" to="/admin/reports/consumption">
+              Consultar consumo registrado →
+            </Link>
+          </p>
+        )}
+        {subscriptions && (
+          <p className="admin-report-link">
+            <Link className="text-link" to="/admin/reports/subscription-events">
+              Ver movimientos de suscripción →
+            </Link>
+          </p>
+        )}
       </div>
       {allowed ? (
         <>

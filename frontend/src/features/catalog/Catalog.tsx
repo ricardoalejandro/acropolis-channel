@@ -279,7 +279,9 @@ function ExploreView({
         category={category}
         setCategory={setCategory}
         onSubmit={() => change()}
-      ><PublicTopicFilter value={topic} change={setTopic} /></CatalogFilters>
+      >
+        <PublicTopicFilter value={topic} change={setTopic} />
+      </CatalogFilters>
       <CatalogState loading={state.loading} error={state.error} retry={state.reload}>
         {state.data && (
           <>

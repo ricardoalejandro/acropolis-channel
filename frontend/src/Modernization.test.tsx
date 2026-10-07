@@ -93,7 +93,10 @@ function mount(
     }
     if (route.includes('/consumption/content/')) {
       const slug = route.split('/').at(-1);
-      return json({ ...([reading, second, course, program].find((item) => item.slug === slug) ?? reading), version: protectedVersion });
+      return json({
+        ...([reading, second, course, program].find((item) => item.slug === slug) ?? reading),
+        version: protectedVersion,
+      });
     }
     if (route.endsWith('/subscriptions/me'))
       return json({ subscription: null, eligibleToActivate: true });
@@ -252,7 +255,8 @@ describe('Explicit free subscription', () => {
         fetch = mount('/profile/subscription', user, (path) =>
           path.endsWith('/subscriptions/me')
             ? json({
-                subscription: state === 'suspended' ? { ...subscription, status: 'suspended' } : null,
+                subscription:
+                  state === 'suspended' ? { ...subscription, status: 'suspended' } : null,
                 eligibleToActivate: false,
               })
             : undefined,

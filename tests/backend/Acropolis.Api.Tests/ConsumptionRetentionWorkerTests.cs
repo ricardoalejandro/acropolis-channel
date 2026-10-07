@@ -81,7 +81,8 @@ public sealed class ConsumptionRetentionWorkerTests
     {
         private int calls;
         public int Calls => Volatile.Read(ref calls);
-        public bool Block { get; set; } public bool Fail { get; set; }
+        public bool Block { get; set; }
+        public bool Fail { get; set; }
         public ConsumptionPruneResult Result { get; set; } = new(0, 0, 0, 0);
         public CancellationToken ObservedToken { get; private set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -121,7 +122,9 @@ public sealed class ConsumptionRetentionWorkerTests
         }
         private sealed class ClockTimer(RetentionClock owner, TimerCallback callback, object? state) : ITimer
         {
-            public TimerCallback Callback { get; } = callback; public object? State { get; } = state; public TimeSpan? Due { get; set; } public TimeSpan Period { get; set; } public bool Disposed { get; private set; }
+            public TimerCallback Callback { get; } = callback; public object? State { get; } = state; public TimeSpan? Due { get; set; }
+            public TimeSpan Period { get; set; }
+            public bool Disposed { get; private set; }
             public bool Change(TimeSpan dueTime, TimeSpan period) { lock (owner.gate) { if (Disposed) return false; Due = dueTime == Timeout.InfiniteTimeSpan ? null : owner.now + dueTime; Period = period; return true; } }
             public void Dispose() { lock (owner.gate) { Disposed = true; Due = null; } }
             public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }

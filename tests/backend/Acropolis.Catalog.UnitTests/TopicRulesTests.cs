@@ -5,9 +5,15 @@ namespace Acropolis.Catalog.UnitTests;
 public sealed class TopicRulesTests
 {
     [Theory]
-    [InlineData(null, false)] [InlineData("", false)] [InlineData(" ", false)] [InlineData("A", false)]
-    [InlineData("Ideas", true)] [InlineData("  Ideas  ", true)] [InlineData("Ideas\n", false)]
-    [InlineData("Ideas\t", false)] [InlineData("Ideas\0", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData(" ", false)]
+    [InlineData("A", false)]
+    [InlineData("Ideas", true)]
+    [InlineData("  Ideas  ", true)]
+    [InlineData("Ideas\n", false)]
+    [InlineData("Ideas\t", false)]
+    [InlineData("Ideas\0", false)]
     public void NamesAreBoundedSingleLinePlainText(string? value, bool valid) => Assert.Equal(valid, TopicRules.ValidName(value));
     [Fact]
     public void BoundariesAndStableSlugRulesMatchCatalog()
@@ -19,7 +25,10 @@ public sealed class TopicRulesTests
         Assert.Equal(6, CatalogRules.Categories.Count); Assert.False(CatalogRules.ValidCategory("temas"));
     }
     [Theory]
-    [InlineData(null)] [InlineData("")] [InlineData("INVALID")] [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("INVALID")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")]
     public void VersionsAreExactTokens(string? value) => Assert.False(TopicRules.ValidVersion(value));
     [Fact]
     public void UpdateStateAndOrderingValidateOnlyTheirOwnFields()
