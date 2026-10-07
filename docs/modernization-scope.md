@@ -14,7 +14,7 @@ Pendiente: validar el recorrido administrativo integrado, la delegación y revoc
 
 ## Mediateca y reproducción
 
-Se conservan los seis formatos del sitio oficial: Lecturas, Documentales, Videos, Podcast, Charlas online y Cursos. Búsqueda y filtros combinan formato, texto y tema. Sinopsis y metadatos son públicos; obra completa y referencia multimedia permanecen separadas. La API exige cuenta activa y confirmada, suscripción activa y contenido publicado para entregar la obra o sus referencias ordenadas. Cursos agrupan obras y programas agrupan cursos.
+Se conservan los seis formatos del sitio oficial: Lecturas, Documentales, Videos, Podcast, Charlas online y Cursos. Búsqueda y filtros combinan formato, texto y tema. Sinopsis y metadatos son públicos; obra completa y referencia multimedia permanecen separadas. La API exige cuenta activa y confirmada, acceso vigente y contenido publicado para entregar la obra o sus referencias ordenadas. Gratuito sólo permite obras marcadas gratuitas; los planes temporales permiten todo el catálogo durante su periodo. Cursos y programas no transfieren su marca gratuita a las obras. Cursos agrupan obras y programas agrupan cursos.
 
 La primera modalidad audiovisual elegida es **YouTube**. El editor acepta URL HTTPS o identificador válido y almacena únicamente el identificador. El usuario inicia la reproducción mediante el reproductor oficial. Un vídeo público en YouTube sigue accesible en su origen; el acceso del portal no demuestra exclusividad de ese recurso. No se extrae audio para convertir un vídeo en podcast.
 
@@ -30,11 +30,11 @@ Pendiente: ejecutar migraciones, paridad de modelo EF, privilegios, rollback y c
 
 ## Suscripciones y sus eventos
 
-El piloto actual implementa únicamente `free_beta`, con activación explícita e idempotente, una suscripción por cuenta, cancelación, reactivación y suspensión administrativa versionadas y auditadas. Actualmente no tiene vencimiento. **Esa simplificación no tiene aprobación humana expresa** y no sustituye los planes, fechas ni renovaciones del documento.
+El propietario confirmó Gratuito sin vencimiento limitado a obras marcadas gratuitas, Probacionismo durante tres meses naturales y Anual durante un año. Se conserva `free_beta` como código compatible del Gratuito. Los planes temporales se asignan y renuevan manualmente con permiso, MFA, razón, fechas y versión, sin cargos ni renovación automática. La cuenta conserva una sola suscripción; la activación propia no convierte un plan manual en Gratuito ni modifica su periodo. Leer [operación de suscripciones](subscriptions-operations.md).
 
-El reporte preparado de eventos agrega la auditoría de Subscriptions por fecha UTC y transición registrada: activación, reactivación, cancelación, cambios administrativos y suspensión por recuperación. Incluye eventos no clasificables y días sin eventos dentro del intervalo solicitado, con un máximo de 366 fechas. No inventa historia anterior ni interpreta eventos como cuentas únicas, ingresos, pagos o saldo diario de suscriptores. Es independiente del reporte del estado actual. La consulta exige `Subscriptions.Manage` y MFA; no expone cuentas ni actores.
+El reporte preparado de eventos agrega la auditoría de Subscriptions por fecha UTC y transición registrada: activación, reactivación, cancelación, asignación, renovación, cambios administrativos y suspensión por recuperación. Incluye eventos no clasificables y días sin eventos dentro del intervalo solicitado, con un máximo de 366 fechas. No inventa historia anterior ni interpreta eventos como cuentas únicas, ingresos, pagos o saldo diario de suscriptores. Es independiente del reporte del estado actual. La consulta exige `Subscriptions.Manage` y MFA; no expone cuentas ni actores.
 
-Pendiente: confirmar reglas del gratuito, Probacionismo de tres meses y anual, fechas de inicio/fin, renovaciones y acceso; después implementar y validar esas reglas y comunicaciones asociadas (p. 6). El intervalo del reporte de eventos no establece una nueva política de eliminación de auditoría.
+Pendiente: ejecutar la validación completa de esas reglas, migraciones, concurrencia y recorridos en la fuente definitiva; avisos y aceptación por gestores siguen pendientes (p. 6). La aprobación de negocio no acredita ejecución del gate ni despliegue. El intervalo del reporte de eventos no establece una nueva política de eliminación de auditoría.
 
 ## Consumo y reportes
 
@@ -60,7 +60,7 @@ Pendiente: identificar la intranet, su contrato y la regla de acceso por nivel; 
 
 Acrópolis conserva su cliente SMTP y mensajes de confirmación y recuperación. La disponibilidad efectiva depende de sus guardas y del runtime activo. El servicio de correo Naperu mantiene fuente y runtime independientes. Las pruebas nuevas usan únicamente correo y cuentas sintéticas aisladas.
 
-Pendiente: avisos de suscripción, renovación y próximo vencimiento, además de WhatsApp; concretar disparadores y consentimiento conforme a las reglas aún pendientes. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
+Pendiente: avisos de suscripción, renovación y próximo vencimiento, además de WhatsApp; concretar disparadores, consentimiento y la integración correspondiente. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
 
 ## Facturación y gestión comercial
 
@@ -76,6 +76,6 @@ Pendiente: migración o sincronización de contenidos, cuentas y suscripciones; 
 
 ## Decisiones abiertas y evolución
 
-Hay tres aclaraciones de negocio pendientes: proveedor y API de facturación; tipos, duración y renovaciones de suscripción; y reglas por nivel junto con el contrato de intranet. La ausencia de respuesta no aprueba valores inventados. Sólo los pagos se abordarán después por decisión expresa del propietario.
+Los tipos, duración, alcance y renovación manual de suscripciones ya están confirmados. Quedan por aclarar proveedor y API de facturación y reglas por nivel junto con el contrato de intranet. La ausencia de respuesta no aprueba valores inventados. Sólo los pagos se abordarán después por decisión expresa del propietario.
 
 La app móvil corresponde a fase 5, después de estabilizar la web (p. 14). Favoritos, historial, continuar reproducción, valoraciones/comentarios, reproducción automática, recomendaciones, marketing, push/offline y analítica avanzada figuran como evolución de fase 6 (pp. 14–15). Esa secuencia no elimina los reportes operativos esenciales ni acredita una exclusión adicional.

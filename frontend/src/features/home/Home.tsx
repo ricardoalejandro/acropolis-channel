@@ -40,7 +40,7 @@ export function Home() {
             </button>
           </form>
           <p className="library-access">
-            Durante esta etapa, el acceso es gratuito.{' '}
+            Descubre las obras gratuitas y los planes de acceso.{' '}
             <Link to={user ? '/profile/subscription' : '/register'}>
               {user ? 'Ver mi suscripción' : 'Crear mi cuenta'}
             </Link>

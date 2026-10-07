@@ -28,8 +28,8 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
         var service = new CatalogService(context, TimeProvider.System);
         var reading = await Publish(service, Reading("lectura-protegida"));
         var video = await Publish(service, Reading("video-protegido") with { Category = "podcast", WorkText = null, YouTubeId = "dQw4w9WgXcQ" });
-        Assert.Equal(reading.WorkText, (await service.GetPublishedWorkAsync(reading.Slug, Token))!.WorkText);
-        var playback = (await service.GetPublishedWorkAsync(video.Slug, Token))!;
+        Assert.Equal(reading.WorkText, ((await service.GetPublishedWorkAsync(reading.Slug, true, Token)).Value)!.WorkText);
+        var playback = ((await service.GetPublishedWorkAsync(video.Slug, true, Token)).Value)!;
         Assert.Equal(video.YouTubeId, playback.YouTubeId); Assert.Null(playback.WorkText);
         var detail = (await service.GetPublishedAsync(reading.Slug, Token))!;
         Assert.Equal(reading.Body, detail.Body); Assert.Equal(reading.Author, detail.Author); Assert.Equal(reading.Tags, detail.Tags);
@@ -44,10 +44,10 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
         Assert.All(await context.Audit.ToArrayAsync(Token), x => { Assert.DoesNotContain("OBRA RESTRINGIDA", x.Changes); Assert.DoesNotContain(video.YouTubeId!, x.Changes); Assert.DoesNotContain("Autora editorial", x.Changes); });
         var legacy = await Publish(service, Reading("ficha-sin-obra") with { WorkText = null });
         Assert.NotNull(await service.GetPublishedAsync(legacy.Slug, Token));
-        Assert.Null(await service.GetPublishedWorkAsync(legacy.Slug, Token));
-        Assert.Null(await service.GetPublishedWorkAsync("inexistente", Token));
+        Assert.Null((await service.GetPublishedWorkAsync(legacy.Slug, true, Token)).Value);
+        Assert.Null((await service.GetPublishedWorkAsync("inexistente", true, Token)).Value);
         reading = (await service.UpdateAsync(Guid.NewGuid(), reading.Id, Change(reading, "draft"), Token)).Value!;
-        Assert.Null(await service.GetPublishedWorkAsync(reading.Slug, Token));
+        Assert.Null((await service.GetPublishedWorkAsync(reading.Slug, true, Token)).Value);
         Assert.Null(await service.GetPublishedAsync(reading.Slug, Token));
     }
     [Fact]
@@ -62,8 +62,8 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
         var course = await Publish(service, courseRequest);
         var otherCourse = await Publish(service, courseRequest with { Slug = "curso-alternativo", ItemIds = [first.Id] });
         var program = await Publish(service, courseRequest with { Slug = "programa-ordenado", CollectionKind = "program", ItemIds = [otherCourse.Id, course.Id] });
-        Assert.Equal([second.Id, first.Id], (await service.GetPublishedWorkAsync(course.Slug, Token))!.Items.Select(x => x.Id));
-        Assert.Equal([otherCourse.Id, course.Id], (await service.GetPublishedWorkAsync(program.Slug, Token))!.Items.Select(x => x.Id));
+        Assert.Equal([second.Id, first.Id], ((await service.GetPublishedWorkAsync(course.Slug, true, Token)).Value)!.Items.Select(x => x.Id));
+        Assert.Equal([otherCourse.Id, course.Id], ((await service.GetPublishedWorkAsync(program.Slug, true, Token)).Value)!.Items.Select(x => x.Id));
         Assert.Equal([second.Id, first.Id], (await service.GetPublishedAsync(course.Slug, Token))!.Items!.Select(x => x.Id));
         foreach (var bad in new[]
         {
@@ -75,17 +75,17 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
             Assert.Equal("collection_items_invalid", (await service.CreateAsync(Guid.NewGuid(), bad, Token)).Error);
         Assert.Equal("collection_items_invalid", (await service.UpdateAsync(Guid.NewGuid(), course.Id, Change(course, "published") with { ItemIds = [course.Id] }, Token)).Error);
         second = (await service.UpdateAsync(Guid.NewGuid(), second.Id, Change(second, "archived"), Token)).Value!;
-        Assert.Null(await service.GetPublishedWorkAsync(second.Slug, Token));
-        Assert.Null(await service.GetPublishedWorkAsync(course.Slug, Token));
-        Assert.Null(await service.GetPublishedWorkAsync(program.Slug, Token));
+        Assert.Null((await service.GetPublishedWorkAsync(second.Slug, true, Token)).Value);
+        Assert.Null((await service.GetPublishedWorkAsync(course.Slug, true, Token)).Value);
+        Assert.Null((await service.GetPublishedWorkAsync(program.Slug, true, Token)).Value);
         Assert.Equal(first.Id, Assert.Single((await service.GetPublishedAsync(course.Slug, Token))!.Items!).Id);
         Assert.Equal("collection_items_invalid", (await service.UpdateAsync(Guid.NewGuid(), course.Id, Change(course, "published"), Token)).Error);
         course = (await service.UpdateAsync(Guid.NewGuid(), course.Id, Change(course, "draft"), Token)).Value!;
         Assert.Equal("draft", course.Status); // A broken collection can still be withdrawn.
         Assert.Equal("collection_items_invalid", (await service.CreateAsync(Guid.NewGuid(), courseRequest with { Slug = "programa-curso-retirado", CollectionKind = "program", ItemIds = [course.Id] }, Token)).Error);
         course = (await service.UpdateAsync(Guid.NewGuid(), course.Id, Change(course, "published") with { ItemIds = [first.Id] }, Token)).Value!;
-        Assert.Single((await service.GetPublishedWorkAsync(course.Slug, Token))!.Items);
-        Assert.NotNull(await service.GetPublishedWorkAsync(program.Slug, Token));
+        Assert.Single(((await service.GetPublishedWorkAsync(course.Slug, true, Token)).Value)!.Items);
+        Assert.NotNull((await service.GetPublishedWorkAsync(program.Slug, true, Token)).Value);
         Assert.Equal("slug_immutable", (await service.UpdateAsync(Guid.NewGuid(), course.Id, Change(course, "published") with { Slug = "otra-ruta" }, Token)).Error);
     }
     [Fact]
@@ -199,7 +199,7 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
         Assert.Equal([reading.Id], course.ItemIds); // The loser stays a usable simple work.
         Assert.NotNull(reading.WorkText);
         var serviceAfterRace = new CatalogService(final, TimeProvider.System);
-        var work = (await serviceAfterRace.GetPublishedWorkAsync(course.Slug, Token))!;
+        var work = ((await serviceAfterRace.GetPublishedWorkAsync(course.Slug, true, Token)).Value)!;
         Assert.Equal(reading.Id, Assert.Single(work.Items).Id);
         Assert.Null(work.WorkText); Assert.Null(work.YouTubeId);
         var metadata = JsonSerializer.Serialize(new { course = await serviceAfterRace.GetPublishedAsync(course.Slug, Token), reading = await serviceAfterRace.GetPublishedAsync(reading.Slug, Token) });
@@ -266,7 +266,7 @@ public sealed class RestrictedWorkTests(CatalogFixture database)
             await using var command = new NpgsqlCommand(sql, connection);
             Assert.Equal(PostgresErrorCodes.CheckViolation, (await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync(Token))).SqlState);
         }
-        Assert.Equal(video.YouTubeId, (await service.GetPublishedWorkAsync(video.Slug, Token))!.YouTubeId);
+        Assert.Equal(video.YouTubeId, ((await service.GetPublishedWorkAsync(video.Slug, true, Token)).Value)!.YouTubeId);
     }
     private sealed class WrappedFailure(string sqlState) : SaveChangesInterceptor
     {

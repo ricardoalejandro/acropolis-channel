@@ -19,6 +19,8 @@ const instant = new Intl.DateTimeFormat('es-PE', {
 });
 const labels: Record<SubscriptionEventKey, string> = {
   activated: 'Primera activación',
+  assigned: 'Asignación manual de plan',
+  renewed: 'Renovación manual de plan',
   reactivated: 'Reactivación por el usuario',
   cancelled: 'Cancelación por el usuario',
   updated_active_cancelled: 'Activa → cancelada',
@@ -168,7 +170,7 @@ export function SubscriptionEventsPage() {
               </div>
               <p className="event-scope">
                 Un usuario puede generar varios eventos. Estos conteos no equivalen a personas
-                únicas, suscripciones activas ni renovaciones.
+                únicas ni suscripciones vigentes. Las asignaciones y renovaciones registradas son operaciones manuales, sin acreditar cobros.
               </p>
               {data.totalEvents === 0 && (
                 <p className="event-empty" role="status">

@@ -24,6 +24,7 @@ export type ContentSummary = {
   title: string;
   summary: string;
   category: CategoryId;
+  isFree: boolean;
   coverAsset: CoverAsset | null;
   durationSeconds: number | null;
   publishedUtc: string | null;
@@ -55,6 +56,7 @@ export type ContentFields = {
   summary: string;
   body: string;
   category: CategoryId;
+  isFree: boolean;
   coverAsset: CoverAsset | null;
   durationSeconds: number | null;
   author?: string | null;
@@ -89,6 +91,7 @@ export function summaryFrom(value: unknown): ContentSummary {
     !object(value) ||
     !['id', 'slug', 'title', 'summary'].every((key) => typeof value[key] === 'string') ||
     !categories.some((item) => item.id === value['category']) ||
+    typeof value['isFree'] !== 'boolean' ||
     !(value['coverAsset'] === null || covers.includes(value['coverAsset'] as CoverAsset)) ||
     !(
       value['durationSeconds'] === null ||
@@ -219,6 +222,7 @@ function editableFields(fields: ContentFields): ContentFields {
     summary: fields.summary,
     body: fields.body,
     category: fields.category,
+    isFree: fields.isFree,
     coverAsset: fields.coverAsset,
     durationSeconds: fields.durationSeconds,
     ...(fields.author !== undefined ? { author: fields.author } : {}),

@@ -120,6 +120,11 @@ describe('Current operational report contracts', () => {
     );
     expect(() => catalogReportFrom({ ...catalogReport, byCategoryAndStatus })).toThrow(ApiError);
   });
+  it('requires the five effective states to sum to the same current subscription total', () => {
+    expect(subscriptionReportFrom(subscriptionReport).byEffectiveState).toEqual(subscriptionReport.byEffectiveState);
+    for (const byEffectiveState of [undefined, [], subscriptionReport.byEffectiveState.slice(1), subscriptionReport.byEffectiveState.map(() => subscriptionReport.byEffectiveState[0]), subscriptionReport.byEffectiveState.map((row) => ({ ...row, count: 0 }))])
+      expect(() => subscriptionReportFrom({ ...subscriptionReport, byEffectiveState })).toThrow(ApiError);
+  });
   it('calls only the three exact GET routes without filters, bodies or browser storage', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void init;

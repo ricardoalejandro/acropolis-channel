@@ -76,10 +76,10 @@ describe('Recorded subscription-event dates, aggregates and transport', () => {
     expect(inclusiveEventInterval('2026-01-02', '2026-01-01')).toBeNull();
     expect(inclusiveEventInterval('9999-12-31', '9999-12-31')).toBeNull();
   });
-  it('uses the exact eleven keys from the contract, with no raw action or invented renewal bucket', () => {
+  it('uses the exact thirteen keys from the contract, including recorded manual assignments and renewals', () => {
     expect(subscriptionEventKeys).toEqual(expectedEventKeys);
-    expect(subscriptionEventKeys).toHaveLength(11);
-    expect(new Set(subscriptionEventKeys).size).toBe(11);
+    expect(subscriptionEventKeys).toHaveLength(13);
+    expect(new Set(subscriptionEventKeys).size).toBe(13);
   });
   it('normalizes reordered complete buckets and days while preserving exact .NET UTC precision', () => {
     const value = {
@@ -105,7 +105,7 @@ describe('Recorded subscription-event dates, aggregates and transport', () => {
       value,
     );
     expect(value.days.map((day) => day.dayUtc)).toEqual(['2024-02-28', '2024-02-29', '2024-03-01']);
-    expect(value.days.every((day) => day.totalEvents === 0 && day.byEvent.length === 11)).toBe(
+    expect(value.days.every((day) => day.totalEvents === 0 && day.byEvent.length === 13)).toBe(
       true,
     );
   });

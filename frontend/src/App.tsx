@@ -29,6 +29,7 @@ import {
 import { SubscriptionEventsPage } from './features/admin/SubscriptionEvents';
 import { AuditPage } from './features/admin/Audit';
 import { SubscriptionPage } from './features/subscriptions/Subscription';
+import { SubscriptionAccountAssignment } from './features/subscriptions/SubscriptionPlanAssignment';
 import {
   SubscriptionAdminList,
   SubscriptionAdminDetail,
@@ -199,6 +200,14 @@ export function AppRoutes() {
           element={
             <Protected permission="Subscriptions.Manage">
               <SubscriptionAdminList />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/subscriptions/accounts/:userId"
+          element={
+            <Protected permission="Subscriptions.Manage">
+              <SubscriptionAccountAssignment />
             </Protected>
           }
         />

@@ -48,6 +48,7 @@ export function ContentCard({ item }: { item: ContentSummary }) {
       </div>
       <div className="catalog-card-meta">
         <span>{categoryLabel(item.category)}</span>
+        {item.isFree && <span className="catalog-free">Gratuito</span>}
       </div>
       <h3>{item.title}</h3>
       {item.author && <p className="catalog-author">{item.author}</p>}
@@ -334,6 +335,7 @@ export function ContentPage() {
       {item && (
         <div className="catalog-topline">
           <span>{categoryLabel(item.category)}</span>
+          <span>{item.isFree ? 'Acceso gratuito' : 'Requiere plan'}</span>
           {item.durationSeconds !== null && <span>{durationLabel(item.durationSeconds)}</span>}
         </div>
       )}

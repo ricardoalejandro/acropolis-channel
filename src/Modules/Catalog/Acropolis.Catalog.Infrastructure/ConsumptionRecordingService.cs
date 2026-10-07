@@ -12,16 +12,16 @@ namespace Acropolis.Catalog.Infrastructure;
 public sealed class ConsumptionRecordingService(CatalogDbContext database, TimeProvider clock, IOptions<ConsumptionRecordingOptions> options) : IConsumptionRecordingService
 {
     public ConsumptionCapabilitiesView GetCapabilities() => new(options.Value.RecordingEnabled, ConsumptionActivityRules.DetailRetentionDays, ConsumptionActivityRules.GeneralRetentionDays);
-    public async Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid accountId, string authenticationBindingHash, string slug, StartConsumptionRequest request, CancellationToken token)
+    public async Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid accountId, string authenticationBindingHash, string slug, StartConsumptionRequest request, bool allowRestricted, CancellationToken token)
     {
         if (!options.Value.RecordingEnabled) return CatalogResult<ConsumptionSessionView>.Fail("recording_disabled", 503);
         if (accountId == Guid.Empty || !ConsumptionActivityRules.ValidBinding(authenticationBindingHash) || !CatalogRules.ValidSlug(slug) || !ConsumptionActivityRules.Valid(request))
             return CatalogResult<ConsumptionSessionView>.Fail("validation_error", 400);
-        try { return await StartCoreAsync(accountId, authenticationBindingHash, slug, request, token); }
+        try { return await StartCoreAsync(accountId, authenticationBindingHash, slug, request, allowRestricted, token); }
         catch (Exception error) when (IsTransactionConflict(error)) { return CatalogResult<ConsumptionSessionView>.Fail("concurrency_conflict", 409); }
         finally { database.ChangeTracker.Clear(); }
     }
-    private async Task<CatalogResult<ConsumptionSessionView>> StartCoreAsync(Guid accountId, string binding, string slug, StartConsumptionRequest request, CancellationToken token)
+    private async Task<CatalogResult<ConsumptionSessionView>> StartCoreAsync(Guid accountId, string binding, string slug, StartConsumptionRequest request, bool allowRestricted, CancellationToken token)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         var lockKey = BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes($"consumption:{accountId:N}:{request.VisitId:N}")));
@@ -30,6 +30,7 @@ public sealed class ConsumptionRecordingService(CatalogDbContext database, TimeP
         var content = await database.Contents.AsNoTracking().SingleOrDefaultAsync(x => x.Slug == slug && x.Status == "published", token);
         var kind = Kind(content);
         if (content is null || kind is null) return CatalogResult<ConsumptionSessionView>.Fail("not_found", 404);
+        if (!allowRestricted && !content.IsFree) return CatalogResult<ConsumptionSessionView>.Fail("content_requires_plan", 403);
         if (content.Version != request.ContentVersion) return CatalogResult<ConsumptionSessionView>.Fail("content_changed", 409);
         var now = ConsumptionActivityRules.ServerUtc(clock.GetUtcNow());
         var existing = await database.ConsumptionSessions.AsNoTracking().SingleOrDefaultAsync(x => x.AccountId == accountId && x.VisitId == request.VisitId, token);
@@ -46,15 +47,15 @@ public sealed class ConsumptionRecordingService(CatalogDbContext database, TimeP
         await transaction.CommitAsync(token);
         return new(new(session.Id, session.StartedUtc, 1, kind));
     }
-    public async Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid accountId, string authenticationBindingHash, Guid sessionId, ConsumptionPulseRequest request, CancellationToken token)
+    public async Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid accountId, string authenticationBindingHash, Guid sessionId, ConsumptionPulseRequest request, bool allowRestricted, CancellationToken token)
     {
         if (!options.Value.RecordingEnabled) return CatalogResult<ConsumptionPulseReceipt>.Fail("recording_disabled", 503);
         if (accountId == Guid.Empty || sessionId == Guid.Empty || !ConsumptionActivityRules.ValidBinding(authenticationBindingHash)) return CatalogResult<ConsumptionPulseReceipt>.Fail("validation_error", 400);
-        try { return await PulseCoreAsync(accountId, authenticationBindingHash, sessionId, request, token); }
+        try { return await PulseCoreAsync(accountId, authenticationBindingHash, sessionId, request, allowRestricted, token); }
         catch (Exception error) when (IsTransactionConflict(error)) { return CatalogResult<ConsumptionPulseReceipt>.Fail("concurrency_conflict", 409); }
         finally { database.ChangeTracker.Clear(); }
     }
-    private async Task<CatalogResult<ConsumptionPulseReceipt>> PulseCoreAsync(Guid accountId, string binding, Guid id, ConsumptionPulseRequest request, CancellationToken token)
+    private async Task<CatalogResult<ConsumptionPulseReceipt>> PulseCoreAsync(Guid accountId, string binding, Guid id, ConsumptionPulseRequest request, bool allowRestricted, CancellationToken token)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(token);
         var session = await database.ConsumptionSessions.FromSqlInterpolated($"SELECT * FROM catalog.\"ConsumptionSessions\" WHERE \"Id\"={id} AND \"AccountId\"={accountId} AND \"AuthenticationBindingHash\"={binding} FOR UPDATE").SingleOrDefaultAsync(token);
@@ -65,6 +66,7 @@ public sealed class ConsumptionRecordingService(CatalogDbContext database, TimeP
         await database.Database.ExecuteSqlInterpolatedAsync($"SELECT \"Id\" FROM catalog.\"Contents\" WHERE \"Id\"={session.ContentId} FOR SHARE", token);
         var content = await database.Contents.AsNoTracking().SingleOrDefaultAsync(x => x.Id == session.ContentId && x.Status == "published", token);
         if (Kind(content) != session.SourceKind) return CatalogResult<ConsumptionPulseReceipt>.Fail("not_found", 404);
+        if (!allowRestricted && !content!.IsFree) return CatalogResult<ConsumptionPulseReceipt>.Fail("content_requires_plan", 403);
         if (content!.Version != session.ContentVersion) return CatalogResult<ConsumptionPulseReceipt>.Fail("content_changed", 409);
         var hash = ConsumptionActivityRules.CanonicalHash(request);
         var existing = await database.ConsumptionPulses.AsNoTracking().SingleOrDefaultAsync(x => x.SessionId == id && x.Sequence == request.Sequence, token);

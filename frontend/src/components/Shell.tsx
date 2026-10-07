@@ -182,7 +182,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </p>
           <nav aria-label="Pie de página">
             <Link to="/explore">Explorar la mediateca</Link>
-            <Link to="/profile/subscription">Acceso gratuito</Link>
+            <Link to="/profile/subscription">Planes de acceso</Link>
           </nav>
         </div>
       </footer>

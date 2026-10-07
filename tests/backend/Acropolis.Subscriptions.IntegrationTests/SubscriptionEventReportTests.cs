@@ -129,7 +129,9 @@ public sealed class SubscriptionEventReportTests(IdentityFixture database)
         var report = await new SubscriptionReportService(context, new FixedClock(at)).GetEventsAsync(new(First, First.AddDays(1)), Token);
         Assert.Equal(17L, report.TotalEvents);
         Assert.Equal(SubscriptionEventReportRules.Keys, report.ByEvent.Select(bucket => bucket.Key));
-        Assert.All(report.ByEvent.Where(bucket => bucket.Key != "unclassified"), bucket => Assert.Equal(1L, bucket.Count));
+        Assert.All(report.ByEvent.Where(bucket => bucket.Key is not ("unclassified" or "assigned" or "renewed")), bucket => Assert.Equal(1L, bucket.Count));
+        Assert.Equal(0L, Count(report, "assigned"));
+        Assert.Equal(0L, Count(report, "renewed"));
         Assert.Equal(7L, Count(report, "unclassified"));
         var day = Assert.Single(report.Days);
         Assert.Equal(First, day.DayUtc);
@@ -178,7 +180,9 @@ public sealed class SubscriptionEventReportTests(IdentityFixture database)
         await using var context = Context();
         var report = await new SubscriptionReportService(context, api.Clock).GetEventsAsync(interval, Token);
         Assert.Equal(10L, report.TotalEvents);
-        Assert.All(report.ByEvent.Where(bucket => bucket.Key != "unclassified"), bucket => Assert.Equal(1L, bucket.Count));
+        Assert.All(report.ByEvent.Where(bucket => bucket.Key is not ("unclassified" or "assigned" or "renewed")), bucket => Assert.Equal(1L, bucket.Count));
+        Assert.Equal(0L, Count(report, "assigned"));
+        Assert.Equal(0L, Count(report, "renewed"));
         Assert.Equal(0L, Count(report, "unclassified"));
         Assert.Equal(10, await context.Audit.CountAsync(Token));
         Assert.Equal("suspended", (await context.Subscriptions.SingleAsync(Token)).Status);

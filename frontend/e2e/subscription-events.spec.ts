@@ -16,6 +16,8 @@ const route = '/admin/reports/subscription-events';
 const number = new Intl.NumberFormat('es-PE');
 const labels = [
   'Primera activación',
+  'Asignación manual de plan',
+  'Renovación manual de plan',
   'Reactivación por el usuario',
   'Cancelación por el usuario',
   'Activa → cancelada',
@@ -319,7 +321,7 @@ test('@modernization subscription event periods reflect three real QA transition
     for (const value of privateValues) await expect(main).not.toContainText(value);
     await expect(main).toContainText('las fechas se consultan en UTC');
     await expect(main).toContainText(
-      'no equivalen a personas únicas, suscripciones activas ni renovaciones',
+      'no equivalen a personas únicas ni suscripciones vigentes',
     );
     await expect(main).toContainText('sin reconstruir períodos anteriores');
     const results = page.getByRole('region', { name: 'Cambios registrados', exact: true });

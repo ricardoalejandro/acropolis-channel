@@ -104,6 +104,7 @@ test('@modernization visible authorized reading records real pulses and reports 
     slug,
     title,
     category: 'lecturas',
+    isFree: true,
     summary: 'Sinopsis pública de QA.',
     body: 'Descripción pública.',
     author: 'Institución QA',

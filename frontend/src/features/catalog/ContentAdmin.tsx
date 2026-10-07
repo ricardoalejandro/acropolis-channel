@@ -209,6 +209,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
     title: item?.title ?? '',
     slug: item?.slug ?? '',
     category: item?.category ?? 'lecturas',
+    isFree: item?.isFree ?? false,
     summary: item?.summary ?? '',
     body: item?.body ?? '',
     coverAsset: item?.coverAsset ?? null,
@@ -342,6 +343,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
         summary: updated.summary,
         body: updated.body,
         category: updated.category,
+        isFree: updated.isFree,
         coverAsset: updated.coverAsset,
         durationSeconds: updated.durationSeconds,
         author: updated.author ?? null,
@@ -518,6 +520,26 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               ))}
             </select>
             {feedback('category')}
+          </div>
+          <div className="editor-wide">
+            <label className="check-option" htmlFor="editor-free">
+              <input
+                id="editor-free"
+                type="checkbox"
+                checked={fields.isFree}
+                disabled={busy}
+                aria-describedby="editor-free-help"
+                onChange={(event) => {
+                  setFields((previous) => ({ ...previous, isFree: event.target.checked }));
+                  setSaved('');
+                }}
+              />
+              Disponible con el plan Gratuito
+            </label>
+            <p id="editor-free-help" className="field-help">
+              Sólo se aplica a este contenido. Marcar un curso o programa no hace gratuitas sus
+              obras ni sus cursos incluidos; cada elemento conserva su propio acceso.
+            </p>
           </div>
           <div className="field">
             <label htmlFor="editor-author">Autor o institución</label>

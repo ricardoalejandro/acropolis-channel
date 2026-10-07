@@ -61,15 +61,18 @@ public sealed class SubscriptionEventReportRulesTests
     }
 
     [Fact]
-    public void PublicBucketKeysAreCompleteFiniteAndDoNotPretendToBeRenewals()
+    public void PublicBucketKeysRepresentRecordedAssignmentsAndRenewalsWithoutPaymentClaims()
     {
         Assert.Equal(new[]
         {
             "activated", "reactivated", "cancelled", "updated_active_cancelled", "updated_active_suspended",
             "updated_cancelled_active", "updated_cancelled_suspended", "updated_suspended_active",
-            "updated_suspended_cancelled", "recovery_suspended", "unclassified"
+            "updated_suspended_cancelled", "recovery_suspended", "assigned", "renewed", "unclassified"
         }, SubscriptionEventReportRules.Keys);
-        Assert.Equal(11, SubscriptionEventReportRules.Keys.Distinct(StringComparer.Ordinal).Count());
-        Assert.DoesNotContain("renewed", SubscriptionEventReportRules.Keys);
+        Assert.Equal(13, SubscriptionEventReportRules.Keys.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("assigned", SubscriptionEventReportRules.Keys);
+        Assert.Contains("renewed", SubscriptionEventReportRules.Keys);
+        Assert.DoesNotContain("paid", SubscriptionEventReportRules.Keys);
+        Assert.DoesNotContain("revenue", SubscriptionEventReportRules.Keys);
     }
 }

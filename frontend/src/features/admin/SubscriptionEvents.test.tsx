@@ -15,6 +15,8 @@ const eventPrefix = '/api/v1/admin/reports/subscriptions/events?';
 const manager: User = { ...user, permissions: ['Subscriptions.Manage'] };
 const labels = [
   'Primera activación',
+  'Asignación manual de plan',
+  'Renovación manual de plan',
   'Reactivación por el usuario',
   'Cancelación por el usuario',
   'Activa → cancelada',
@@ -122,7 +124,7 @@ describe('Explicit administrative recorded-subscription-events consultation', ()
       ),
     ).toBeVisible();
   }, 10000);
-  it('shows all eleven truthful groups, totals and daily dates without personal data or writes', async () => {
+  it('shows all thirteen truthful groups, totals and daily dates without personal data or writes', async () => {
     const storage = vi.spyOn(Storage.prototype, 'setItem');
     const { fetch } = await readyMount(manager, (url) =>
       url.startsWith(eventPrefix)
@@ -140,7 +142,7 @@ describe('Explicit administrative recorded-subscription-events consultation', ()
     const section = results();
     expect(within(section).getByText('7', { selector: 'dd' })).toBeVisible();
     expect(section).toHaveTextContent(
-      'no equivalen a personas únicas, suscripciones activas ni renovaciones',
+      'no equivalen a personas únicas ni suscripciones vigentes',
     );
     const ordinary = table(section, 'Activaciones y otros movimientos');
     const administrative = table(section, 'Cambios administrativos de estado');
@@ -174,7 +176,7 @@ describe('Explicit administrative recorded-subscription-events consultation', ()
     expect(calls(fetch)[0]?.[1]?.cache).toBe('no-store');
     expect(storage).not.toHaveBeenCalled();
   }, 10000);
-  it('shows an honest zero state with all eleven groups and two zero calendar days', async () => {
+  it('shows an honest zero state with all thirteen groups and two zero calendar days', async () => {
     const { fetch } = await readyMount(manager, (url) =>
       url.startsWith(eventPrefix) ? json(makeEventReport()) : undefined,
     );

@@ -61,7 +61,7 @@ public sealed class TopicService(CatalogDbContext database, TimeProvider clock) 
         await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, token);
         var total = await query.CountAsync(token);
         var items = await query.OrderByDescending(x => x.PublishedUtc).ThenBy(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(x => new ContentSummary(x.Id, x.Slug, x.Title, x.Summary, x.Category, x.CoverAsset, x.DurationSeconds, x.PublishedUtc, x.Author, x.Tags, x.CollectionKind)).ToArrayAsync(token);
+            .Select(x => new ContentSummary(x.Id, x.Slug, x.Title, x.Summary, x.Category, x.CoverAsset, x.DurationSeconds, x.PublishedUtc, x.Author, x.Tags, x.CollectionKind, x.IsFree)).ToArrayAsync(token);
         return new(items, total, page, pageSize);
     }
     public async Task<ContentTopicsView?> GetContentTopicsAsync(Guid id, CancellationToken token)

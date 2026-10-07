@@ -20,14 +20,14 @@ public static class ConsumptionActivityEndpoints
             var eligibility = await EligibleAsync(context, identity, access, token);
             if (eligibility.Error is { } error) return error;
             if (context.Request.QueryString.HasValue) return IdentityEndpoints.Problem("validation_error", 400);
-            return Result(await service.StartAsync(eligibility.AccountId, eligibility.Binding!, slug, request, token));
+            return Result(await service.StartAsync(eligibility.AccountId, eligibility.Binding!, slug, request, eligibility.AllowRestricted, token));
         });
         writes.MapPost("/sessions/{sessionId:guid}/pulses", async (Guid sessionId, ConsumptionPulseRequest request, HttpContext context, IIdentityService identity, ISubscriptionAccess access, IConsumptionRecordingService service, CancellationToken token) =>
         {
             var eligibility = await EligibleAsync(context, identity, access, token);
             if (eligibility.Error is { } error) return error;
             if (context.Request.QueryString.HasValue) return IdentityEndpoints.Problem("validation_error", 400);
-            return Result(await service.PulseAsync(eligibility.AccountId, eligibility.Binding!, sessionId, request, token));
+            return Result(await service.PulseAsync(eligibility.AccountId, eligibility.Binding!, sessionId, request, eligibility.AllowRestricted, token));
         });
         app.MapGet("/api/v1/admin/reports/catalog/consumption", async (HttpContext context, IConsumptionActivityReportService service, CancellationToken token) =>
         {
@@ -46,7 +46,7 @@ public static class ConsumptionActivityEndpoints
             return Results.Ok(await service.GetAccountAsync(id, interval!, page, pageSize, token));
         }).RequireAuthorization(IdentityRules.ManageUsers, IdentityRules.ManageContent);
     }
-    private sealed record Eligibility(Guid AccountId, string? Binding = null, IResult? Error = null);
+    private sealed record Eligibility(Guid AccountId, string? Binding = null, bool AllowRestricted = false, IResult? Error = null);
     private static async Task<Eligibility> EligibleAsync(HttpContext context, IIdentityService identity, ISubscriptionAccess access, CancellationToken token)
     {
         if (!Guid.TryParse(context.User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) || id == Guid.Empty)
@@ -55,8 +55,9 @@ public static class ConsumptionActivityEndpoints
         var securityVersion = context.User.FindFirstValue("auth_version");
         if (user is null || !user.EmailConfirmed || user.Status != "active" || !ConsumptionActivityRules.ValidVersion(securityVersion))
             return new(Guid.Empty, Error: IdentityEndpoints.Problem("invalid_credentials", 401));
-        if (!await access.HasActiveAsync(id, token)) return new(id, Error: IdentityEndpoints.Problem("subscription_required", 403));
-        return new(id, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(securityVersion!))));
+        var scope = await access.GetScopeAsync(id, token);
+        if (scope == SubscriptionAccessScope.None) return new(id, Error: IdentityEndpoints.Problem("subscription_required", 403));
+        return new(id, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(securityVersion!))), scope == SubscriptionAccessScope.FullCatalog);
     }
     private static IResult Result<T>(CatalogResult<T> result) => result.Succeeded ? Results.Ok(result.Value) : IdentityEndpoints.Problem(result.Error!, result.Status, result.FieldErrors);
     private static bool TryQuery(HttpContext context, bool paging, out ConsumptionReportInterval? interval, out int page, out int pageSize)

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { subscriptions, type SubscriptionAccount } from '../../api/subscriptions';
 import { CatalogState, Pagination } from '../catalog/Catalog';
 import { useCatalog } from '../catalog/useCatalog';
@@ -98,6 +99,10 @@ function AccountDirectory({ select }: { select: (account: SubscriptionAccount) =
                           >
                             Ver suscripciones
                           </button>
+                          <Link className="text-link" to={'/admin/subscriptions/accounts/' + account.id}
+                            aria-label={'Asignar plan a ' + account.displayName + ', ' + account.email}>
+                            Asignar plan
+                          </Link>
                         </td>
                       </tr>
                     ))}

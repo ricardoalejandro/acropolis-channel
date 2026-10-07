@@ -150,6 +150,7 @@ public sealed class ConsumptionHttpTests(CatalogFixture database)
     private sealed class MutableAccess : ISubscriptionAccess
     {
         public bool Enabled { get; set; }
+        public Task<SubscriptionAccessScope> GetScopeAsync(Guid userId, CancellationToken token) => Task.FromResult(Enabled ? SubscriptionAccessScope.FullCatalog : SubscriptionAccessScope.None);
         public Task<bool> HasActiveAsync(Guid userId, CancellationToken token) => Task.FromResult(Enabled);
     }
     private sealed class RestrictedApiFactory(CatalogFixture fixture, MutableAccess access) : WebApplicationFactory<Program>

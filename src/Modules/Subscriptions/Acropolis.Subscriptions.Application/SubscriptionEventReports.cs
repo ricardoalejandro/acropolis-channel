@@ -25,7 +25,7 @@ public static class SubscriptionEventReportRules
         "updated_active_cancelled", "updated_active_suspended",
         "updated_cancelled_active", "updated_cancelled_suspended",
         "updated_suspended_active", "updated_suspended_cancelled",
-        "recovery_suspended", "unclassified"
+        "recovery_suspended", "assigned", "renewed", "unclassified"
     });
 
     public static bool ValidInterval(SubscriptionEventInterval? interval) =>

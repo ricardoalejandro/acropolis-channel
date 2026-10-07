@@ -27,7 +27,7 @@ export function AdminHome() {
                         : 'Buscar cuentas y gestionar sus datos y niveles.'
                       : link.permission === 'Content.Manage'
                         ? 'Preparar obras, ordenar colecciones y publicar el catálogo.'
-                        : 'Gestionar el acceso gratuito y consultar su historial.'}
+                        : 'Asignar planes, renovar períodos y consultar su historial.'}
                 </p>
               </Link>
             ))}

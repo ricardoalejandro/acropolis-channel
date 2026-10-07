@@ -42,6 +42,7 @@ public static class SubscriptionEndpoints
             var view = await service.GetAsync(id, token);
             return view is null ? IdentityEndpoints.Problem("not_found", 404) : Results.Ok(view);
         });
+        admin.MapPost("/accounts/{userId:guid}/assign", async (Guid userId, AssignSubscriptionRequest request, HttpContext context, ISubscriptionService service, CancellationToken token) => Result(await service.AssignAsync(UserId(context), userId, request, token)));
         admin.MapPatch("/{id:guid}", async (Guid id, AdminSubscriptionRequest request, HttpContext context, ISubscriptionService service, CancellationToken token) => Result(await service.UpdateAsync(UserId(context), id, request, token)));
     }
     private static bool TryLookupIds(string? value, out Guid[] ids)

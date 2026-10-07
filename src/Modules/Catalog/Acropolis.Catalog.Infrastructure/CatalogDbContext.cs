@@ -5,6 +5,7 @@ namespace Acropolis.Catalog.Infrastructure;
 public sealed class EditorialContent
 {
     public Guid Id { get; set; }
+    public bool IsFree { get; set; }
     public string Slug { get; set; } = "";
     public string Title { get; set; } = "";
     public string Summary { get; set; } = "";
@@ -92,6 +93,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
                 table.HasCheckConstraint("CK_Contents_Cover", "\"CoverAsset\" IS NULL OR \"CoverAsset\" IN ('hero-acropolis','editorial-reading','editorial-podcast','editorial-dialogue','editorial-nature')");
                 table.HasCheckConstraint("CK_Contents_Publication", "\"Status\" <> 'published' OR (\"PublishedUtc\" IS NOT NULL AND length(btrim(\"Summary\")) > 0 AND length(btrim(\"Body\")) > 0)");
             });
+            entity.Property(x => x.IsFree).HasDefaultValue(false);
             entity.Property(x => x.Slug).HasMaxLength(160);
             entity.Property(x => x.Title).HasMaxLength(180);
             entity.Property(x => x.Summary).HasMaxLength(600);

@@ -4,6 +4,7 @@ export const publishedContent: AdminContent = {
   slug: 'filosofia-vida',
   title: 'La filosofía en nuestra vida',
   category: 'videos',
+  isFree: true,
   coverAsset: 'editorial-dialogue',
   durationSeconds: 145,
   summary: 'Una sinopsis editorial para la prueba.',

@@ -8,11 +8,18 @@ public sealed class SubscriptionReportService(SubscriptionsDbContext database, T
     public async Task<SubscriptionReportView> GetCurrentAsync(CancellationToken token)
     {
         var generatedUtc = clock.GetUtcNow().ToUniversalTime();
-        var groups = await database.Subscriptions.AsNoTracking().GroupBy(x => x.Status)
-            .Select(x => new { Status = x.Key, Count = x.LongCount() }).ToArrayAsync(token);
-        var counts = groups.ToDictionary(x => x.Status, x => x.Count, StringComparer.Ordinal);
+        var groups = await database.Subscriptions.AsNoTracking().GroupBy(x => new
+            {
+                x.Status,
+                Effective = x.Status != "active" ? x.Status : generatedUtc < x.StartsUtc ? "scheduled" :
+                    x.ExpiresUtc != null && generatedUtc >= x.ExpiresUtc ? "expired" : "active"
+            })
+            .Select(x => new { x.Key.Status, x.Key.Effective, Count = x.LongCount() }).ToArrayAsync(token);
+        var counts = groups.GroupBy(x => x.Status, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.Sum(g => g.Count), StringComparer.Ordinal);
+        var effective = groups.GroupBy(x => x.Effective, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.Sum(g => g.Count), StringComparer.Ordinal);
         return new SubscriptionReportView(generatedUtc, groups.Sum(x => x.Count),
-            SubscriptionRules.Statuses.Select(x => new SubscriptionReportCount(x, counts.GetValueOrDefault(x))).ToArray());
+            SubscriptionRules.Statuses.Select(x => new SubscriptionReportCount(x, counts.GetValueOrDefault(x))).ToArray(),
+            new[] { "active", "scheduled", "expired", "cancelled", "suspended" }.Select(x => new SubscriptionReportCount(x, effective.GetValueOrDefault(x))).ToArray());
     }
 
     public async Task<SubscriptionEventReportView> GetEventsAsync(SubscriptionEventInterval interval, CancellationToken token)
@@ -41,6 +48,12 @@ public sealed class SubscriptionReportService(SubscriptionsDbContext database, T
                             THEN 'updated_' || "BeforeStatus" || '_' || "AfterStatus"
                         WHEN "Action" = 'subscription.recovery_suspended'
                             AND "BeforeStatus" = 'active' AND "AfterStatus" = 'suspended' THEN 'recovery_suspended'
+                        WHEN "Action" = 'subscription.assigned' AND "AfterStatus" = 'active'
+                            AND ("BeforeStatus" IS NULL OR "BeforeStatus" IN ('active','cancelled','suspended'))
+                            AND "AfterPlan" IN ('free_beta','probationismo','annual') AND "AfterStartsUtc" IS NOT NULL THEN 'assigned'
+                        WHEN "Action" = 'subscription.renewed' AND "AfterStatus" = 'active'
+                            AND "BeforePlan" = "AfterPlan" AND "AfterPlan" IN ('probationismo','annual')
+                            AND "BeforeStartsUtc" = "AfterStartsUtc" AND "BeforeExpiresUtc" < "AfterExpiresUtc" THEN 'renewed'
                         ELSE 'unclassified'
                     END AS "Key"
                 FROM subscriptions."Audit"

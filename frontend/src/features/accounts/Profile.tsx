@@ -39,7 +39,7 @@ export function Profile() {
           <section className="surface">
             <h2>Mi suscripción</h2>
             <p className="section-copy">
-              Activa o gestiona tu acceso gratuito a las obras de la mediateca.
+              Consulta tu plan y su vigencia, o activa el acceso a las obras gratuitas.
             </p>
             <Link className="button button-outline" to="/profile/subscription">
               Ver mi suscripción

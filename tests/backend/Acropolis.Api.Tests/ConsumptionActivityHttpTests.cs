@@ -141,6 +141,22 @@ public sealed class ConsumptionActivityHttpTests(ConsumptionActivityHttpFixture 
         using var removedAccess = await Write(client, "/api/v1/consumption/sessions/" + host.Spy.Session + "/pulses", JsonContent.Create(pulse));
         Assert.Equal(HttpStatusCode.Forbidden, removedAccess.StatusCode); Assert.Equal(1, host.Spy.PulseCalls);
     }
+    [Theory]
+    [InlineData(SubscriptionAccessScope.FreeOnly, false)]
+    [InlineData(SubscriptionAccessScope.FullCatalog, true)]
+    public async Task RecordingRestrictionComesFromTheLiveServerScopeForEachRequest(SubscriptionAccessScope scope, bool allowed)
+    {
+        var host = Reset(); host.Access.Scope = scope;
+        using var client = host.Client();
+        using var start = await Write(client, StartPath, JsonContent.Create(Start));
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode); Assert.Equal(allowed, host.Spy.AllowRestricted);
+        host.Access.Scope = allowed ? SubscriptionAccessScope.FreeOnly : SubscriptionAccessScope.FullCatalog;
+        var pulse = new ConsumptionPulseRequest(1, 1000, 1000, Reading: new(5000, [new(0, 5000)]));
+        using var recorded = await Write(client, "/api/v1/consumption/sessions/" + host.Spy.Session + "/pulses", JsonContent.Create(pulse));
+        Assert.Equal(HttpStatusCode.OK, recorded.StatusCode); Assert.Equal(!allowed, host.Spy.AllowRestricted);
+        Assert.Equal(1, host.Spy.StartCalls); Assert.Equal(1, host.Spy.PulseCalls);
+        host.Access.Scope = SubscriptionAccessScope.FullCatalog;
+    }
     [Fact]
     public async Task CsrfAndUnknownJsonFieldsCannotInvokeRecording()
     {
@@ -197,7 +213,7 @@ public sealed class ConsumptionActivityHttpFixture : WebApplicationFactory<Progr
     public IdentitySpy Identity { get; } = new();
     public AccessSpy Access { get; } = new();
     public RecordingReportSpy Spy { get; } = new();
-    public void Reset() { Subject.Reset(); Identity.Reset(); Access.Enabled = true; Spy.Reset(); }
+    public void Reset() { Subject.Reset(); Identity.Reset(); Access.Enabled = true; Access.Scope = SubscriptionAccessScope.FullCatalog; Spy.Reset(); }
     public HttpClient Client() => CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
     public string ReportPath(string route) => route switch { "general" => "/api/v1/admin/reports/catalog/consumption", "content" => "/api/v1/admin/reports/catalog/consumption/content", "account" => "/api/v1/admin/users/" + Subject.Id + "/consumption", _ => throw new ArgumentException("Unknown QA route.") };
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -236,7 +252,7 @@ public sealed class ConsumptionActivityHttpFixture : WebApplicationFactory<Progr
         protected override Task HandleChallengeAsync(AuthenticationProperties properties) => IdentityEndpoints.Problem("invalid_credentials", 401).ExecuteAsync(Context);
         protected override Task HandleForbiddenAsync(AuthenticationProperties properties) => IdentityEndpoints.Problem("forbidden", 403).ExecuteAsync(Context);
     }
-    public sealed class AccessSpy : ISubscriptionAccess { public bool Enabled { get; set; } public Task<bool> HasActiveAsync(Guid id, CancellationToken token) => Task.FromResult(Enabled); }
+    public sealed class AccessSpy : ISubscriptionAccess { public bool Enabled { get; set; } public SubscriptionAccessScope Scope { get; set; } = SubscriptionAccessScope.FullCatalog; public Task<SubscriptionAccessScope> GetScopeAsync(Guid id, CancellationToken token) => Task.FromResult(Enabled ? Scope : SubscriptionAccessScope.None); public Task<bool> HasActiveAsync(Guid id, CancellationToken token) => Task.FromResult(Enabled); }
     public sealed class IdentitySpy : IIdentityService
     {
         public bool Exists { get; set; } = true; public bool Confirmed { get; set; } = true; public bool Active { get; set; } = true; public int LookupCalls { get; set; }
@@ -259,6 +275,7 @@ public sealed class ConsumptionActivityHttpFixture : WebApplicationFactory<Progr
     {
         private static readonly DateTimeOffset Now = new(2026, 10, 7, 12, 0, 0, TimeSpan.Zero);
         private static ConsumptionMetrics Zero => new(0, 0, 0, 0, 0, 0, 0, 0);
+        public bool? AllowRestricted { get; set; }
         public Guid Session { get; } = Guid.NewGuid(); public int StartCalls { get; set; }
         public int PulseCalls { get; set; }
         public int ReportCalls { get; set; }
@@ -268,10 +285,10 @@ public sealed class ConsumptionActivityHttpFixture : WebApplicationFactory<Progr
         public StartConsumptionRequest? Start { get; set; }
         public ConsumptionPulseRequest? Pulse { get; set; }
         public bool Fail { get; set; }
-        public void Reset() { StartCalls = PulseCalls = ReportCalls = 0; LastReport = Binding = null; Start = null; Pulse = null; Fail = false; }
+        public void Reset() { StartCalls = PulseCalls = ReportCalls = 0; LastReport = Binding = null; Start = null; Pulse = null; AllowRestricted = null; Fail = false; }
         public ConsumptionCapabilitiesView GetCapabilities() => new(false, 90, 365);
-        public Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid id, string binding, string slug, StartConsumptionRequest request, CancellationToken token) { StartCalls++; Account = id; Binding = binding; Start = request; return Task.FromResult(new CatalogResult<ConsumptionSessionView>(new(Session, Now, 1, "reading"))); }
-        public Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid id, string binding, Guid session, ConsumptionPulseRequest request, CancellationToken token) { PulseCalls++; Pulse = request; return Task.FromResult(new CatalogResult<ConsumptionPulseReceipt>(new(request.Sequence, Now, 1000, 5000, false, false))); }
+        public Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid id, string binding, string slug, StartConsumptionRequest request, bool allowRestricted, CancellationToken token) { StartCalls++; Account = id; Binding = binding; Start = request; AllowRestricted = allowRestricted; return Task.FromResult(new CatalogResult<ConsumptionSessionView>(new(Session, Now, 1, "reading"))); }
+        public Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid id, string binding, Guid session, ConsumptionPulseRequest request, bool allowRestricted, CancellationToken token) { PulseCalls++; Pulse = request; AllowRestricted = allowRestricted; return Task.FromResult(new CatalogResult<ConsumptionPulseReceipt>(new(request.Sequence, Now, 1000, 5000, false, false))); }
         private void Called(string name) { ReportCalls++; LastReport = name; if (Fail) throw new Npgsql.NpgsqlException("private-database-password at host-qa-private"); }
         public Task<ConsumptionReportView> GetAsync(ConsumptionReportInterval interval, CancellationToken token) { Called("general"); return Task.FromResult(new ConsumptionReportView(Now, interval.FromUtc, interval.ToUtc, ConsumptionActivityRules.GeneralAvailableFrom(Now), ConsumptionActivityRules.DetailAvailableFrom(Now), 365, false, Zero, [new("reading", Zero), new("youtube", Zero)], CatalogRules.Categories.Select(x => new ConsumptionGroup(x.Id, Zero)).ToArray(), [new(interval.From, Zero)])); }
         public Task<ConsumptionContentPage> ListContentAsync(ConsumptionReportInterval interval, int page, int pageSize, CancellationToken token) { Called("content"); return Task.FromResult(new ConsumptionContentPage(Now, interval.FromUtc, interval.ToUtc, ConsumptionActivityRules.GeneralAvailableFrom(Now), ConsumptionActivityRules.DetailAvailableFrom(Now), 365, false, [], 0, page, pageSize)); }

@@ -17,9 +17,9 @@ public sealed class SubscriptionOperations(SubscriptionsDbContext database, Time
             var now = clock.GetUtcNow();
             // A single SQL transaction audits only restored active access and suspends exactly those rows.
             await database.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO subscriptions."Audit" ("Id","SubscriptionId","UserId","ActorId","Action","BeforeStatus","AfterStatus","Reason","CreatedUtc")
+                INSERT INTO subscriptions."Audit" ("Id","SubscriptionId","UserId","ActorId","Action","BeforeStatus","AfterStatus","Reason","CreatedUtc","BeforePlan","AfterPlan","BeforeStartsUtc","AfterStartsUtc","BeforeExpiresUtc","AfterExpiresUtc")
                 SELECT gen_random_uuid(), "Id", "UserId", {Guid.Empty}, 'subscription.recovery_suspended', 'active', 'suspended',
-                    'Acceso restaurado suspendido; requiere revisión explícita.', {now}
+                    'Acceso restaurado suspendido; requiere revisión explícita.', {now}, "Plan", "Plan", "StartsUtc", "StartsUtc", "ExpiresUtc", "ExpiresUtc"
                 FROM subscriptions."Subscriptions" WHERE "Status"='active';
                 UPDATE subscriptions."Subscriptions" SET "Status"='suspended', "UpdatedUtc"={now}, "Version"=replace(gen_random_uuid()::text,'-','') WHERE "Status"='active';
                 """, token);

@@ -9,6 +9,8 @@ public sealed class Subscription
     public string Plan { get; set; } = "free_beta";
     public string Status { get; set; } = "active";
     public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset StartsUtc { get; set; }
+    public DateTimeOffset? ExpiresUtc { get; set; }
     public DateTimeOffset ActivatedUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CancelledUtc { get; set; }
@@ -25,6 +27,12 @@ public sealed class SubscriptionAudit
     public string AfterStatus { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
     public DateTimeOffset CreatedUtc { get; set; }
+    public string? BeforePlan { get; set; }
+    public string? AfterPlan { get; set; }
+    public DateTimeOffset? BeforeStartsUtc { get; set; }
+    public DateTimeOffset? AfterStartsUtc { get; set; }
+    public DateTimeOffset? BeforeExpiresUtc { get; set; }
+    public DateTimeOffset? AfterExpiresUtc { get; set; }
 }
 public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbContext> options) : DbContext(options)
 {
@@ -40,7 +48,8 @@ public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbConte
             entity.ToTable("Subscriptions", table =>
             {
                 table.HasCheckConstraint("CK_Subscriptions_Status", "\"Status\" IN ('active','cancelled','suspended')");
-                table.HasCheckConstraint("CK_Subscriptions_Plan", "\"Plan\" = 'free_beta'");
+                table.HasCheckConstraint("CK_Subscriptions_Plan", "\"Plan\" IN ('free_beta','probationismo','annual')");
+                table.HasCheckConstraint("CK_Subscriptions_Terms", "(\"Plan\"='free_beta' AND \"ExpiresUtc\" IS NULL) OR (\"Plan\" IN ('probationismo','annual') AND \"ExpiresUtc\" IS NOT NULL AND \"ExpiresUtc\">\"StartsUtc\")");
             });
             entity.HasKey(x => x.Id); entity.HasIndex(x => x.UserId).IsUnique();
             entity.Property(x => x.Plan).HasMaxLength(32); entity.Property(x => x.Status).HasMaxLength(16);
@@ -51,6 +60,7 @@ public sealed class SubscriptionsDbContext(DbContextOptions<SubscriptionsDbConte
         builder.Entity<SubscriptionAudit>(entity =>
         {
             entity.ToTable("Audit"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.BeforePlan).HasMaxLength(32); entity.Property(x => x.AfterPlan).HasMaxLength(32);
             entity.Property(x => x.Action).HasMaxLength(64); entity.Property(x => x.BeforeStatus).HasMaxLength(16);
             entity.Property(x => x.AfterStatus).HasMaxLength(16); entity.Property(x => x.Reason).HasMaxLength(200);
             entity.HasIndex(x => new { x.CreatedUtc, x.Id }); entity.HasIndex(x => new { x.SubscriptionId, x.CreatedUtc });

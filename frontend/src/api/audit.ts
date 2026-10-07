@@ -1,4 +1,5 @@
 import { ApiError, request } from './identity';
+import { subscriptionPlanLabels, subscriptionInstant, type SubscriptionPlan } from './subscriptions';
 export const auditModules = [
   {
     id: 'users',
@@ -41,6 +42,8 @@ export const auditModules = [
     objectKey: 'subscriptionId',
     actions: [
       'subscription.activated',
+      'subscription.assigned',
+      'subscription.renewed',
       'subscription.reactivated',
       'subscription.cancelled',
       'subscription.updated',
@@ -68,6 +71,8 @@ export const auditActionLabels: Record<string, string> = {
   'content.archived': 'Contenido archivado',
   'content.restored': 'Contenido restaurado',
   'subscription.activated': 'Suscripción activada',
+  'subscription.assigned': 'Plan asignado',
+  'subscription.renewed': 'Plan renovado',
   'subscription.reactivated': 'Suscripción reactivada',
   'subscription.cancelled': 'Suscripción cancelada',
   'subscription.updated': 'Suscripción actualizada',
@@ -104,6 +109,7 @@ function editorialDescription(changes: string) {
         collectionChanged: 'colección',
       }))
         if (before[key] === true) labels.push(label);
+      if (typeof before['isFree'] === 'boolean' && typeof value['isFree'] === 'boolean' && before['isFree'] !== value['isFree']) labels.push('acceso gratuito');
     } else if (typeof value['hasWork'] === 'boolean')
       labels.push(value['hasWork'] ? 'con obra completa' : 'ficha editorial');
     if (Number.isInteger(value['itemCount']) && Number(value['itemCount']) >= 0)
@@ -175,9 +181,24 @@ export function auditPageFrom(value: unknown, module: AuditModule): AuditPage {
         !(item['beforeStatus'] === null || typeof item['beforeStatus'] === 'string')
       )
         invalid();
+      const planDescription = (prefix: 'before' | 'after') => {
+        const plan = item[prefix + 'Plan'];
+        const starts = item[prefix + 'StartsUtc'];
+        const expires = item[prefix + 'ExpiresUtc'];
+        if (plan === null || plan === undefined) return '';
+        if (typeof plan !== 'string' || !Object.hasOwn(subscriptionPlanLabels, plan) ||
+          !(starts === null || (typeof starts === 'string' && Number.isFinite(Date.parse(starts)))) ||
+          !(expires === null || (typeof expires === 'string' && Number.isFinite(Date.parse(expires))))) invalid();
+        return subscriptionPlanLabels[plan as SubscriptionPlan] +
+          (starts ? ', desde ' + subscriptionInstant(starts as string) : '') +
+          (expires ? ', hasta ' + subscriptionInstant(expires as string) : ', sin vencimiento');
+      };
+      const beforePlan = planDescription('before');
+      const afterPlan = planDescription('after');
       description =
         (item['beforeStatus'] ? item['beforeStatus'] + ' → ' : '') +
         item['afterStatus'] +
+        (afterPlan ? ' · ' + (beforePlan ? beforePlan + ' → ' : '') + afterPlan + ' (hora de Lima)' : '') +
         (item['reason'] ? ': ' + item['reason'] : '');
     }
     return {

@@ -42,10 +42,10 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         var service = Recording(context, clock, false);
         Assert.False(service.GetCapabilities().RecordingEnabled);
         Assert.Equal(90, service.GetCapabilities().DetailRetentionDays); Assert.Equal(365, service.GetCapabilities().GeneralRetentionDays);
-        Assert.Equal("recording_disabled", (await service.StartAsync(Guid.NewGuid(), Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Error);
-        Assert.Equal("recording_disabled", (await service.PulseAsync(Guid.NewGuid(), Binding, Guid.NewGuid(), Reading(), Token)).Error);
+        Assert.Equal("recording_disabled", (await service.StartAsync(Guid.NewGuid(), Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Error);
+        Assert.Equal("recording_disabled", (await service.PulseAsync(Guid.NewGuid(), Binding, Guid.NewGuid(), Reading(), true, Token)).Error);
         Assert.NotNull(await new CatalogService(context, clock).GetPublishedAsync(work.Slug, Token));
-        Assert.Equal(work.Version, (await new CatalogService(context, clock).GetPublishedWorkAsync(work.Slug, Token))!.Version);
+        Assert.Equal(work.Version, ((await new CatalogService(context, clock).GetPublishedWorkAsync(work.Slug, true, Token)).Value)!.Version);
         Assert.Equal(0, await context.ConsumptionSessions.CountAsync(Token)); Assert.Equal(0, await context.ConsumptionPulses.CountAsync(Token)); Assert.Equal(0, await context.ConsumptionDaily.CountAsync(Token)); Assert.Equal(0, await context.ConsumptionAccountDaily.CountAsync(Token));
     }
     [Fact]
@@ -57,14 +57,14 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         var account = Guid.NewGuid(); var request = new StartConsumptionRequest(Guid.NewGuid(), work.Version);
         async Task<CatalogResult<ConsumptionSessionView>> Start()
         {
-            await using var context = fixture.Context(); return await Recording(context, clock).StartAsync(account, Binding, work.Slug, request, Token);
+            await using var context = fixture.Context(); return await Recording(context, clock).StartAsync(account, Binding, work.Slug, request, true, Token);
         }
         var results = await Task.WhenAll(Start(), Start());
         Assert.All(results, x => Assert.True(x.Succeeded)); Assert.Equal(results[0].Value, results[1].Value);
         await using var final = fixture.Context();
         Assert.Equal(1, await final.ConsumptionSessions.CountAsync(Token)); Assert.Equal(1, (await final.ConsumptionDaily.SingleAsync(Token)).Starts); Assert.Equal(1, (await final.ConsumptionAccountDaily.SingleAsync(Token)).Starts);
         Assert.Equal(2, await final.Audit.CountAsync(Token));
-        var conflict = await Recording(final, clock).StartAsync(account, new string('b', 64), work.Slug, request, Token);
+        var conflict = await Recording(final, clock).StartAsync(account, new string('b', 64), work.Slug, request, true, Token);
         Assert.Equal(409, conflict.Status); Assert.Equal("concurrency_conflict", conflict.Error);
         Assert.Null(final.Database.CurrentTransaction); Assert.Empty(final.ChangeTracker.Entries());
     }
@@ -76,12 +76,12 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await using (var setup = fixture.Context())
         {
             var work = await Publish(setup, clock, "consumo-pulse-race");
-            session = (await Recording(setup, clock).StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
+            session = (await Recording(setup, clock).StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
         }
         clock.Advance(TimeSpan.FromSeconds(1));
         async Task<CatalogResult<ConsumptionPulseReceipt>> Pulse(ConsumptionPulseRequest request)
         {
-            await using var context = fixture.Context(); var result = await Recording(context, clock).PulseAsync(account, Binding, session.SessionId, request, Token);
+            await using var context = fixture.Context(); var result = await Recording(context, clock).PulseAsync(account, Binding, session.SessionId, request, true, Token);
             Assert.Null(context.Database.CurrentTransaction); Assert.Empty(context.ChangeTracker.Entries()); return result;
         }
         var results = await Task.WhenAll(Pulse(Reading()), Pulse(Reading()));
@@ -95,7 +95,7 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         Assert.Equal(1, day.Starts); Assert.Equal(1, day.RecordedPulses); Assert.Equal(1000, day.CreditedMs); Assert.Equal(5000, day.ProgressBasisPointsSum);
         var accountDay = await final.ConsumptionAccountDaily.SingleAsync(Token); Assert.Equal(1, accountDay.RecordedPulses); Assert.Equal(1000, accountDay.CreditedMs);
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.True((await Recording(final, clock).PulseAsync(account, Binding, session.SessionId, Reading() with { Sequence = 2 }, Token)).Succeeded);
+        Assert.True((await Recording(final, clock).PulseAsync(account, Binding, session.SessionId, Reading() with { Sequence = 2 }, true, Token)).Succeeded);
         Assert.Equal(2, await final.ConsumptionPulses.CountAsync(Token));
     }
     [Fact]
@@ -104,15 +104,15 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await fixture.ResetAsync(Token);
         var clock = new ActivityClock(Now); var account = Guid.NewGuid();
         await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-live-check"); var recorder = Recording(context, clock);
-        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
+        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(404, (await recorder.PulseAsync(Guid.NewGuid(), Binding, session.SessionId, Reading(), Token)).Status);
-        Assert.Equal(404, (await recorder.PulseAsync(account, new string('b', 64), session.SessionId, Reading(), Token)).Status); // Revalidated credentials cannot resume a restored old binding.
+        Assert.Equal(404, (await recorder.PulseAsync(Guid.NewGuid(), Binding, session.SessionId, Reading(), true, Token)).Status);
+        Assert.Equal(404, (await recorder.PulseAsync(account, new string('b', 64), session.SessionId, Reading(), true, Token)).Status); // Revalidated credentials cannot resume a restored old binding.
         var withdrawn = (await new CatalogService(context, clock).UpdateAsync(Guid.NewGuid(), work.Id, Change(work, "draft"), Token)).Value!;
-        Assert.Equal(404, (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Status);
+        Assert.Equal(404, (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Status);
         var published = (await new CatalogService(context, clock).UpdateAsync(Guid.NewGuid(), work.Id, Change(withdrawn, "published"), Token)).Value!;
         Assert.NotEqual(work.Version, published.Version);
-        Assert.Equal("content_changed", (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Error);
+        Assert.Equal("content_changed", (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Error);
         Assert.Equal(0, await context.ConsumptionPulses.CountAsync(Token)); Assert.Equal(0, (await context.ConsumptionDaily.SingleAsync(Token)).RecordedPulses);
     }
     [Theory]
@@ -127,21 +127,21 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await using (var setup = fixture.Context())
         {
             work = await Publish(setup, clock, "consumo-rollback");
-            if (!failStart) session = (await Recording(setup, clock).StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
+            if (!failStart) session = (await Recording(setup, clock).StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
         }
         clock.Advance(TimeSpan.FromSeconds(1));
         await using var context = fixture.Context(interceptor: new FailAfterDailyWrite(failAccountDaily));
         var recorder = Recording(context, clock);
-        if (failStart) await Assert.ThrowsAsync<InvalidOperationException>(() => recorder.StartAsync(account, Binding, work.Slug, new(visit, work.Version), Token));
-        else await Assert.ThrowsAsync<InvalidOperationException>(() => recorder.PulseAsync(account, Binding, session!.SessionId, Reading(), Token));
+        if (failStart) await Assert.ThrowsAsync<InvalidOperationException>(() => recorder.StartAsync(account, Binding, work.Slug, new(visit, work.Version), true, Token));
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => recorder.PulseAsync(account, Binding, session!.SessionId, Reading(), true, Token));
         Assert.Null(context.Database.CurrentTransaction); Assert.Empty(context.ChangeTracker.Entries());
         Assert.Equal(failStart ? 0 : 1, await context.ConsumptionSessions.CountAsync(Token)); Assert.Equal(0, await context.ConsumptionPulses.CountAsync(Token));
         Assert.Equal(failStart ? 0 : 1, await context.ConsumptionDaily.CountAsync(Token)); Assert.Equal(failStart ? 0 : 1, await context.ConsumptionAccountDaily.CountAsync(Token));
         if (!failStart) { Assert.Equal(0, (await context.ConsumptionAccountDaily.SingleAsync(Token)).RecordedPulses); Assert.Equal(0, (await context.ConsumptionDaily.SingleAsync(Token)).RecordedPulses); Assert.Equal(0, (await context.ConsumptionSessions.SingleAsync(Token)).LastSequence); }
         Assert.Equal(2, await context.Audit.CountAsync(Token));
         // The interceptor fails once. An explicit retry uses the same scoped recorder/context.
-        if (failStart) Assert.True((await recorder.StartAsync(account, Binding, work.Slug, new(visit, work.Version), Token)).Succeeded);
-        else Assert.True((await recorder.PulseAsync(account, Binding, session!.SessionId, Reading(), Token)).Succeeded);
+        if (failStart) Assert.True((await recorder.StartAsync(account, Binding, work.Slug, new(visit, work.Version), true, Token)).Succeeded);
+        else Assert.True((await recorder.PulseAsync(account, Binding, session!.SessionId, Reading(), true, Token)).Succeeded);
         Assert.Equal(1, await context.ConsumptionSessions.CountAsync(Token));
         Assert.Equal(failStart ? 0 : 1, await context.ConsumptionPulses.CountAsync(Token));
         Assert.Equal(1, (await context.ConsumptionDaily.SingleAsync(Token)).Starts);
@@ -157,9 +157,9 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await using var context = fixture.Context(); var first = await Publish(context, clock, "consumo-report-a"); var second = await Publish(context, clock, "consumo-report-b");
         foreach (var pair in new[] { (firstAccount, first, 1000), (firstAccount, second, 7000), (otherAccount, first, 3000) })
         {
-            var recorder = Recording(context, clock); var session = (await recorder.StartAsync(pair.Item1, Binding, pair.Item2.Slug, new(Guid.NewGuid(), pair.Item2.Version), Token)).Value!;
+            var recorder = Recording(context, clock); var session = (await recorder.StartAsync(pair.Item1, Binding, pair.Item2.Slug, new(Guid.NewGuid(), pair.Item2.Version), true, Token)).Value!;
             clock.Advance(TimeSpan.FromSeconds(1));
-            Assert.True((await recorder.PulseAsync(pair.Item1, Binding, session.SessionId, Reading(pair.Item3), Token)).Succeeded);
+            Assert.True((await recorder.PulseAsync(pair.Item1, Binding, session.SessionId, Reading(pair.Item3), true, Token)).Succeeded);
         }
         var reports = new ConsumptionActivityReportService(context, clock, Enabled()); var interval = new ConsumptionReportInterval(new(2026, 10, 7), new(2026, 10, 8));
         var report = await reports.GetAsync(interval, Token);
@@ -190,8 +190,8 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         foreach (var startTime in new[] { generalCutoff.AddDays(-1), detailCutoff.AddDays(-1), detailCutoff })
         {
             clock.Set(startTime);
-            var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
-            clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+            var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
+            clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Succeeded);
         }
         clock.Set(Now);
         var interval = new ConsumptionReportInterval(DateOnly.FromDateTime(generalCutoff.UtcDateTime), new(2026, 10, 8));
@@ -216,10 +216,10 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
     {
         await fixture.ResetAsync(Token); var clock = new ActivityClock(Now.AddHours(-8)); var account = Guid.NewGuid();
         await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-receipt-expiry"); var recorder = Recording(context, clock);
-        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
-        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
+        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Succeeded);
         clock.Set(Now);
-        Assert.Equal(404, (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Status);
+        Assert.Equal(404, (await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Status);
         var general = await context.ConsumptionDaily.AsNoTracking().SingleAsync(Token); var personal = await context.ConsumptionAccountDaily.AsNoTracking().SingleAsync(Token);
         async Task<ConsumptionPruneResult> Prune()
         {
@@ -236,8 +236,8 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
     {
         await fixture.ResetAsync(Token); var clock = new ActivityClock(Now.AddHours(-8)); var account = Guid.NewGuid();
         await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-locked-parent"); var recorder = Recording(context, clock);
-        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
-        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
+        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Succeeded);
         clock.Set(Now);
         Assert.False(await context.Database.SqlQueryRaw<bool>("SELECT has_table_privilege(current_user, 'catalog.\"ConsumptionPulses\"', 'UPDATE') AS \"Value\"").SingleAsync(Token));
         await using var blocker = new NpgsqlConnection(fixture.RuntimeConnection); await blocker.OpenAsync(Token);
@@ -262,7 +262,7 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await fixture.ResetAsync(Token); var clock = new ActivityClock(Now);
         await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-cancel");
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(Token); cancelled.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Recording(context, clock).StartAsync(Guid.NewGuid(), Binding, work.Slug, new(Guid.NewGuid(), work.Version), cancelled.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Recording(context, clock).StartAsync(Guid.NewGuid(), Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, cancelled.Token));
         Assert.Null(context.Database.CurrentTransaction); Assert.Empty(context.ChangeTracker.Entries()); Assert.Equal(0, await context.ConsumptionSessions.CountAsync(Token));
         var report = new ConsumptionActivityReportService(context, clock, Enabled()); var interval = new ConsumptionReportInterval(new(2026, 10, 7), new(2026, 10, 8));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => report.GetAsync(interval, cancelled.Token));
@@ -276,8 +276,8 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
         await using (var setup = fixture.Context())
         {
             var work = await Publish(setup, clock, "consumo-prune-rollback"); var recorder = Recording(setup, clock);
-            var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
-            clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+            var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
+            clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Succeeded);
         }
         clock.Set(Now);
         await using (var failed = fixture.Context(interceptor: new FailAfterPruneDelete(failAfterGeneralDelete)))
@@ -295,8 +295,8 @@ public sealed class ConsumptionActivityTests(CatalogFixture fixture)
     {
         await fixture.ResetAsync(Token); var clock = new ActivityClock(Now.AddHours(-8)); var account = Guid.NewGuid();
         await using var context = fixture.Context(); var work = await Publish(context, clock, "consumo-prune-batch"); var recorder = Recording(context, clock);
-        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), Token)).Value!;
-        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), Token)).Succeeded);
+        var session = (await recorder.StartAsync(account, Binding, work.Slug, new(Guid.NewGuid(), work.Version), true, Token)).Value!;
+        clock.Advance(TimeSpan.FromSeconds(1)); Assert.True((await recorder.PulseAsync(account, Binding, session.SessionId, Reading(), true, Token)).Succeeded);
         // Synthetic zero-credit receipts exercise the real LIMIT without thousands of HTTP calls.
         // Keep both additive ledgers and the session sequence consistent with the fixture.
         var received = clock.GetUtcNow();

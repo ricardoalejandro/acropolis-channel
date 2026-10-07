@@ -20,6 +20,7 @@ vi.mock('../../auth/useSession', () => ({
   useSession: () => ({ user: sessionState.signedIn ? userFixture : null, loading: false }),
 }));
 const publicDetail: ContentDetail = {
+  isFree: true,
   id: activityContentId,
   slug: 'lectura-real',
   title: 'Lectura real',

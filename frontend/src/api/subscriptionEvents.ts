@@ -1,6 +1,8 @@
 import { ApiError, request } from './identity';
 export const subscriptionEventKeys = [
   'activated',
+  'assigned',
+  'renewed',
   'reactivated',
   'cancelled',
   'updated_active_cancelled',

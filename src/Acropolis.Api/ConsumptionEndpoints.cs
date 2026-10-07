@@ -20,11 +20,12 @@ public static class ConsumptionEndpoints
             var user = await identity.GetUserAsync(userId, token);
             if (user is null || !user.EmailConfirmed || user.Status != "active")
                 return IdentityEndpoints.Problem("invalid_credentials", 401);
-            if (!await access.HasActiveAsync(userId, token))
+            var scope = await access.GetScopeAsync(userId, token);
+            if (scope == SubscriptionAccessScope.None)
                 return IdentityEndpoints.Problem("subscription_required", 403);
             if (!CatalogRules.ValidSlug(slug)) return IdentityEndpoints.Problem("not_found", 404);
-            var work = await catalog.GetPublishedWorkAsync(slug, token);
-            return work is null ? IdentityEndpoints.Problem("not_found", 404) : Results.Ok(work);
+            var work = await catalog.GetPublishedWorkAsync(slug, scope == SubscriptionAccessScope.FullCatalog, token);
+            return work.Succeeded ? Results.Ok(work.Value) : IdentityEndpoints.Problem(work.Error!, work.Status);
         });
     }
 }

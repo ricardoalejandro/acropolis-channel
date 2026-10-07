@@ -21,6 +21,7 @@ const reading = {
   author: 'Autora real',
   tags: ['Filosofía'],
   category: 'lecturas',
+  isFree: true,
   coverAsset: null,
   durationSeconds: null,
   publishedUtc: now,
@@ -62,6 +63,8 @@ const subscription = {
   status: 'active',
   createdUtc: now,
   activatedUtc: now,
+  startsUtc: now,
+  effectiveState: 'active',
   updatedUtc: now,
   cancelledUtc: null,
   expiresUtc: null,
@@ -102,7 +105,7 @@ function mount(
       return json({ subscription: null, eligibleToActivate: true });
     if (route.endsWith('/subscriptions/activate')) return json(subscription);
     if (route.endsWith('/subscriptions/cancel'))
-      return json({ ...subscription, status: 'cancelled', cancelledUtc: now, version: 'v2' });
+      return json({ ...subscription, status: 'cancelled', effectiveState: 'cancelled', cancelledUtc: now, version: 'v2' });
     if (route.includes('/admin/subscriptions/accounts/lookup?'))
       return json([
         {
@@ -131,7 +134,7 @@ function mount(
     if (route.includes('/admin/subscriptions?'))
       return json({ items: [subscription], total: 1, page: 1, pageSize: 20 });
     if (route.endsWith('/admin/subscriptions/subscription-one'))
-      return json({ ...subscription, ...(init?.method === 'PATCH' ? body : {}) });
+      return json({ ...subscription, ...(init?.method === 'PATCH' ? { ...body, effectiveState: body['status'] } : {}) });
     if (route.includes('/audit?')) return json({ items: [], total: 0, page: 1, pageSize: 20 });
     if (route.includes('/admin/users/') && route.endsWith('/access'))
       return json({ lastSignInUtc: null });
@@ -226,7 +229,7 @@ describe('Explicit free subscription', () => {
   it('keeps access when cancellation is dismissed, cancels explicitly and reactivates', async () => {
     const fetch = mount('/profile/subscription', user, (path) =>
       path.endsWith('/subscriptions/me')
-        ? json({ subscription, eligibleToActivate: true })
+        ? json({ subscription, eligibleToActivate: false })
         : undefined,
     );
     const main = within(document.querySelector('main')!);
@@ -256,13 +259,13 @@ describe('Explicit free subscription', () => {
           path.endsWith('/subscriptions/me')
             ? json({
                 subscription:
-                  state === 'suspended' ? { ...subscription, status: 'suspended' } : null,
+                  state === 'suspended' ? { ...subscription, status: 'suspended', effectiveState: 'suspended' } : null,
                 eligibleToActivate: false,
               })
             : undefined,
         );
       });
-      await screen.findByRole('heading', { name: 'Acceso gratuito' });
+      await screen.findByRole('heading', { name: state === 'suspended' ? 'Gratuito' : 'Acceso gratuito' });
       expect(screen.queryByRole('button', { name: 'Suscribirme gratis' })).not.toBeInTheDocument();
       expect(writes(fetch, '/subscriptions/activate')).toHaveLength(0);
     },
@@ -333,7 +336,7 @@ describe('Protected works and ordered collections', () => {
       });
       if (status === 403)
         expect(
-          await screen.findByRole('link', { name: 'Suscribirme gratis' }, { timeout: 3000 }),
+          await screen.findByRole('link', { name: 'Ver mi suscripción' }, { timeout: 3000 }),
         ).toHaveAttribute('href', '/profile/subscription?content=primera-lectura');
       else if (status === 404)
         await screen.findByText(/Esta ficha aún no tiene una obra disponible/);
@@ -1289,5 +1292,217 @@ describe('YouTube URL entry preserves the editorial API contract', () => {
     expect(
       JSON.parse(String(writes(fetch, '/admin/content/reading-one')[0]?.[1]?.body)),
     ).toMatchObject({ youTubeId: null, version: 'v1' });
+  });
+});
+
+describe('Explicit free works and effective plan access', () => {
+  it('starts a new editorial work with free access unchecked and saves that explicit value', async () => {
+    const fetch = mount('/admin/content/new', owner);
+    const free = await screen.findByRole('checkbox', { name: 'Disponible con el plan Gratuito' });
+    expect(free).not.toBeChecked();
+    fill('Título', 'Obra de acceso completo');fill('Dirección del contenido', 'obra-de-acceso-completo');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+    await waitFor(() => expect(writes(fetch, '/admin/content')).toHaveLength(1));
+    expect(JSON.parse(String(writes(fetch, '/admin/content')[0]?.[1]?.body)).isFree).toBe(false);
+  });
+  it('preserves an edited free flag and full text on a version conflict', async () => {
+    const fetch = mount('/admin/content/reading-one', owner, (path, init) =>
+      path.endsWith('/admin/content/reading-one') && init?.method === 'PUT'
+        ? json({ code: 'concurrency_conflict' }, 409) : undefined);
+    const free = await screen.findByRole('checkbox', { name: 'Disponible con el plan Gratuito' });
+    expect(free).toBeChecked();await userEvent.click(free);fill('Lectura completa', 'Texto que debe conservarse.');
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Conservamos tus cambios');
+    expect(free).not.toBeChecked();expect(screen.getByLabelText('Lectura completa')).toHaveValue('Texto que debe conservarse.');
+    expect(JSON.parse(String(writes(fetch, '/admin/content/reading-one')[0]?.[1]?.body))).toMatchObject({ isFree: false, version: 'v1', workText: 'Texto que debe conservarse.' });
+  });
+  it('does not inherit a free collection flag to a protected child and offers the real plan page', async () => {
+    const paid = { ...reading, isFree: false };
+    mount('/content/curso-real', user, (path) => {
+      if (path.endsWith('/catalog/content/curso-real')) return json({ ...course, items: [paid, second] });
+      if (path.endsWith('/catalog/content/primera-lectura')) return json(paid);
+      if (path.endsWith('/consumption/content/primera-lectura')) return json({ code: 'content_requires_plan' }, 403);
+      return undefined;
+    });
+    await screen.findByRole('heading', { name: 'Curso real', level: 1 });
+    const collection = document.querySelector('.collection-items')!;
+    expect(within(collection as HTMLElement).getByRole('link', { name: 'Primera lectura · Autora real' })).not.toHaveTextContent('Gratuito');
+    expect(within(collection as HTMLElement).getByRole('link', { name: 'Segunda lectura · Autora real' })).toHaveTextContent('Gratuito');
+    expect(within(collection as HTMLElement).getByRole('link', { name: 'Segunda lectura · Autora real' })).toHaveAccessibleDescription('Gratuito');
+    await userEvent.click(within(collection as HTMLElement).getByRole('link', { name: 'Primera lectura · Autora real' }));
+    expect(await screen.findByRole('heading', { name: 'Esta obra requiere otro plan.' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Ver mi suscripción' })).toHaveAttribute('href', '/profile/subscription?content=primera-lectura');
+    expect(screen.queryByRole('article', { name: 'Lectura completa' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Suscribirme gratis' })).not.toBeInTheDocument();
+  });
+  it.each(['scheduled', 'expired', 'cancelled'])(
+    'shows full-plan %s dates without a self activation or invented extension', async (effectiveState) => {
+      const full = { ...subscription, plan: 'annual', expiresUtc: '2027-10-06T12:00:00Z', effectiveState, status: effectiveState === 'cancelled' ? 'cancelled' : 'active' };
+      const fetch = mount('/profile/subscription', user, (path) => path.endsWith('/subscriptions/me') ? json({ subscription: full, eligibleToActivate: false }) : undefined);
+      await screen.findByRole('heading', { name: 'Anual', level: 2 });
+      expect(document.querySelector('time[datetime="2027-10-06T12:00:00Z"]')).toBeVisible();
+      expect(screen.getByText('Fechas en hora de Lima (UTC−05:00). El acceso termina al llegar al vencimiento.')).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Suscribirme gratis' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Explorar la mediateca' })).not.toBeInTheDocument();
+      expect(writes(fetch, '/subscriptions/activate')).toHaveLength(0);
+    });
+});
+
+describe('Manual plan assignment is reviewed, versioned and recoverable', () => {
+  const route = '/admin/subscriptions/accounts/' + user.id;
+  const assignRoute = '/admin/subscriptions/accounts/' + user.id + '/assign';
+  const full = { ...subscription, plan: 'probationismo', startsUtc: '2026-10-07T14:30:00.123456Z', expiresUtc: '2027-01-07T14:30:00.123456Z', version: 'full-v1' };
+  const renewed = { ...full, expiresUtc: '2027-04-07T14:30:00.123456Z', version: 'full-v2' };
+  function assigned(override?: Override) {
+    return mount(route, owner, override, true);
+  }
+  async function form() {
+    return within(await screen.findByRole('form', { name: 'Asignación manual de plan' }, { timeout: 3000 }));
+  }
+  it('assigns a first full plan only after review, converting Lima input and keeping version null', async () => {
+    const fetch = assigned((path, init) => {
+      if (path.includes('/admin/subscriptions?')) return json({ items: [], total: 0, page: 1, pageSize: 20 });
+      if (path.endsWith(assignRoute) && init?.method === 'POST') return json({ ...subscription, plan: 'annual', startsUtc: '2026-10-07T14:30:00.000Z', expiresUtc: '2027-10-07T14:30:00Z', version: 'new-v1' });
+      return undefined;
+    });
+    const fields = await form();expect(writes(fetch, assignRoute)).toHaveLength(0);
+    await userEvent.selectOptions(fields.getByLabelText('Plan'), 'annual');
+    fireEvent.change(fields.getByLabelText('Inicio del período (hora de Lima)'), { target: { value: '2026-10-07T09:30:00' } });
+    await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Período autorizado');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    expect(writes(fetch, assignRoute)).toHaveLength(0);
+    await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Guardamos el plan Anual.');
+    expect(JSON.parse(String(writes(fetch, assignRoute)[0]?.[1]?.body))).toEqual({ plan: 'annual', startsUtc: '2026-10-07T14:30:00.000Z', version: null, reason: 'Período autorizado' });
+    expect(screen.getByRole('link', { name: 'Revisar el cambio en la auditoría' })).toHaveAttribute('href', '/admin/audit?module=subscriptions&subscriptionId=subscription-one');
+  }, 10000);
+  it('renews from the exact existing expiry and presents the server period while preserving the original start', async () => {
+    const fetch = assigned((path, init) => {
+      if (path.includes('/admin/subscriptions?')) return json({ items: [full], total: 1, page: 1, pageSize: 20 });
+      if (path.endsWith(assignRoute) && init?.method === 'POST') return json(renewed);
+      return undefined;
+    });
+    const fields = await form();expect(fields.getByLabelText('Plan')).toBeDisabled();
+    expect(fields.getByLabelText('Inicio del período (hora de Lima)')).toHaveValue('2027-01-07T09:30');
+    expect(fields.getByLabelText('Inicio del período (hora de Lima)')).toHaveAttribute('readonly');
+    await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Renovación anticipada');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar renovación' }));
+    expect(screen.getByText('Confirma la cuenta, el plan y la fecha antes de registrar el cambio. El inicio del acceso actual se conservará.')).toBeVisible();
+    expect(writes(fetch, assignRoute)).toHaveLength(0);
+    await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Guardamos el plan Probacionismo.');
+    expect(JSON.parse(String(writes(fetch, assignRoute)[0]?.[1]?.body))).toEqual({ plan: 'probationismo', startsUtc: full.expiresUtc, version: 'full-v1', reason: 'Renovación anticipada' });
+    expect(screen.getByRole('status')).toHaveTextContent('Acceso desde');
+    expect(screen.getByRole('status')).not.toHaveTextContent('Acceso desde 7 ene');
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveValue('');
+  }, 10000);
+  it('makes a change to Free explicit with no invented start and with the current full version', async () => {
+    const fetch = assigned((path, init) => {
+      if (path.includes('/admin/subscriptions?')) return json({ items: [full], total: 1, page: 1, pageSize: 20 });
+      if (path.endsWith(assignRoute) && init?.method === 'POST') return json({ ...subscription, version: 'free-v2' });
+      return undefined;
+    });
+    const fields = await form();await userEvent.click(screen.getByRole('button', { name: 'Asignar otro período o plan' }));
+    await userEvent.selectOptions(fields.getByLabelText('Plan'), 'free_beta');
+    expect(fields.queryByLabelText('Inicio del período (hora de Lima)')).not.toBeInTheDocument();
+    expect(fields.getByText(/Sustituirá el alcance del plan actual/)).toBeVisible();
+    await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Cambio autorizado a Gratuito');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    expect(writes(fetch, assignRoute)).toHaveLength(0);
+    await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    await screen.findByRole('status');
+    expect(JSON.parse(String(writes(fetch, assignRoute)[0]?.[1]?.body))).toEqual({ plan: 'free_beta', startsUtc: null, version: 'full-v1', reason: 'Cambio autorizado a Gratuito' });
+  }, 10000);
+  it('focuses the invalid field and sends no request until a reason and valid date are supplied', async () => {
+    const fetch = assigned();const fields = await form();
+    await userEvent.selectOptions(fields.getByLabelText('Plan'), 'annual');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    expect(fields.getByLabelText('Inicio del período (hora de Lima)')).toHaveFocus();
+    fireEvent.change(fields.getByLabelText('Inicio del período (hora de Lima)'), { target: { value: '2026-10-07T09:30:00' } });
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveFocus();
+    expect(writes(fetch, assignRoute)).toHaveLength(0);
+  });
+  it.each([429, 503])('preserves reviewed values after HTTP %i and retries only on a deliberate click', async (status) => {
+    let fail = true;
+    const fetch = assigned((path, init) => path.endsWith(assignRoute) && init?.method === 'POST'
+      ? fail ? json({ code: status === 429 ? 'rate_limited' : 'unavailable', detail: 'private' }, status) : json({ ...subscription, version: 'new-v2' }) : undefined);
+    const fields = await form();await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Acceso gratuito autorizado');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    await screen.findByRole('alert');expect(writes(fetch, assignRoute)).toHaveLength(1);
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveValue('Acceso gratuito autorizado');
+    expect(screen.queryByText('private')).not.toBeInTheDocument();fail = false;
+    await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    await screen.findByRole('status');expect(writes(fetch, assignRoute)).toHaveLength(2);
+  }, 10000);
+  it('blocks a stale-version retry and preserves values until an explicit accepted reload', async () => {
+    const fetch = assigned((path, init) => path.endsWith(assignRoute) && init?.method === 'POST' ? json({ code: 'concurrency_conflict' }, 409) : undefined);
+    const fields = await form();await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Motivo conservado');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    await screen.findByRole('alert');expect(fields.getByRole('button', { name: 'Confirmar asignación' })).toBeDisabled();
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveValue('Motivo conservado');
+    vi.mocked(window.confirm).mockReturnValue(false);await userEvent.click(screen.getByRole('button', { name: 'Recargar suscripción' }));
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveValue('Motivo conservado');expect(writes(fetch, assignRoute)).toHaveLength(1);
+    vi.mocked(window.confirm).mockReturnValue(true);await userEvent.click(screen.getByRole('button', { name: 'Recargar suscripción' }));
+    expect((await form()).getByLabelText('Motivo de la asignación')).toHaveValue('');expect(writes(fetch, assignRoute)).toHaveLength(1);
+  }, 10000);
+  it('does not silently replace a live period when the server rejects a future assignment', async () => {
+    const fetch = assigned((path, init) => {
+      if (path.includes('/admin/subscriptions?')) return json({ items: [full], total: 1, page: 1, pageSize: 20 });
+      return path.endsWith(assignRoute) && init?.method === 'POST' ? json({ code: 'active_period_would_be_replaced' }, 409) : undefined;
+    });
+    const fields = await form();await userEvent.click(screen.getByRole('button', { name: 'Asignar otro período o plan' }));
+    await userEvent.selectOptions(fields.getByLabelText('Plan'), 'annual');
+    fireEvent.change(fields.getByLabelText('Inicio del período (hora de Lima)'), { target: { value: '2027-01-07T09:30:00' } });
+    await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Período futuro');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));await userEvent.click(fields.getByRole('button', { name: 'Confirmar asignación' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('sustituiría el acceso actual');
+    expect(fields.getByLabelText('Inicio del período (hora de Lima)')).toHaveValue('2027-01-07T09:30');
+    expect(writes(fetch, assignRoute)).toHaveLength(1);expect(screen.queryByText(/Guardamos el plan/)).not.toBeInTheDocument();
+  });
+  it('prevents duplicate assignment and ignores a delayed response after leaving the route', async () => {
+    let resolveAssignment: ((response: Response) => void) | undefined;
+    const deferred = new Promise<Response>((resolve) => {resolveAssignment = resolve;});
+    const fetch = assigned((path, init) => path.endsWith(assignRoute) && init?.method === 'POST' ? deferred : undefined);
+    const fields = await form();await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Respuesta pendiente');
+    await userEvent.click(fields.getByRole('button', { name: 'Revisar asignación' }));
+    const confirm = fields.getByRole('button', { name: 'Confirmar asignación' });
+    fireEvent.click(confirm);fireEvent.click(confirm);
+    await waitFor(() => expect(writes(fetch, assignRoute)).toHaveLength(1));expect(fields.getByLabelText('Motivo de la asignación')).toBeDisabled();
+    await act(async () => {await fetch.router.navigate('/explore');});
+    await act(async () => {resolveAssignment?.(json({ ...subscription, version: 'late-v2' }));});
+    expect(fetch.router.state.location.pathname).toBe('/explore');
+    expect(screen.queryByText(/Guardamos el plan/)).not.toBeInTheDocument();
+  });
+  it('keeps a draft when Back is dismissed and never posts during navigation', async () => {
+    const fetch = mount('/admin/subscriptions', owner, undefined, true);
+    fireEvent.click(await screen.findByRole('link', { name: 'Gestionar suscripción' }, { timeout: 3000 }));
+    const fields = await form();await userEvent.type(fields.getByLabelText('Motivo de la asignación'), 'Cambio por revisar');
+    vi.mocked(window.confirm).mockReturnValue(false);await act(async () => {await fetch.router.navigate(-1);});
+    await waitFor(() => expect(window.confirm).toHaveBeenCalledOnce());
+    expect(fields.getByLabelText('Motivo de la asignación')).toHaveValue('Cambio por revisar');
+    expect(fetch.router.state.location.pathname).toBe('/admin/subscriptions/subscription-one');
+    expect(writes(fetch, assignRoute)).toHaveLength(0);
+  });
+  it('requires the subscription permission on the assignment route before making a lookup or write', async () => {
+    const fetch = mount(route, { ...user, permissions: ['Content.Manage'] }, undefined, true);
+    await screen.findByRole('alert');
+    expect(fetch.mock.calls.some(([path]) => String(path).includes('/admin/subscriptions'))).toBe(false);
+  });
+});
+
+describe('Plan and status edits keep separate unsaved intent', () => {
+  it('blocks the other form while a status or plan draft is present and unlocks when cleared', async () => {
+    mount('/admin/subscriptions/subscription-one', owner);
+    const statusReason = await screen.findByLabelText('Motivo del cambio', {}, { timeout: 3000 });
+    const planReason = screen.getByLabelText('Motivo de la asignación');
+    await userEvent.type(statusReason, 'Cambio de estado pendiente');
+    expect(planReason).toBeDisabled();expect(screen.getByLabelText('Plan')).toBeDisabled();
+    await userEvent.clear(statusReason);expect(planReason).toBeEnabled();
+    await userEvent.type(planReason, 'Cambio de plan pendiente');
+    expect(statusReason).toBeDisabled();expect(screen.getByRole('button', { name: 'Guardar estado' })).toBeDisabled();
+    await userEvent.clear(planReason);expect(statusReason).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Guardar estado' })).toBeEnabled();
   });
 });

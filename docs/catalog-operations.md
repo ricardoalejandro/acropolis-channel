@@ -1,6 +1,6 @@
 # Catálogo y obras
 
-La estructura conserva las seis categorías oficiales y el documento funcional. La implementación actual es un piloto gratuito WIP sin vencimiento, pendiente de confirmar frente a las reglas del documento funcional; consultar docs/modernization-scope.md. No sembrar datos de demostración en producción ni confundir el prototipo con contenido disponible.
+La estructura conserva las seis categorías oficiales y el documento funcional. Las reglas confirmadas distinguen Gratuito limitado a obras marcadas gratuitas y planes temporales de catálogo completo; consultar docs/subscriptions-operations.md y docs/modernization-scope.md. No sembrar datos de demostración en producción ni confundir el prototipo con contenido disponible.
 
 ## Ficha y obra completa
 
@@ -8,7 +8,7 @@ Body es siempre una sinopsis pública de texto plano (máximo 50.000 caracteres)
 
 El campo interno YouTubeId acepta exclusivamente identificadores válidos de once caracteres, nunca una URL arbitraria, HTML de embed o credencial. Los formatos audiovisuales usan el reproductor oficial de YouTube y sus controles; Podcast alojado allí usa ese mismo reproductor completo. No extraer audio, descargar el vídeo ni ocultar controles. La reproducción sólo se inicia por elección del visitante. Si no está disponible o no admite embed, informar y ofrecer su enlace de origen. El piloto no garantiza exclusividad de recursos públicos.
 
-Una ficha antigua sin obra puede conservarse publicada; no afirmar que ya permite reproducción. Nuevas publicaciones editoriales deben incluir el material autorizado del formato que se pretende ofrecer. Los DTO públicos nunca contienen WorkText o YouTubeId. /api/v1/consumption/content/{slug} exige identidad activa confirmada, suscripción activa y publicación vigente, sin caché compartida.
+Una ficha antigua sin obra puede conservarse publicada; no afirmar que ya permite reproducción. Nuevas publicaciones editoriales deben incluir el material autorizado del formato que se pretende ofrecer. Los DTO públicos nunca contienen WorkText o YouTubeId. /api/v1/consumption/content/{slug} exige identidad activa confirmada, acceso vigente y publicación vigente, sin caché compartida. `IsFree` es metadato público y editorial: false por defecto, sin liberar obras existentes. Sólo una obra marcada true puede consumirse con Gratuito. Cambiar la marca actualiza versión y auditoría atómicamente; lectura, inicio, pulso y reintento vuelven a verificarla junto con el acceso. El administrador elige explícitamente la marca; no se deduce de la categoría ni del proveedor YouTube.
 
 ## Añadir un vídeo
 
@@ -22,7 +22,7 @@ El alojamiento en AWS será una modalidad futura. Esta preparación no crea recu
 
 ## Cursos y programas
 
-La categoría Cursos admite CollectionKind course o program y ItemIds ordenados. Un curso referencia obras publicadas utilizables; un programa referencia cursos publicados utilizables. No hay ciclos, referencias duplicadas, grupos dentro de cursos ni programas dentro de programas. Se verifica la disponibilidad de sus descendientes al publicar y al consumir; una retirada impide entregar ese recorrido. No se incluyen exámenes, diplomas o avance pedagógico avanzado en esta entrega. Programas no se convierte en séptima categoría principal.
+La categoría Cursos admite CollectionKind course o program y ItemIds ordenados. Un curso referencia obras publicadas utilizables; un programa referencia cursos publicados utilizables. No hay ciclos, referencias duplicadas, grupos dentro de cursos ni programas dentro de programas. Se verifica la disponibilidad de sus descendientes al publicar y al consumir; una retirada impide entregar ese recorrido. Marcar gratuito un curso o programa no libera sus elementos: cada obra comprueba su propia marca y acceso. No se incluyen exámenes, diplomas o avance pedagógico avanzado en esta entrega. Programas no se convierte en séptima categoría principal.
 
 ## Edición y auditoría
 

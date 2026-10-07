@@ -3,6 +3,7 @@ import { categories, type CategoryId } from './catalog';
 export const identityStatuses = ['active', 'pending', 'disabled'] as const;
 export const catalogStatuses = ['draft', 'published', 'archived'] as const;
 export const subscriptionStatuses = ['active', 'cancelled', 'suspended'] as const;
+export const effectiveSubscriptionStates = ['active', 'scheduled', 'expired', 'cancelled', 'suspended'] as const;
 export const contentKinds = ['work', 'course', 'program'] as const;
 export type ReportCount<K extends string = string> = { key: K; count: number };
 type CurrentReport = { scope: 'current'; generatedUtc: string; total: number };
@@ -25,6 +26,7 @@ export type CatalogReport = CurrentReport & {
 };
 export type SubscriptionReport = CurrentReport & {
   byStatus: ReportCount<(typeof subscriptionStatuses)[number]>[];
+  byEffectiveState: ReportCount<(typeof effectiveSubscriptionStates)[number]>[];
 };
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -132,7 +134,8 @@ export function catalogReportFrom(value: unknown): CatalogReport {
 export function subscriptionReportFrom(value: unknown): SubscriptionReport {
   const current = base(value);
   if (!object(value)) invalid();
-  return { ...current, byStatus: states(value['byStatus'], subscriptionStatuses, current.total) };
+  return { ...current, byStatus: states(value['byStatus'], subscriptionStatuses, current.total),
+    byEffectiveState: states(value['byEffectiveState'], effectiveSubscriptionStates, current.total) };
 }
 export function reportMessage(error: unknown): string {
   if (error instanceof ApiError) {

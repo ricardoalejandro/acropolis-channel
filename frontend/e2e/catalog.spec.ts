@@ -27,6 +27,7 @@ function editable(item: Record<string, unknown>) {
       'summary',
       'body',
       'category',
+      'isFree',
       'coverAsset',
       'durationSeconds',
       'author',
@@ -69,6 +70,7 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     expect((await page.request.get('/api/v1/admin/users')).status()).toBe(403);
     await page.goto('/admin/content');
     await page.getByRole('link', { name: 'Crear contenido', exact: true }).click();
+    await expect(page.getByLabel('Disponible con el plan Gratuito', { exact: true })).not.toBeChecked();
     await page.getByLabel('Título', { exact: true }).fill(title);
     await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
     await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('podcast');
@@ -88,6 +90,7 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
       unknown
     >;
     expect(draft['status']).toBe('draft');
+    expect(draft['isFree']).toBe(false);
     expect((await page.request.put(base + '/' + id, { data: editable(draft) })).status()).toBe(400);
     await page.getByRole('button', { name: 'Publicar contenido', exact: true }).click();
     await page.getByRole('button', { name: 'Confirmar publicación', exact: true }).click();
@@ -193,6 +196,7 @@ test('@catalog real public search, category, pagination and browser history agre
       summary: 'Resumen QA de paginación.',
       body: 'Sinopsis editorial QA sin material restringido.',
       category: 'lecturas',
+      isFree: false,
       coverAsset: 'editorial-reading',
       durationSeconds: null,
     };

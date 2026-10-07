@@ -39,8 +39,8 @@ public sealed record ConsumptionPruneResult(int PulsesDeleted, int SessionsDelet
 public interface IConsumptionRecordingService
 {
     ConsumptionCapabilitiesView GetCapabilities();
-    Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid accountId, string authenticationBindingHash, string slug, StartConsumptionRequest request, CancellationToken token);
-    Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid accountId, string authenticationBindingHash, Guid sessionId, ConsumptionPulseRequest request, CancellationToken token);
+    Task<CatalogResult<ConsumptionSessionView>> StartAsync(Guid accountId, string authenticationBindingHash, string slug, StartConsumptionRequest request, bool allowRestricted, CancellationToken token);
+    Task<CatalogResult<ConsumptionPulseReceipt>> PulseAsync(Guid accountId, string authenticationBindingHash, Guid sessionId, ConsumptionPulseRequest request, bool allowRestricted, CancellationToken token);
 }
 public interface IConsumptionActivityReportService
 {

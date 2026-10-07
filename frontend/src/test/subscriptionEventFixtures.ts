@@ -5,6 +5,8 @@ import type {
 } from '../api/subscriptionEvents';
 export const expectedEventKeys = [
   'activated',
+  'assigned',
+  'renewed',
   'reactivated',
   'cancelled',
   'updated_active_cancelled',

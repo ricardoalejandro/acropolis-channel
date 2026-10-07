@@ -1,8 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams, type SetURLSearchParams } from 'react-router-dom';
 import {
   subscriptions,
   subscriptionMessage,
+  subscriptionPlanLabels,
+  subscriptionStateLabels,
+  subscriptionInstant,
   type Subscription,
   type SubscriptionStatus,
   type SubscriptionAccount,
@@ -10,6 +13,8 @@ import {
 import { hasControlCharacters } from '../../validation/plainText';
 import { useSubscriptionAccounts } from './useSubscriptionAccounts';
 import { SubscriptionAccountPicker } from './AccountPicker';
+import { PlanAssignmentForm } from './SubscriptionPlanAssignment';
+import { useOperationGuard } from '../accounts/useOperationGuard';
 import { SubscriptionAccountName, SubscriptionAccountsNotice } from './SubscriptionAccounts';
 import { useUnsavedChanges } from '../../components/useUnsavedChanges';
 import { useCatalog } from '../catalog/useCatalog';
@@ -75,7 +80,7 @@ function SubscriptionListView({
     <div className="workspace">
       <div className="page-heading">
         <h1>Suscripciones</h1>
-        <p className="lead">Gestiona el acceso gratuito y revisa sus cambios.</p>
+        <p className="lead">Asigna planes, revisa su vigencia y gestiona los cambios de acceso.</p>
       </div>
       <section className="surface">
         <form
@@ -101,6 +106,11 @@ function SubscriptionListView({
                 'Todas las cuentas'
               )}
             </p>
+            {appliedUser && (
+              <Link className="text-link" to={'/admin/subscriptions/accounts/' + appliedUser}>
+                Asignar o renovar plan de esta cuenta
+              </Link>
+            )}
             {appliedUser && (
               <button
                 className="link-button"
@@ -151,13 +161,14 @@ function SubscriptionListView({
                 />
               )}
               {state.data.items.length ? (
-                <div className="table-scroll">
+                <div className="table-scroll" role="region" aria-label="Listado de suscripciones" tabIndex={0}>
                   <table>
                     <thead>
                       <tr>
                         <th>Cuenta</th>
-                        <th>Estado</th>
-                        <th>Activación</th>
+                        <th>Plan</th>
+                        <th>Estado efectivo</th>
+                        <th>Vigencia (hora de Lima)</th>
                         <th>Acciones</th>
                       </tr>
                     </thead>
@@ -173,10 +184,12 @@ function SubscriptionListView({
                               loading={names.loading}
                             />
                           </td>
+                          <td>{subscriptionPlanLabels[item.plan]}</td>
+                          <td><span className="status-badge">{subscriptionStateLabels[item.effectiveState]}</span></td>
                           <td>
-                            <span className="status-badge">{statuses[item.status]}</span>
+                            <time dateTime={item.startsUtc}>{subscriptionInstant(item.startsUtc)}</time>
+                            <span className="table-email">{item.expiresUtc ? 'Hasta ' + subscriptionInstant(item.expiresUtc) : 'Sin vencimiento'}</span>
                           </td>
-                          <td>{new Date(item.activatedUtc).toLocaleDateString('es-PE')}</td>
                           <td>
                             <Link to={'/admin/subscriptions/' + item.id}>
                               Gestionar suscripción
@@ -237,26 +250,34 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
   const [busy, setBusy] = useState(false);
-  useUnsavedChanges(status !== current.status || Boolean(reason));
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planDirty, setPlanDirty] = useState(false);
+  const pending = useRef(false);
+  const operation = useOperationGuard();
+  useUnsavedChanges(status !== current.status || Boolean(reason) || planDirty);
   async function save() {
-    if (busy) return;
+    if (pending.current || planBusy || planDirty) return;
     if (reason.trim().length < 2 || reason.length > 200 || hasControlCharacters(reason)) {
       setError('Escribe un motivo de 2 a 200 caracteres en una sola línea.');
       return;
     }
+    const active = operation.begin();
+    pending.current = true;
     setBusy(true);
     setError('');
     setSaved('');
     try {
       const result = await subscriptions.update(current.id, current.version, status, reason.trim());
+      if (!active()) return;
       setCurrent(result);
       setStatus(result.status);
       setReason('');
       setSaved('Guardamos el estado de la suscripción.');
     } catch (failure) {
-      setError(subscriptionMessage(failure));
+      if (active()) setError(subscriptionMessage(failure));
     } finally {
-      setBusy(false);
+      pending.current = false;
+      if (active()) setBusy(false);
     }
   }
   return (
@@ -270,7 +291,8 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
         unavailable={Boolean(names.error) || !account}
         retry={names.reload}
       />
-      <p>Plan: acceso gratuito, sin vencimiento ni cobros.</p>
+      <p>Plan: {subscriptionPlanLabels[current.plan]} · {subscriptionStateLabels[current.effectiveState]}</p>
+      <p className="field-help">Desde {subscriptionInstant(current.startsUtc)}{current.expiresUtc ? ' hasta ' + subscriptionInstant(current.expiresUtc) : ', sin vencimiento'} (hora de Lima).</p>
       {saved && (
         <p className="success-message" role="status">
           {saved}
@@ -290,6 +312,8 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
           </button>
         </div>
       )}
+      <h2>Estado de la suscripción</h2>
+      {planDirty && <p className="field-help">Termina o descarta los cambios del plan antes de modificar el estado.</p>}
       <form
         className="account-form"
         onSubmit={(event) => {
@@ -303,7 +327,7 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
           <select
             id="managed-status"
             value={status}
-            disabled={busy}
+            disabled={busy || planBusy || planDirty}
             onChange={(event) => setStatus(event.target.value as SubscriptionStatus)}
           >
             {Object.entries(statuses).map(([id, label]) => (
@@ -320,7 +344,7 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
             rows={3}
             maxLength={200}
             value={reason}
-            disabled={busy}
+            disabled={busy || planBusy || planDirty}
             onChange={(event) => setReason(event.target.value)}
           />
           <p className="field-help">
@@ -328,10 +352,14 @@ function SubscriptionEditor({ item, reload }: { item: Subscription; reload: () =
             documentos ni datos sensibles.
           </p>
         </div>
-        <button className="button" disabled={busy} type="submit">
+        <button className="button" disabled={busy || planBusy || planDirty} type="submit">
           {busy ? 'Guardando…' : 'Guardar estado'}
         </button>
       </form>
+      {(status !== current.status || Boolean(reason)) && <p className="field-help">Guarda o descarta el cambio de estado antes de asignar un plan.</p>}
+      <PlanAssignmentForm userId={current.userId} current={current} disabled={busy || status !== current.status || Boolean(reason)}
+        onSaved={(result) => {setCurrent(result);setStatus(result.status);setReason('');setSaved('');}}
+        onDirty={setPlanDirty} onBusy={setPlanBusy} reload={reload} />
       <p className="subscription-audit">
         <Link to={'/admin/audit?module=subscriptions&subscriptionId=' + current.id}>
           Ver historial de esta suscripción

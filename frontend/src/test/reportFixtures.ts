@@ -70,6 +70,13 @@ export const subscriptionReport: SubscriptionReport = {
   scope: 'current',
   generatedUtc: reportTime,
   total: 4,
+  byEffectiveState: [
+    { key: 'active', count: 1 },
+    { key: 'scheduled', count: 1 },
+    { key: 'expired', count: 0 },
+    { key: 'cancelled', count: 1 },
+    { key: 'suspended', count: 1 },
+  ],
   byStatus: [
     { key: 'active', count: 2 },
     { key: 'cancelled', count: 1 },

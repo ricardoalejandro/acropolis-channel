@@ -1,0 +1,63 @@
+.subscription-plans {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+.subscription-plans h2 {
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 25px;
+  margin-bottom: 18px;
+}
+.subscription-plans dl > div,
+.subscription-dates > div {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 18px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.subscription-plans dt,
+.subscription-dates dt {
+  font-weight: 600;
+}
+.subscription-plans dd,
+.subscription-dates dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.subscription-plans > p {
+  max-width: 760px;
+  color: var(--muted);
+  margin-top: 18px;
+}
+.subscription-plan-editor {
+  border-top: 1px solid var(--line);
+  margin-top: 30px;
+  padding-top: 24px;
+}
+.subscription-assignment .subscription-plan-editor {
+  border-top: 0;
+  margin-top: 18px;
+  padding-top: 0;
+}
+.subscription-plan-editor .account-form {
+  max-width: 660px;
+  margin-top: 22px;
+}
+.subscription-period-preview {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  line-height: 1.6;
+}
+.account-directory td:last-child .text-link {
+  display: block;
+  margin-top: 8px;
+}
+@media (max-width: 600px) {
+  .subscription-plans dl > div,
+  .subscription-dates > div {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+}

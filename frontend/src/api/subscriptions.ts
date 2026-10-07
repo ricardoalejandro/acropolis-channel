@@ -1,15 +1,39 @@
 import { ApiError, request } from './identity';
 export type SubscriptionStatus = 'active' | 'cancelled' | 'suspended';
+export type SubscriptionPlan = 'free_beta' | 'probationismo' | 'annual';
+export type SubscriptionEffectiveState = SubscriptionStatus | 'scheduled' | 'expired';
+export const subscriptionPlanLabels: Record<SubscriptionPlan, string> = {
+  free_beta: 'Gratuito',
+  probationismo: 'Probacionismo',
+  annual: 'Anual',
+};
+export const subscriptionStateLabels: Record<SubscriptionEffectiveState, string> = {
+  active: 'Activa',
+  scheduled: 'Programada',
+  expired: 'Vencida',
+  cancelled: 'Cancelada',
+  suspended: 'Suspendida',
+};
+const limaInstant = new Intl.DateTimeFormat('es-PE', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'America/Lima',
+});
+export function subscriptionInstant(value: string) {
+  return limaInstant.format(new Date(value));
+}
 export type Subscription = {
   id: string;
   userId: string;
-  plan: 'free_beta';
+  plan: SubscriptionPlan;
   status: SubscriptionStatus;
   createdUtc: string;
   activatedUtc: string;
+  startsUtc: string;
+  effectiveState: SubscriptionEffectiveState;
   updatedUtc: string;
   cancelledUtc: string | null;
-  expiresUtc: null;
+  expiresUtc: string | null;
   version: string;
 };
 export type SubscriptionMe = { subscription: Subscription | null; eligibleToActivate: boolean };
@@ -21,6 +45,12 @@ export type SubscriptionAudit = {
   action: string;
   beforeStatus: string | null;
   afterStatus: string;
+  beforePlan: SubscriptionPlan | null;
+  afterPlan: SubscriptionPlan | null;
+  beforeStartsUtc: string | null;
+  afterStartsUtc: string | null;
+  beforeExpiresUtc: string | null;
+  afterExpiresUtc: string | null;
   reason: string;
   createdUtc: string;
 };
@@ -45,11 +75,18 @@ export function subscriptionFrom(value: unknown): Subscription {
   if (
     !object(value) ||
     !['id', 'userId', 'version'].every((key) => typeof value[key] === 'string' && value[key]) ||
-    value['plan'] !== 'free_beta' ||
+    !Object.hasOwn(subscriptionPlanLabels, String(value['plan'])) ||
     !['active', 'cancelled', 'suspended'].includes(String(value['status'])) ||
-    !['createdUtc', 'activatedUtc', 'updatedUtc'].every((key) => date(value[key])) ||
+    !['createdUtc', 'activatedUtc', 'startsUtc', 'updatedUtc'].every((key) => date(value[key])) ||
+    !Object.hasOwn(subscriptionStateLabels, String(value['effectiveState'])) ||
+    (value['status'] !== 'active' && value['effectiveState'] !== value['status']) ||
+    (value['status'] === 'active' &&
+      !['active', 'scheduled', 'expired'].includes(String(value['effectiveState']))) ||
     !(value['cancelledUtc'] === null || date(value['cancelledUtc'])) ||
-    value['expiresUtc'] !== null
+    !(value['plan'] === 'free_beta'
+      ? value['expiresUtc'] === null
+      : date(value['expiresUtc']) &&
+        Date.parse(value['expiresUtc'] as string) > Date.parse(value['startsUtc'] as string))
   )
     invalid();
   return value as Subscription;
@@ -68,7 +105,13 @@ function auditFrom(value: unknown): SubscriptionAudit {
       (key) => typeof value[key] === 'string',
     ) ||
     !(value['beforeStatus'] === null || typeof value['beforeStatus'] === 'string') ||
-    !date(value['createdUtc'])
+    !date(value['createdUtc']) ||
+    !['beforePlan', 'afterPlan'].every(
+      (key) => value[key] === null || Object.hasOwn(subscriptionPlanLabels, String(value[key])),
+    ) ||
+    !['beforeStartsUtc', 'afterStartsUtc', 'beforeExpiresUtc', 'afterExpiresUtc'].every(
+      (key) => value[key] === null || date(value[key]),
+    )
   )
     invalid();
   return value as SubscriptionAudit;
@@ -121,7 +164,14 @@ export function subscriptionMessage(error: unknown): string {
   const messages: Record<string, string> = {
     subscription_suspended:
       'La suscripción está suspendida. Contacta con Nueva Acrópolis para revisar tu acceso.',
-    subscription_required: 'Activa tu suscripción gratuita para acceder a esta obra.',
+    subscription_required: 'Necesitas una suscripción vigente para acceder a esta obra. Revisa tu plan y sus fechas de acceso.',
+    plan_change_requires_manager: 'Para cambiar o renovar este plan, contacta con Nueva Acrópolis.',
+    content_requires_plan:
+      'Esta obra requiere Probacionismo o Anual. El plan Gratuito incluye las obras marcadas como gratuitas.',
+    active_period_would_be_replaced:
+      'Ese período futuro sustituiría el acceso actual. Usa Renovar plan actual para conservar su continuidad, o revisa la fecha de inicio.',
+    account_not_active: 'La cuenta debe estar activa y tener el correo confirmado.',
+    owner_protected: 'El acceso del propietario requiere su autorización.',
     email_confirmation_required: 'Confirma tu correo antes de activar la suscripción gratuita.',
     concurrency_conflict: 'Esta suscripción cambió. Recarga los datos antes de continuar.',
   };
@@ -172,6 +222,19 @@ export const subscriptions = {
         '/admin/subscriptions/' + encodeURIComponent(id),
         { version, status, reason },
         'PATCH',
+      ),
+    ),
+  assign: async (
+    userId: string,
+    plan: SubscriptionPlan,
+    startsUtc: string | null,
+    version: string | null,
+    reason: string,
+  ) =>
+    subscriptionFrom(
+      await request(
+        '/admin/subscriptions/accounts/' + encodeURIComponent(userId) + '/assign',
+        { plan, startsUtc, version, reason },
       ),
     ),
   audit: async (subscriptionId = '', page = 1) =>

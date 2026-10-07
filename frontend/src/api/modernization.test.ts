@@ -20,6 +20,8 @@ const sub = {
   status: 'active',
   createdUtc: now,
   activatedUtc: now,
+  startsUtc: now,
+  effectiveState: 'active',
   updatedUtc: now,
   cancelledUtc: null,
   expiresUtc: null,
@@ -30,6 +32,7 @@ const summary = {
   slug: 'lectura',
   title: 'Lectura',
   category: 'lecturas',
+  isFree: true,
   summary: 'Pública',
   coverAsset: null,
   durationSeconds: null,
@@ -141,6 +144,12 @@ describe('Free subscription contracts', () => {
       action: 'subscription.activated',
       beforeStatus: null,
       afterStatus: 'active',
+      beforePlan: null,
+      afterPlan: 'free_beta',
+      beforeStartsUtc: null,
+      afterStartsUtc: now,
+      beforeExpiresUtc: null,
+      afterExpiresUtc: null,
       reason: '',
       createdUtc: now,
     };
@@ -245,6 +254,7 @@ describe('Protected work and editorial contracts', () => {
       summary: summary.summary,
       body: 'Pública',
       category: 'lecturas' as const,
+      isFree: true,
       coverAsset: null,
       durationSeconds: null,
       author: 'Autora',
@@ -521,4 +531,50 @@ describe('authorized work version binding', () => {
       expect(() => workFrom({ ...work, version })).toThrow(ApiError);
     },
   );
+});
+
+describe('Manual plan and effective access contracts', () => {
+  const full = { ...sub, plan: 'probationismo', expiresUtc: '2027-01-06T12:00:00Z' };
+  it.each(['active', 'scheduled', 'expired'])('reads a full plan with server-derived %s access', (effectiveState) => {
+    expect(subscriptionFrom({ ...full, effectiveState })).toMatchObject({ plan: 'probationismo', effectiveState, startsUtc: now });
+    expect(subscriptionFrom({ ...full, plan: 'annual', effectiveState, expiresUtc: '2027-10-06T12:00:00Z' }).plan).toBe('annual');
+  });
+  it.each([
+    { ...full, startsUtc: undefined }, { ...full, startsUtc: 'bad' },
+    { ...full, expiresUtc: null }, { ...full, expiresUtc: now },
+    { ...full, effectiveState: undefined }, { ...full, effectiveState: 'unknown' },
+    { ...full, status: 'suspended', effectiveState: 'active' },
+    { ...sub, effectiveState: 'cancelled' },
+  ])('rejects a broken plan or contradictory effective state %#', (value) => {
+    expect(() => subscriptionFrom(value)).toThrow(ApiError);
+  });
+  it('uses the account route, explicit null Free start and current version under CSRF', async () => {
+    const fetch = mock(sub);
+    await subscriptions.assign('person/one', 'free_beta', null, null, 'Asignación inicial');
+    await subscriptions.assign('person/one', 'annual', '2026-10-07T14:30:00Z', 'exact-version', 'Período autorizado');
+    const mutations = fetch.mock.calls.filter(([, init]) => init?.body);
+    expect(mutations).toHaveLength(2);
+    expect(mutations.map(([url]) => url)).toEqual(['/api/v1/admin/subscriptions/accounts/person%2Fone/assign', '/api/v1/admin/subscriptions/accounts/person%2Fone/assign']);
+    expect(mutations.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { plan: 'free_beta', startsUtc: null, version: null, reason: 'Asignación inicial' },
+      { plan: 'annual', startsUtc: '2026-10-07T14:30:00Z', version: 'exact-version', reason: 'Período autorizado' },
+    ]);
+    for (const [, init] of mutations) {
+      expect(init?.method).toBe('POST');expect(init?.headers).toMatchObject({ 'X-CSRF-TOKEN': 'csrf' });
+    }
+  });
+  it('preserves nullable historical audit fields and presents new plan periods in Lima without private details', async () => {
+    const row = { id: 'event', subscriptionId: 'sub', userId: 'person', actorId: 'actor', action: 'subscription.renewed', beforeStatus: 'active', afterStatus: 'active', beforePlan: 'probationismo', afterPlan: 'probationismo', beforeStartsUtc: now, afterStartsUtc: now, beforeExpiresUtc: '2027-01-06T12:00:00Z', afterExpiresUtc: '2027-04-06T12:00:00Z', reason: 'Renovación autorizada', createdUtc: now };
+    mock(page([row]));expect((await subscriptions.audit()).items[0]).toEqual(row);
+    const description = auditPageFrom(page([row]), 'subscriptions').items[0]!.description;
+    expect(description).toContain('Probacionismo');expect(description).toContain('hora de Lima');expect(description).toContain('Renovación autorizada');
+    const historical = { ...row, beforePlan: null, afterPlan: null, beforeStartsUtc: null, afterStartsUtc: null, beforeExpiresUtc: null, afterExpiresUtc: null };
+    mock(page([historical]));expect((await subscriptions.audit()).items[0]).toEqual(historical);
+    expect(auditPageFrom(page([historical]), 'subscriptions').items[0]!.description).not.toContain('sin vencimiento');
+  });
+  it('describes a real free-access editorial change without inferring absent history', () => {
+    const row = { id: 'event', actorId: 'actor', contentId: 'work', action: 'content.updated', createdUtc: now, changes: JSON.stringify({ status: 'draft', before: { isFree: false }, isFree: true }) };
+    expect(auditPageFrom(page([row]), 'content').items[0]!.description).toContain('acceso gratuito');
+    expect(auditPageFrom(page([{ ...row, changes: JSON.stringify({ status: 'draft', before: {} }) }]), 'content').items[0]!.description).not.toContain('acceso gratuito');
+  });
 });

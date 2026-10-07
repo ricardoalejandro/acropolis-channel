@@ -4,6 +4,7 @@ import { useSession } from '../../auth/useSession';
 import { ApiError } from '../../api/identity';
 import { catalog, type ContentDetail } from '../../api/catalog';
 import { consumption, type ContentWork } from '../../api/consumption';
+import { subscriptionMessage } from '../../api/subscriptions';
 import { useConsumptionRecording } from './useConsumptionRecording';
 import { useCatalog } from './useCatalog';
 import { CatalogState } from './Catalog';
@@ -20,6 +21,7 @@ export function CollectionItems({ item }: { item: ContentDetail }) {
           <li key={child.id}>
             <Link
               aria-label={child.author ? child.title + ' · ' + child.author : child.title}
+              aria-describedby={child.isFree ? 'collection-free-' + child.id : undefined}
               to={
                 '/content/' +
                 encodeURIComponent(child.slug) +
@@ -29,6 +31,7 @@ export function CollectionItems({ item }: { item: ContentDetail }) {
             >
               <span>{child.title}</span>
               {child.author && <small>{child.author}</small>}
+              {child.isFree && <small id={'collection-free-' + child.id}>Gratuito</small>}
             </Link>
           </li>
         ))}
@@ -43,7 +46,11 @@ export function WorkAccess({ item }: { item: ContentDetail }) {
   ) : !user ? (
     <section className="work-gate">
       <h2>Accede a la obra completa.</h2>
-      <p>Crea una cuenta y activa tu suscripción gratuita para leer y reproducir los contenidos.</p>
+      <p>
+        {item.isFree
+          ? 'Crea una cuenta, confirma tu correo y activa el plan Gratuito para acceder a esta obra.'
+          : 'Crea una cuenta y consulta los planes Probacionismo y Anual para acceder a esta obra.'}
+      </p>
       <div className="subscription-actions">
         <Link className="button" to="/login" state={{ returnTo: '/content/' + item.slug }}>
           Ingresar
@@ -63,16 +70,21 @@ function AuthorizedWork({ item }: { item: ContentDetail }) {
   if (state.failure instanceof ApiError && state.failure.status === 403)
     return (
       <section className="work-gate">
-        <h2>Activa tu acceso gratuito.</h2>
+        <h2>
+          {state.failure.code === 'content_requires_plan'
+            ? 'Esta obra requiere otro plan.'
+            : state.failure.code === 'subscription_suspended'
+              ? 'Tu acceso está suspendido.'
+              : 'Revisa tu suscripción.'}
+        </h2>
         <p>
-          Durante esta etapa, el acceso es gratuito. Más adelante se introducirán planes de pago;
-          cualquier contratación requerirá tu aceptación.
+          {subscriptionMessage(state.failure)}
         </p>
         <Link
           className="button"
           to={'/profile/subscription?content=' + encodeURIComponent(item.slug)}
         >
-          Suscribirme gratis
+          Ver mi suscripción
         </Link>
       </section>
     );

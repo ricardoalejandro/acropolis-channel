@@ -125,6 +125,7 @@ test('@modernization Topics are maintained, assigned and filtered with real pers
   const title = 'Lectura QA ' + suffix;
   const slug = 'lectura-tema-qa-' + suffix;
   await page.goto('/admin/content/new');
+  await expect(page.getByLabel('Disponible con el plan Gratuito', { exact: true })).not.toBeChecked();
   await page.getByLabel('Título', { exact: true }).fill(title);
   await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
   await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('lecturas');
@@ -178,12 +179,14 @@ test('@modernization Topics are maintained, assigned and filtered with real pers
   expect(writes).toEqual(beforeReload);
   const actual = (await (await page.request.get(contentPath)).json()) as {
     category: string;
+    isFree: boolean;
     tags: string[];
     workText: string;
     version: string;
   };
   expect(actual).toMatchObject({
     category: 'lecturas',
+    isFree: false,
     tags: ['etiqueta libre QA'],
     workText: 'Obra privada sintética separada de los temas.',
     version: assignment.contentVersion,
