@@ -1394,7 +1394,10 @@ describe('Explicit free works and effective plan access', () => {
           ? json({ subscription: full, eligibleToActivate: false })
           : undefined,
       );
-      await screen.findByRole('heading', { name: 'Anual', level: 2 });
+      const planHeading = await screen.findByRole('heading', { name: 'Anual', level: 2 });
+      const planSection = planHeading.closest('section');
+      expect(planSection).not.toBeNull();
+      const planSummary = within(planSection!);
       expect(document.querySelector('time[datetime="2027-10-06T12:00:00Z"]')).toBeVisible();
       expect(
         screen.getByText(
@@ -1402,7 +1405,10 @@ describe('Explicit free works and effective plan access', () => {
         ),
       ).toBeVisible();
       expect(screen.queryByRole('button', { name: 'Suscribirme gratis' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: 'Explorar la mediateca' })).not.toBeInTheDocument();
+      expect(planSummary.queryByRole('link', { name: 'Explorar la mediateca' })).not.toBeInTheDocument();
+      expect(
+        within(screen.getByRole('contentinfo')).getByRole('link', { name: 'Explorar la mediateca' }),
+      ).toHaveAttribute('href', '/explore');
       expect(writes(fetch, '/subscriptions/activate')).toHaveLength(0);
     },
   );
@@ -1660,7 +1666,10 @@ describe('Manual plan assignment is reviewed, versioned and recoverable', () => 
   });
   it('requires the subscription permission on the assignment route before making a lookup or write', async () => {
     const fetch = mount(route, { ...user, permissions: ['Content.Manage'] }, undefined, true);
-    await screen.findByRole('alert');
+    expect(
+      await screen.findByRole('heading', { name: 'Este espacio requiere autorización.', level: 1 }),
+    ).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Ir a mi perfil' })).toHaveAttribute('href', '/profile');
     expect(fetch.mock.calls.some(([path]) => String(path).includes('/admin/subscriptions'))).toBe(
       false,
     );

@@ -313,7 +313,7 @@ describe('authorized work boundary before recording', () => {
         </MemoryRouter>,
       );
     });
-    await screen.findByRole('heading', { name: 'Activa tu acceso gratuito.' });
+    await screen.findByRole('heading', { name: 'Revisa tu suscripción.' });
     expect(fetch).toHaveBeenCalledOnce();
     expect(String(fetch.mock.calls[0]?.[0])).toContain('/consumption/content/lectura-real');
     expect(tick).toBeUndefined();

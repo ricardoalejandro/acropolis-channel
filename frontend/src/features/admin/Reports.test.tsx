@@ -281,6 +281,7 @@ describe('Operational reports with real HTTP-shaped responses', () => {
         ...subscriptionReport,
         total: 0,
         byStatus: subscriptionReport.byStatus.map((row) => ({ ...row, count: 0 })),
+        byEffectiveState: subscriptionReport.byEffectiveState.map((row) => ({ ...row, count: 0 })),
       });
     });
     const subscriptions = await waitFor(
@@ -308,6 +309,11 @@ describe('Operational reports with real HTTP-shaped responses', () => {
     );
     expect(within(subscriptions).getByText('0', { selector: 'dd' })).toBeVisible();
     expect(within(subscriptions).getByRole('row', { name: 'Activas 0' })).toBeVisible();
+    const effective = table('Acceso por vigencia');
+    expect(within(effective).getAllByRole('row')).toHaveLength(6);
+    for (const label of ['Vigentes', 'Programadas', 'Vencidas', 'Canceladas', 'Suspendidas'])
+      expect(within(effective).getByRole('row', { name: label + ' 0' })).toBeVisible();
+    expect(within(subscriptions).queryByRole('alert')).not.toBeInTheDocument();
     expect(calls(fetch, 'subscriptions')).toHaveLength(2);
   }, 10000);
   it('blocks duplicate refreshes while pending and applies new real totals without refreshing another panel', async () => {

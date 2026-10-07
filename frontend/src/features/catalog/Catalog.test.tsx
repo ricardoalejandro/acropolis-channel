@@ -143,8 +143,8 @@ describe('Published catalogue journeys', () => {
     await screen.findByRole('heading', { name: publishedContent.title, level: 1 });
     expect(screen.getByText('<script>window.secret = true</script>')).toBeInTheDocument();
     expect(document.querySelector('main script')).toBeNull();
-    await screen.findByRole('heading', { name: 'Activa tu acceso gratuito.' });
-    expect(screen.getByRole('link', { name: 'Suscribirme gratis' })).toHaveAttribute(
+    await screen.findByRole('heading', { name: 'Revisa tu suscripción.' });
+    expect(screen.getByRole('link', { name: 'Ver mi suscripción' })).toHaveAttribute(
       'href',
       '/profile/subscription?content=filosofia-vida',
     );
@@ -238,6 +238,9 @@ describe('Editorial administration and concurrency', () => {
   it('creates only a draft with allowed metadata and no publishing request', async () => {
     const fetch = mount('/admin/content/new');
     await screen.findByLabelText('Título');
+    expect(
+      screen.getByRole('checkbox', { name: 'Disponible con el plan Gratuito' }),
+    ).not.toBeChecked();
     fill('Título', 'Una nueva idea');
     fill('Dirección del contenido', 'una-nueva-idea');
     fireEvent.change(screen.getByLabelText('Categoría del contenido'), {
@@ -259,6 +262,7 @@ describe('Editorial administration and concurrency', () => {
       title: 'Una nueva idea',
       slug: 'una-nueva-idea',
       category: 'podcast',
+      isFree: false,
       coverAsset: 'editorial-podcast',
       durationSeconds: 120,
       summary: 'Resumen editorial',
@@ -389,6 +393,7 @@ describe('Editorial administration and concurrency', () => {
         'collectionKind',
         'coverAsset',
         'durationSeconds',
+        'isFree',
         'itemIds',
         'slug',
         'status',
@@ -399,6 +404,7 @@ describe('Editorial administration and concurrency', () => {
         'workText',
         'youTubeId',
       ]);
+      expect(JSON.parse(String(options?.body))).toMatchObject({ isFree: true });
     }
   }, 10000);
 });

@@ -33,14 +33,27 @@ describe('Current operational report contracts', () => {
     expect(catalogReportFrom(catalogReport).byKindAndStatus).toHaveLength(9);
   });
   it('preserves empty-state counts and accepts UTC offset and subsecond precision from .NET', () => {
-    expect(
-      subscriptionReportFrom({
-        ...subscriptionReport,
-        total: 0,
-        generatedUtc: '2026-10-06T12:00:00.1234567+00:00',
-        byStatus: subscriptionReport.byStatus.map((row) => ({ ...row, count: 0 })),
-      }).total,
-    ).toBe(0);
+    const empty = subscriptionReportFrom({
+      ...subscriptionReport,
+      total: 0,
+      generatedUtc: '2026-10-06T12:00:00.1234567+00:00',
+      byStatus: subscriptionReport.byStatus.map((row) => ({ ...row, count: 0 })),
+      byEffectiveState: subscriptionReport.byEffectiveState.map((row) => ({ ...row, count: 0 })),
+    });
+    expect(empty.total).toBe(0);
+    expect(empty.generatedUtc).toBe('2026-10-06T12:00:00.1234567+00:00');
+    expect(empty.byStatus).toEqual([
+      { key: 'active', count: 0 },
+      { key: 'cancelled', count: 0 },
+      { key: 'suspended', count: 0 },
+    ]);
+    expect(empty.byEffectiveState).toEqual([
+      { key: 'active', count: 0 },
+      { key: 'scheduled', count: 0 },
+      { key: 'expired', count: 0 },
+      { key: 'cancelled', count: 0 },
+      { key: 'suspended', count: 0 },
+    ]);
   });
   it.each([
     null,
