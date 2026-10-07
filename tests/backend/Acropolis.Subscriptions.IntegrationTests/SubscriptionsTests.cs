@@ -78,11 +78,38 @@ public sealed class SubscriptionsTests(IdentityFixture database)
         Assert.Equal(suspended.Version, same.Version);
         var resumed = (await (await Write(admin, HttpMethod.Patch, $"/api/v1/admin/subscriptions/{row.Id}", new AdminSubscriptionRequest(suspended.Version, "active", "Revisión completada"), token)).Content.ReadFromJsonAsync<SubscriptionView>(token))!;
         Assert.Equal("active", resumed.Status); Assert.Null(resumed.CancelledUtc);
+        // The preceding events deliberately tie; the final change must be strictly newer for this page assertion.
+        api.Clock.Advance(TimeSpan.FromSeconds(1));
         var administrativeCancellation = (await (await Write(admin, HttpMethod.Patch, $"/api/v1/admin/subscriptions/{row.Id}", new AdminSubscriptionRequest(resumed.Version, "cancelled", "Cancelación administrativa"), token)).Content.ReadFromJsonAsync<SubscriptionView>(token))!;
         Assert.Equal("cancelled", administrativeCancellation.Status); Assert.NotNull(administrativeCancellation.CancelledUtc);
         Assert.Equal(1, (await admin.GetFromJsonAsync<SubscriptionPage>("/api/v1/admin/subscriptions", token))!.Total);
         var audit = (await admin.GetFromJsonAsync<SubscriptionAuditPage>($"/api/v1/admin/subscriptions/audit?subscriptionId={row.Id}&userId={user.Id}&fromUtc=2000-01-01T00%3A00%3A00Z&toUtc=2099-01-01T00%3A00%3A00Z&pageSize=2", token))!;
         Assert.Equal(6, audit.Total); Assert.Equal(2, audit.Items.Length); Assert.Contains(audit.Items, x => x.Action == "subscription.updated");
+        Assert.Equal("subscription.updated", audit.Items[0].Action);
+        Assert.Equal("active", audit.Items[0].BeforeStatus); Assert.Equal("cancelled", audit.Items[0].AfterStatus);
+        Assert.Equal(1, audit.Page); Assert.Equal(2, audit.PageSize);
+        var events = audit.Items.ToList();
+        for (var page = 2; page <= 3; page++)
+        {
+            var next = (await admin.GetFromJsonAsync<SubscriptionAuditPage>($"/api/v1/admin/subscriptions/audit?subscriptionId={row.Id}&userId={user.Id}&fromUtc=2000-01-01T00%3A00%3A00Z&toUtc=2099-01-01T00%3A00%3A00Z&pageSize=2&page={page}", token))!;
+            Assert.Equal(6, next.Total); Assert.Equal(2, next.Items.Length);
+            Assert.Equal(page, next.Page); Assert.Equal(2, next.PageSize);
+            events.AddRange(next.Items);
+        }
+        Assert.Equal(6, events.Count); Assert.Equal(6, events.Select(x => x.Id).Distinct().Count());
+        Assert.Contains(events, x => x.Action == "subscription.activated" && x.BeforeStatus is null && x.AfterStatus == "active");
+        Assert.Contains(events, x => x.Action == "subscription.cancelled" && x.BeforeStatus == "active" && x.AfterStatus == "cancelled");
+        Assert.Contains(events, x => x.Action == "subscription.reactivated" && x.BeforeStatus == "cancelled" && x.AfterStatus == "active");
+        Assert.Contains(events, x => x.Action == "subscription.updated" && x.BeforeStatus == "active" && x.AfterStatus == "suspended");
+        Assert.Contains(events, x => x.Action == "subscription.updated" && x.BeforeStatus == "suspended" && x.AfterStatus == "active");
+        Assert.Contains(events, x => x.Action == "subscription.updated" && x.BeforeStatus == "active" && x.AfterStatus == "cancelled");
+        var tiedUtc = events[1].CreatedUtc;
+        Assert.All(events.Skip(1), item => Assert.Equal(tiedUtc, item.CreatedUtc));
+        Assert.Equal(TimeSpan.FromSeconds(1), events[0].CreatedUtc - tiedUtc);
+        // Canonical UUID hex follows PostgreSQL byte ordering; Guid.CompareTo does not express that contract.
+        var orderedIds = events.OrderByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id.ToString("N"), StringComparer.Ordinal).Select(x => x.Id);
+        Assert.Equal(orderedIds, events.Select(x => x.Id));
         Assert.Single((await admin.GetFromJsonAsync<SubscriptionAuditPage>("/api/v1/admin/subscriptions/audit?action=subscription.activated", token))!.Items);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/v1/admin/subscriptions/audit?action=unknown", token)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/v1/admin/subscriptions/audit?fromUtc=2027-01-01T00%3A00%3A00Z&toUtc=2026-01-01T00%3A00%3A00Z", token)).StatusCode);
