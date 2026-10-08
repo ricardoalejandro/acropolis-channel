@@ -61,7 +61,7 @@ El target preview contiene el prototipo separado. Los targets sdk, node, playwri
 
 QA crea CA, correo SMTP, bases y redes exclusivos de cada ejecución. El candidato usa configuración Production, TLS real y las mismas imágenes que se podrán desplegar. No se conectan los tests a Traefik, al socket Docker ni a datos productivos.
 
-Sólo los pagos están aplazados por indicación del propietario. La integración institucional y la facturación electrónica están solicitadas y requieren identificar sus contratos reales; consultar `modernization-scope.md`. El consumo actual coordina contratos públicos de Identity, Subscriptions y Catalog en el host, sin consultar tablas privadas entre módulos. Un nivel institucional no debe convertirse implícitamente en una suscripción ni en un rol administrativo. Cada proceso nuevo requiere reglas, límites, errores, idempotencia cuando corresponda y pruebas por nivel.
+Por indicación vigente del propietario, pagos, facturación electrónica, integración institucional/intranet, migración del legado, WhatsApp y gestión comercial pasan a fases posteriores. Sus requisitos y contratos pendientes se conservan; finalizar y validar el incremento actual para el despliegue autorizado, conforme a `modernization-scope.md`. El consumo actual coordina contratos públicos de Identity, Subscriptions y Catalog en el host, sin consultar tablas privadas entre módulos. Un nivel institucional no debe convertirse implícitamente en una suscripción ni en un rol administrativo. Cada proceso nuevo requiere reglas, límites, errores, idempotencia cuando corresponda y pruebas por nivel.
 
 
 ## Catálogo editorial y disponibilidad del correo

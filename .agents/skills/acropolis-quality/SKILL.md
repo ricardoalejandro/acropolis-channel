@@ -11,7 +11,7 @@ Leer `AGENTS.md`, `docs/architecture.md`, `docs/quality.md` y el documento del m
 
 Retomar desde `.local/continuation-current.md` y comprobar Git/runtime. Conservar trabajo existente y sincronizar ff-only cuando sea compatible. Las instrucciones locales sólo cargan esta versión canónica; actualizar reglas completas aquí.
 
-Backend modular .NET 10/EF 10/Npgsql, React 19/TypeScript/Vite, PostgreSQL 18. Usar SDK 10/Node 22 en Docker y conservar Node 20 host. Los módulos actuales son Platform, Identity, Catalog y Subscriptions; no añadir módulos de negocio sin contrato real. La mediateca incluye YouTube oficial y lecturas completas. Gratuito permite sólo obras marcadas gratuitas; Probacionismo dura tres meses naturales y Anual un año, con asignación y renovación manual auditada. Leer `docs/modernization-scope.md` para los procesos solicitados y sus pendientes; sólo los pagos están aplazados. No convertir el estado WIP en aprobación de reglas de planes ni en exclusión de facturación, AWS o integración institucional.
+Backend modular .NET 10/EF 10/Npgsql, React 19/TypeScript/Vite, PostgreSQL 18. Usar SDK 10/Node 22 en Docker y conservar Node 20 host. Los módulos actuales son Platform, Identity, Catalog y Subscriptions; no añadir módulos de negocio sin contrato real. La mediateca incluye YouTube oficial y lecturas completas. Gratuito permite sólo obras marcadas gratuitas; Probacionismo dura tres meses naturales y Anual un año, con asignación y renovación manual auditada. Leer `docs/modernization-scope.md`: el propietario pidió finalizar el incremento actual y desplegarlo tras validar; pagos, facturación, intranet/acceso institucional, migración del legado, WhatsApp y gestión comercial se retoman en fases posteriores. AWS permanece futuro. Conservar esos requisitos y sus contratos pendientes, sin inventarlos ni presentar WIP como QA aprobada.
 
 ## Desarrollo y pruebas
 
@@ -49,4 +49,4 @@ Leer `docs/identity-operations.md`, `docs/mfa-operations.md` y `docs/catalog-ope
 
 Informar sólo resultados comprobados, actualizar continuidad privada y conservar capturas seguras. Las 100.000 cuentas son una meta de capacidad: no precargar producción ni añadir semillas al arranque o migraciones. Los datos sintéticos masivos existen sólo en bases temporales de QA que se eliminan al cerrar. Las mediciones de 100.000 cuentas/10.000 fichas con 50 sesiones/lectores son limitadas; no acreditan 1.000 concurrentes ni reproducción AWS. Si una política impide navegador público, no eludirla y distinguir QA de la inspección pública faltante.
 
-Para un despliegue solicitado aplicar la [skill de despliegue](../acropolis-vps-deploy/SKILL.md). QA y push no autorizan por sí solos cambiar producción.
+Para el despliegue actual autorizado aplicar la [skill de despliegue](../acropolis-vps-deploy/SKILL.md) y las precondiciones vigentes; la autorización está registrada en `AGENTS.md`. QA y push no autorizan por sí solos otras publicaciones.

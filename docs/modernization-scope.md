@@ -1,6 +1,6 @@
 # Entrega de mediateca y backoffice
 
-El alcance de referencia es «Proyecto: Acrópolis Channel v1.0.0» (15 páginas), junto con las indicaciones vigentes del propietario. La entrega solicitada incluye los procesos necesarios para sustituir el sistema anterior; **sólo los pagos están aplazados**. Esta descripción refleja el código integrado en el checkout y sus pendientes de validación y entrega. No declara aprobadas nuevas reglas de negocio, certificadas las imágenes, completa la entrega ni autorizado un despliegue.
+El alcance de referencia es «Proyecto: Acrópolis Channel v1.0.0» (15 páginas), junto con las indicaciones vigentes del propietario. La decisión actual es **finalizar el incremento existente y desplegarlo al concluir su validación**. Pagos, facturación electrónica, validación institucional/intranet, migración del legado, WhatsApp y gestión comercial (órdenes, cupones y filiales) pasan a fases posteriores; AWS permanece una modalidad futura. Los requisitos se conservan, sin eliminarlos del proyecto ni inventar sus contratos. Esta autorización no acredita QA aprobada, imágenes certificadas, despliegue realizado ni sustitución completa del sistema anterior.
 
 La validación definitiva corresponde al gate completo sobre el commit limpio y a sus informes. La existencia de código, pruebas preparadas o diagnósticos de una fuente anterior no demuestra que los recorridos de esta fuente hayan pasado.
 
@@ -18,7 +18,7 @@ Se conservan los seis formatos del sitio oficial: Lecturas, Documentales, Videos
 
 La primera modalidad audiovisual elegida es **YouTube**. El editor acepta URL HTTPS o identificador válido y almacena únicamente el identificador. El usuario inicia la reproducción mediante el reproductor oficial. Un vídeo público en YouTube sigue accesible en su origen; el acceso del portal no demuestra exclusividad de ese recurso. No se extrae audio para convertir un vídeo en podcast.
 
-Pendiente: validar recorridos reales de lectura, reproducción, retiro de publicaciones y cursos/programas en escritorio y móvil. El acceso por nivel institucional requiere las reglas que aún debe confirmar el propietario (pp. 5, 8, 10, 13). AWS es una segunda modalidad futura, más completa; S3 y CloudFront todavía no están configurados. No bloquea esta fase YouTube ni habilita recursos o costos por sí sola.
+Pendiente: validar recorridos reales de lectura, reproducción, retiro de publicaciones y cursos/programas en escritorio y móvil. El acceso por nivel institucional pasa a una fase posterior y requiere reglas confirmadas antes de implementarlo (pp. 5, 8, 10, 13). AWS es una segunda modalidad futura, más completa; S3 y CloudFront todavía no están configurados. No bloquea esta fase YouTube ni habilita recursos o costos por sí sola.
 
 ## Temas y organización editorial
 
@@ -48,34 +48,34 @@ Las métricas describen **observaciones aceptadas**, cobertura registrada y tiem
 
 El reporte general exige `Content.Manage` y MFA. El detalle de una cuenta exige conjuntamente `Users.Manage`, `Content.Manage` y MFA. Las respuestas son `no-store` y evitan correos, material privado y referencias multimedia. El seguimiento está deshabilitado por defecto: la política aprobada no activa su grabación en producción.
 
-Pendiente: ejecutar las pruebas preparadas de reglas, transacciones, replay, retención, autorización, interfaz y recorrido real; comprobar restauración, accesibilidad y etiquetas de disponibilidad. Objetivos por filial, atribución y analítica avanzada no están implementados (pp. 9, 10, 13).
+Pendiente: ejecutar las pruebas preparadas de reglas, transacciones, replay, retención, autorización, interfaz y recorrido real; comprobar restauración, accesibilidad y etiquetas de disponibilidad. Objetivos por filial y atribución se retoman en fases posteriores; la analítica avanzada conserva su secuencia de evolución (pp. 9, 10, 13).
 
 ## Validación institucional
 
 Los niveles y controles de seguridad actuales no sustituyen la validación periódica de miembros ni la sincronización con intranet. La revalidación tras restauración protege credenciales y sesiones; no confirma membresía institucional.
 
-Pendiente: identificar la intranet, su contrato y la regla de acceso por nivel; implementar la sincronización y sus fallos sin convertir un nivel en permiso administrativo o suscripción implícita (pp. 6, 8, 10).
+Fase posterior autorizada: identificar la intranet, su contrato y la regla de acceso por nivel; implementar la sincronización y sus fallos sin convertir un nivel en permiso administrativo o suscripción implícita (pp. 6, 8, 10). No bloquea la entrega del incremento actual.
 
 ## Correo y comunicaciones
 
 Acrópolis conserva su cliente SMTP y mensajes de confirmación y recuperación. La disponibilidad efectiva depende de sus guardas y del runtime activo. El servicio de correo Naperu mantiene fuente y runtime independientes. Las pruebas nuevas usan únicamente correo y cuentas sintéticas aisladas.
 
-El propietario confirmó avisos transaccionales al titular por asignación manual, renovación manual y durante los siete días previos al vencimiento, sin marketing. La implementación está preparada y permanece desactivada; su validación y activación están pendientes. Leer [operación de suscripciones](subscriptions-operations.md). WhatsApp requiere concretar contrato, consentimiento e integración. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
+El propietario confirmó avisos transaccionales al titular por asignación manual, renovación manual y durante los siete días previos al vencimiento, sin marketing. La implementación está preparada y permanece desactivada; su validación y activación están pendientes. Leer [operación de suscripciones](subscriptions-operations.md). WhatsApp pasa a una fase posterior y requiere concretar contrato, consentimiento e integración. La entrega previa de confirmación no acredita esos otros mensajes (pp. 7, 8, 10).
 
 ## Facturación y gestión comercial
 
-Facturación electrónica sigue solicitada y todavía no está implementada: requiere integrar el mecanismo existente. No se excluye por la gratuidad del piloto ni por aplazar los pagos. Proveedor y contrato API siguen pendientes; no simular comprobantes (pp. 7, 10, 14).
+Facturación electrónica pasa a una fase posterior por indicación expresa del propietario y no está implementada. Su requisito se conserva: identificar proveedor, contrato API y mecanismo existente antes de integrarlo; no simular comprobantes (pp. 7, 10, 14).
 
-Órdenes, cupones y atribución por filial también siguen pendientes. Precisar condiciones, uso y gestión de operaciones antes de implementar reglas dependientes. Su relación con pagos aplazados no constituye una exclusión adicional aprobada (pp. 7–10, 13).
+Órdenes, cupones y atribución por filial también pasan a una fase posterior autorizada, junto con pagos. Precisar condiciones, uso y gestión de operaciones antes de implementarlos; conservar sus requisitos sin inventar reglas (pp. 7–10, 13).
 
 ## Migración, capacidad y lanzamiento
 
 La capacidad prevista de 100.000 cuentas no implica precargarlas en producción. Las cuentas y fichas sintéticas masivas existen únicamente en QA. La carga limitada de 50 sesiones no acredita 1.000 usuarios concurrentes ni distribución audiovisual AWS.
 
-Pendiente: migración o sincronización de contenidos, cuentas y suscripciones; ensayo de recuperación, aceptación funcional, capacitación, piloto e incidentes antes del lanzamiento progresivo. El gate completo debe comprobar la fuente definitiva y sus imágenes inmutables antes de cualquier despliegue solicitado (pp. 10, 14).
+La migración o sincronización de contenidos, cuentas y suscripciones del sistema anterior pasa a una fase posterior. Para la entrega actual siguen pendientes el ensayo de recuperación, aceptación funcional, capacitación, piloto e incidentes. La [guía del gestor](operator-handbook.md) reúne los recorridos existentes. El despliegue final está autorizado y exige el gate completo de la fuente definitiva y sus imágenes inmutables (pp. 10, 14); no poblar producción ni modificar cuentas reales para estos ensayos.
 
 ## Decisiones abiertas y evolución
 
-Los tipos, duración, alcance y renovación manual de suscripciones ya están confirmados. Quedan por aclarar proveedor y API de facturación y reglas por nivel junto con el contrato de intranet. La ausencia de respuesta no aprueba valores inventados. Sólo los pagos se abordarán después por decisión expresa del propietario.
+Los tipos, duración, alcance y renovación manual de suscripciones ya están confirmados. Proveedor/API de facturación, contrato de intranet, reglas por nivel, exportación del legado y contratos de WhatsApp/gestión comercial se concretarán al retomar sus fases posteriores. La ausencia de esos insumos no autoriza inventarlos ni impide completar el incremento actual conforme a la decisión vigente.
 
 La app móvil corresponde a fase 5, después de estabilizar la web (p. 14). Favoritos, historial, continuar reproducción, valoraciones/comentarios, reproducción automática, recomendaciones, marketing, push/offline y analítica avanzada figuran como evolución de fase 6 (pp. 14–15). Esa secuencia no elimina los reportes operativos esenciales ni acredita una exclusión adicional.
