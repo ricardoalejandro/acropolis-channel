@@ -174,45 +174,6 @@ proxy_id="$(compose ps -q proxy)"
 export QA_PROXY_IP="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$proxy_id")"
 [[ "$QA_PROXY_IP" =~ ^[0-9.]+$ ]] || { echo 'QA proxy has no trusted private address.' >&2; exit 1; }
 run_step private_pki compose run --rm --no-deps pki prepare
-run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit mailpit-starttls
-run_step smtp_strict_tls compose run --rm --no-deps migrations smtp-check
-smtp_untrusted_tls() {
-  if compose run --rm --no-deps -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
-    echo 'SMTP accepted an untrusted QA CA.' >&2; return 1
-  fi
-  echo 'SMTP rejects the same endpoint without its trusted private CA.'
-}
-run_step smtp_untrusted_tls smtp_untrusted_tls
-smtp_rejects_invalid_auth() {
-  if compose run --rm --no-deps -e Identity__Smtp__Password=invalid-synthetic-qa-password migrations smtp-check; then
-    echo 'SMTP aceptó una contraseña incorrecta.' >&2; return 1
-  fi
-  echo 'SMTP TLS implícito rechaza la autenticación incorrecta.'
-}
-smtp_rejects_invalid_hostname() {
-  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-wrong-host migrations smtp-check; then
-    echo 'SMTP aceptó un nombre de servidor fuera del certificado.' >&2; return 1
-  fi
-  echo 'SMTP TLS implícito rechaza un hostname que no coincide con el certificado.'
-}
-smtp_starttls_untrusted_ca() {
-  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
-    echo 'SMTP STARTTLS aceptó una CA no confiable.' >&2; return 1
-  fi
-  echo 'SMTP STARTTLS conserva la validación estricta de la CA.'
-}
-run_step smtp_ssl_invalid_auth smtp_rejects_invalid_auth
-run_step smtp_ssl_invalid_hostname smtp_rejects_invalid_hostname
-run_step smtp_ssl_plaintext_rejected compose run --rm --no-deps node 'node /qa-tools/smtp-transport.mjs plaintext-rejected'
-run_step smtp_starttls_strict_tls compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls migrations smtp-check
-run_step smtp_starttls_untrusted_ca smtp_starttls_untrusted_ca
-run_step database_start compose up -d --wait --wait-timeout 90 db
-run_step application_before_migrations compose up -d web
-run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 503 not_ready'
-run_step strict_private_tls compose run --rm --no-deps node 'node /qa-tools/tls-check.mjs'
-run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash playwright -euc 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs'
-run_step browser_trusted_tls compose run --rm --no-deps playwright 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs trusted'
-run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
 run_step integration_database_start env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" up -d --wait --wait-timeout 90 db
 run_step backend_quality env QA_PROJECT="$integration_project" QA_DATABASE="$integration_database" docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$integration_project" run --rm --no-deps sdk '
   mkdir -p /workspace && cp -a /source/. /workspace/ && cd /workspace
@@ -253,6 +214,45 @@ run_step frontend_quality compose run --rm --no-deps node '
   npm run build:preview
   npm audit --audit-level=high --json > /artifacts/npm-audit.json
 '
+run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit mailpit-starttls
+run_step smtp_strict_tls compose run --rm --no-deps migrations smtp-check
+smtp_untrusted_tls() {
+  if compose run --rm --no-deps -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
+    echo 'SMTP accepted an untrusted QA CA.' >&2; return 1
+  fi
+  echo 'SMTP rejects the same endpoint without its trusted private CA.'
+}
+run_step smtp_untrusted_tls smtp_untrusted_tls
+smtp_rejects_invalid_auth() {
+  if compose run --rm --no-deps -e Identity__Smtp__Password=invalid-synthetic-qa-password migrations smtp-check; then
+    echo 'SMTP aceptó una contraseña incorrecta.' >&2; return 1
+  fi
+  echo 'SMTP TLS implícito rechaza la autenticación incorrecta.'
+}
+smtp_rejects_invalid_hostname() {
+  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-wrong-host migrations smtp-check; then
+    echo 'SMTP aceptó un nombre de servidor fuera del certificado.' >&2; return 1
+  fi
+  echo 'SMTP TLS implícito rechaza un hostname que no coincide con el certificado.'
+}
+smtp_starttls_untrusted_ca() {
+  if compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt migrations smtp-check; then
+    echo 'SMTP STARTTLS aceptó una CA no confiable.' >&2; return 1
+  fi
+  echo 'SMTP STARTTLS conserva la validación estricta de la CA.'
+}
+run_step smtp_ssl_invalid_auth smtp_rejects_invalid_auth
+run_step smtp_ssl_invalid_hostname smtp_rejects_invalid_hostname
+run_step smtp_ssl_plaintext_rejected compose run --rm --no-deps node 'node /qa-tools/smtp-transport.mjs plaintext-rejected'
+run_step smtp_starttls_strict_tls compose run --rm --no-deps -e Identity__Smtp__Host=mailpit-starttls -e Identity__Smtp__Port=1025 -e Identity__Smtp__Security=starttls migrations smtp-check
+run_step smtp_starttls_untrusted_ca smtp_starttls_untrusted_ca
+run_step database_start compose up -d --wait --wait-timeout 90 db
+run_step application_before_migrations compose up -d web
+run_step readiness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs wait-http "$BASE_URL/health/ready" 503 not_ready'
+run_step strict_private_tls compose run --rm --no-deps node 'node /qa-tools/tls-check.mjs'
+run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash playwright -euc 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs'
+run_step browser_trusted_tls compose run --rm --no-deps playwright 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs trusted'
+run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
 run_step migrations_first compose run --rm --no-deps migrations
 artifact_digest() {
   [[ -s "$1" ]] || { echo 'Missing or empty comparison artifact.' >&2; return 1; }
