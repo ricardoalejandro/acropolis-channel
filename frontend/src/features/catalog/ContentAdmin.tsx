@@ -41,6 +41,20 @@ const coverLabels: Record<CoverAsset, string> = {
   'editorial-dialogue': 'Diálogo · espacio de conversación',
   'editorial-nature': 'Naturaleza · paisaje ilustrado',
 };
+function pageSlug(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+function isPageUrl(value: string) {
+  return /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.|(?:youtu\.be|youtube\.com)\/)/i.test(value.trim());
+}
+function normalizedPageSlug(value: string) {
+  return isPageUrl(value) ? value.trim() : pageSlug(value);
+}
 export function ContentAdminList() {
   const [params, setParams] = useSearchParams();
   return <ContentAdminListView key={params.toString()} params={params} setParams={setParams} />;
@@ -221,6 +235,8 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
     collectionKind: item?.collectionKind ?? null,
     itemIds: item?.itemIds ?? [],
   });
+  const slugEdited = useRef(Boolean(item));
+  const slugComposing = useRef(false);
   const [tagsText, setTagsText] = useState(item?.tags?.join(', ') ?? '');
   const [baseline, setBaseline] = useState(
     JSON.stringify({
@@ -250,6 +266,21 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
     setFields((previous) => ({ ...previous, [name]: value }));
     setSaved('');
   }
+  function updateTitle(title: string) {
+    setFields((previous) => ({
+      ...previous,
+      title,
+      slug:
+        !current && !slugEdited.current
+          ? pageSlug(title).slice(0, 160).replace(/-+$/g, '')
+          : previous.slug,
+    }));
+    setSaved('');
+  }
+  function normalizeSlug() {
+    if (!slugComposing.current && !current?.publishedUtc)
+      update('slug', normalizedPageSlug(fields.slug));
+  }
   async function save(status: ContentStatus) {
     if (busy || conflict) return;
     const next: Record<string, string> = {};
@@ -261,7 +292,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
     const body: ContentFields = {
       ...fields,
       title: fields.title.trim(),
-      slug: fields.slug.trim(),
+      slug: current?.publishedUtc ? fields.slug : normalizedPageSlug(fields.slug),
       summary: fields.summary.trim(),
       body: fields.body.trim(),
       durationSeconds: duration ? Number(duration) : null,
@@ -284,7 +315,9 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
       body.slug.length > 160 ||
       !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(body.slug)
     )
-      next['slug'] = 'Usa entre 2 y 160 letras minúsculas, números y guiones entre palabras.';
+      next['slug'] = isPageUrl(body.slug)
+        ? 'Este campo define el enlace de la página en Acrópolis. Pega el vídeo en el campo de YouTube.'
+        : 'Usa entre 2 y 160 letras minúsculas, números y guiones entre palabras.';
     if (body.summary.length > 600 || (status === 'published' && !body.summary))
       next['summary'] =
         status === 'published'
@@ -459,7 +492,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               id="editor-title"
               maxLength={180}
               value={fields.title}
-              onChange={(event) => update('title', event.target.value)}
+              onChange={(event) => updateTitle(event.target.value)}
               aria-invalid={Boolean(errors['title'])}
               aria-describedby={described('title')}
               disabled={busy}
@@ -467,12 +500,24 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
             {feedback('title')}
           </div>
           <div className="field">
-            <label htmlFor="editor-slug">Dirección del contenido</label>
+            <label htmlFor="editor-slug">Enlace de la página en Acrópolis</label>
             <input
               id="editor-slug"
               maxLength={160}
               value={fields.slug}
-              onChange={(event) => update('slug', event.target.value)}
+              onChange={(event) => {
+                slugEdited.current = true;
+                update('slug', event.target.value);
+              }}
+              onBlur={normalizeSlug}
+              onCompositionStart={() => {
+                slugComposing.current = true;
+              }}
+              onCompositionEnd={() => {
+                slugComposing.current = false;
+              }}
+              autoCapitalize="none"
+              spellCheck={false}
               readOnly={Boolean(current?.publishedUtc)}
               aria-invalid={Boolean(errors['slug'])}
               aria-describedby={described('slug', true)}
@@ -482,7 +527,7 @@ function ContentEditorForm({ item, reload }: { item?: AdminContent; reload?: () 
               'slug',
               current?.publishedUtc
                 ? 'La dirección se conserva después de la primera publicación.'
-                : 'Letras minúsculas, números y guiones. Ejemplo: filosofia-en-la-vida.',
+                : 'Es la dirección de esta ficha, no el enlace de YouTube. Se genera desde el título y puedes ajustarla. Ejemplo: filosofia-en-la-vida.',
             )}
           </div>
           <div className="field">

@@ -242,7 +242,7 @@ describe('Editorial administration and concurrency', () => {
       screen.getByRole('checkbox', { name: 'Disponible con el plan Gratuito' }),
     ).not.toBeChecked();
     fill('Título', 'Una nueva idea');
-    fill('Dirección del contenido', 'una-nueva-idea');
+    fill('Enlace de la página en Acrópolis', 'una-nueva-idea');
     fireEvent.change(screen.getByLabelText('Categoría del contenido'), {
       target: { value: 'podcast' },
     });
@@ -275,6 +275,89 @@ describe('Editorial administration and concurrency', () => {
       itemIds: [],
     });
     expect(fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
+  });
+  it('generates the page link from a Spanish title and submits it without an extra required edit', async () => {
+    const fetch = mount('/admin/content/new');
+    await screen.findByLabelText('Título');
+    fill('Título', '  ¿Filosofía, acción y niñez?  ');
+    const slug = screen.getByLabelText('Enlace de la página en Acrópolis');
+    expect(slug).toHaveValue('filosofia-accion-y-ninez');
+    expect(slug).toHaveAccessibleDescription(/no el enlace de YouTube/);
+    fill('Título', 'Filosofía para jóvenes');
+    expect(slug).toHaveValue('filosofia-para-jovenes');
+    expect(fetch.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+    await screen.findByRole('heading', { name: 'Editar contenido' });
+    const call = fetch.mock.calls.find(([, options]) => options?.method === 'POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+      title: 'Filosofía para jóvenes',
+      slug: 'filosofia-para-jovenes',
+    });
+  });
+  it('keeps manual page-link input while composing and normalizes only after leaving the field', async () => {
+    mount('/admin/content/new');
+    await screen.findByLabelText('Título');
+    fill('Título', 'Una nueva idea');
+    const slug = screen.getByLabelText('Enlace de la página en Acrópolis');
+    expect(slug).toHaveAttribute('autocapitalize', 'none');
+    expect(slug).toHaveAttribute('spellcheck', 'false');
+    fireEvent.focus(slug);
+    fireEvent.compositionStart(slug);
+    fireEvent.change(slug, { target: { value: 'Mi Dirección Elegida' } });
+    expect(slug).toHaveValue('Mi Dirección Elegida');
+    fireEvent.blur(slug);
+    expect(slug).toHaveValue('Mi Dirección Elegida');
+    fireEvent.compositionEnd(slug);
+    fireEvent.focus(slug);
+    fireEvent.blur(slug);
+    expect(slug).toHaveValue('mi-direccion-elegida');
+    fill('Título', 'Otro título');
+    expect(slug).toHaveValue('mi-direccion-elegida');
+    fill('Enlace de la página en Acrópolis', '');
+    fill('Título', 'No sustituir mi edición');
+    expect(slug).toHaveValue('');
+  });
+  it('normalizes a manual page link on keyboard submission without rewriting it while typing', async () => {
+    const fetch = mount('/admin/content/new');
+    const title = await screen.findByLabelText('Título');
+    fill('Título', 'Mi nueva ficha');
+    fill('Enlace de la página en Acrópolis', 'Youtube123artejsjskks');
+    expect(screen.getByLabelText('Enlace de la página en Acrópolis')).toHaveValue(
+      'Youtube123artejsjskks',
+    );
+    fireEvent.submit(title.closest('form')!);
+    await screen.findByRole('heading', { name: 'Editar contenido' });
+    const call = fetch.mock.calls.find(([, options]) => options?.method === 'POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ slug: 'youtube123artejsjskks' });
+  });
+  it('explains a YouTube URL pasted in the page link instead of creating a misleading address', async () => {
+    const fetch = mount('/admin/content/new');
+    await screen.findByLabelText('Título');
+    fill('Título', 'Vídeo de filosofía');
+    const slug = screen.getByLabelText('Enlace de la página en Acrópolis');
+    fill('Enlace de la página en Acrópolis', 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
+    fireEvent.blur(slug);
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+    expect(slug).toHaveFocus();
+    expect(slug).toHaveValue('https://www.youtube.com/watch?v=M7lc1UVf-VE');
+    expect(slug).toHaveAccessibleDescription(/Pega el vídeo en el campo de YouTube/);
+    expect(fetch.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  });
+  it('retains an existing draft page link when its title changes', async () => {
+    const fetch = mount('/admin/content/content-one', true, draft);
+    await screen.findByLabelText('Título');
+    fill('Título', 'Título revisado del borrador');
+    expect(screen.getByLabelText('Enlace de la página en Acrópolis')).toHaveValue(
+      draftContent.slug,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await screen.findByText('Borrador guardado.');
+    const call = fetch.mock.calls.find(([, options]) => options?.method === 'PUT');
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+      title: 'Título revisado del borrador',
+      slug: draftContent.slug,
+      version: draftContent.version,
+    });
   });
   it('validates drafts and publication requirements before any mutation', async () => {
     const fetch = mount('/admin/content/new');
@@ -321,7 +404,11 @@ describe('Editorial administration and concurrency', () => {
       status: 'published',
       version: 'version-one',
     });
-    expect(screen.getByLabelText('Dirección del contenido')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Enlace de la página en Acrópolis')).toHaveAttribute('readonly');
+    fill('Título', 'Un título nuevo después de publicar');
+    expect(screen.getByLabelText('Enlace de la página en Acrópolis')).toHaveValue(
+      publishedContent.slug,
+    );
     expect(screen.getByRole('link', { name: /Ver ficha pública/ })).toHaveAttribute(
       'href',
       '/content/filosofia-vida',
@@ -357,7 +444,7 @@ describe('Editorial administration and concurrency', () => {
     await screen.findByLabelText('Título');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
     await screen.findByText(/otro contenido/);
-    expect(screen.getByLabelText('Dirección del contenido')).toHaveAccessibleDescription(
+    expect(screen.getByLabelText('Enlace de la página en Acrópolis')).toHaveAccessibleDescription(
       'Revisa el valor de este campo.',
     );
     rejected = false;

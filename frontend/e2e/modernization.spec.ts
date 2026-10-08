@@ -118,7 +118,7 @@ test('@modernization free subscription, protected works, ordered collections, ow
     const fullText =
       'Primer párrafo protegido de QA.\n\n<script>window.modernizationInjected=true</script>\n\nTercer párrafo completo.';
     await page.getByLabel('Título', { exact: true }).fill(readingTitle);
-    await page.getByLabel('Dirección del contenido', { exact: true }).fill(readingSlug);
+    await page.getByLabel('Enlace de la página en Acrópolis', { exact: true }).fill(readingSlug);
     await page.getByLabel('Autor o institución', { exact: true }).fill('Autora sintética QA');
     await page.getByLabel('Etiquetas', { exact: true }).fill('Filosofía, Cultura');
     await page.getByLabel('Resumen', { exact: true }).fill('Resumen público de lectura.');

@@ -129,7 +129,7 @@ test('@modernization Topics are maintained, assigned and filtered with real pers
     page.getByLabel('Disponible con el plan Gratuito', { exact: true }),
   ).not.toBeChecked();
   await page.getByLabel('Título', { exact: true }).fill(title);
-  await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
+  await page.getByLabel('Enlace de la página en Acrópolis', { exact: true }).fill(slug);
   await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('lecturas');
   await expect(
     page.getByLabel('Categoría del contenido', { exact: true }).locator('option'),

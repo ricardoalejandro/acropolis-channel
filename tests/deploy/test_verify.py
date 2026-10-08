@@ -22,6 +22,7 @@ class VerificationPreflightTests(unittest.TestCase):
         for directory in ("scripts", "scripts/tests", "infra", "tests/deploy", "tests/load", "frontend", "bin"):
             (self.root / directory).mkdir(parents=True, exist_ok=True)
         (self.root / "scripts/verify.sh").write_bytes((SOURCE_ROOT / "scripts/verify.sh").read_bytes())
+        (self.root / "scripts/verify-frontend.sh").write_bytes((SOURCE_ROOT / "scripts/verify-frontend.sh").read_bytes())
         self.source_paths = ["scripts/verify.sh", "frontend/package.json", "frontend/package-lock.json", "Dockerfile", ".dockerignore", "compose.qa.yml"]
         for relative, content in {
             "frontend/package.json": '{"name":"synthetic-preflight","version":"1.0.0"}\n',
@@ -216,7 +217,7 @@ class VerificationPreflightTests(unittest.TestCase):
         self.assert_ineligible(self.report())
 
     def test_invalid_or_combined_modes_stop_before_external_effects(self):
-        for arguments in (("--unknown",), ("--preflight", "--working-tree"), ("--preflight", "unexpected")):
+        for arguments in (("--unknown",), ("--preflight", "--working-tree"), ("--preflight", "unexpected"), ("--frontend-low-risk", "--preflight"), ("--frontend-low-risk", "unexpected")):
             with self.subTest(arguments=arguments):
                 self.assertEqual(self.invoke(*arguments).returncode, 2)
         self.assertEqual(self.calls(), [])
@@ -299,6 +300,120 @@ class VerificationPreflightTests(unittest.TestCase):
         self.assert_ineligible(report)
         self.assert_cleanup_scopes()
 
+
+
+class FrontendScopedCertificateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('frontend_release_tests', SOURCE_ROOT / 'scripts/frontend-release.py')
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def setUp(self):
+        from unittest.mock import patch
+        self.patch = patch
+        self.temporary = tempfile.TemporaryDirectory(prefix='acropolis-scoped-contract-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.folder = self.root / '.local/qa' / SHA / 'synthetic'
+        self.folder.mkdir(parents=True)
+        self.base_id = 'sha256:' + 'd' * 64
+        self.web_id = 'sha256:' + 'e' * 64
+        self.migration_id = 'sha256:' + 'f' * 64
+        self.proof = {'scope':self.module.SCOPE,'source_sha':SHA,'active_web_image_id':self.base_id,
+                      'inherited_backend':{'sha':'c'*40,'migration_image_id':self.migration_id}}
+        self.proof_path = self.folder / 'scope-proof.json'
+        self.proof_path.write_text(json.dumps(self.proof))
+        self.files_path = self.folder / 'frontend-files.sha256'
+        self.files_path.write_text('synthetic frontend fingerprint\n')
+        self.report = {'scope':self.module.SCOPE,'sha':SHA,'image_id':self.web_id,
+                       'migration_image_id':self.migration_id,'migration_source_sha':'c'*40,
+                       'status':'passed','deployment_eligible':True,'gate_eligible':True,
+                       'cleanup_complete':True,'working_tree':False,'supervisor_review_pending':False,
+                       'last_stage':'complete','passed_steps':sorted(self.module.FRESH_STEPS),
+                       'scope_proof_path':str(self.proof_path),'scope_proof_sha256':self.module.digest(self.proof_path),
+                       'inherited_backend':self.proof['inherited_backend'],
+                       'candidate_proof':{'image_id':self.web_id,'runtime_config_preserved':True,
+                                          'runtime_layers_inherited':True,'backend_tree_sha256':'a'*64,
+                                          'frontend_files_sha256':self.module.digest(self.files_path)}}
+        self.base = {'Config':{'User':'app','Entrypoint':['dotnet','Acropolis.Api.dll'],
+                               'Env':['DOTNET_EnableDiagnostics=0'],'Labels':{'org.opencontainers.image.revision':'c'*40}},
+                     'RootFS':{'Layers':['certified-layer']}}
+        self.candidate = json.loads(json.dumps(self.base))
+        self.candidate['Config']['Labels']['org.opencontainers.image.revision'] = SHA
+        self.candidate['RootFS']['Layers'].append('frontend-layer')
+
+    def validate(self):
+        with self.patch.object(self.module,'admit',return_value=self.proof), self.patch.object(
+                self.module,'image_info',side_effect=lambda image,root: self.base if image==self.base_id else self.candidate):
+            return self.module.validate_certificate(self.root,self.report,SHA,self.web_id,self.migration_id)
+
+    def test_certificate_keeps_backend_and_migration_source_separate_from_new_frontend_sha(self):
+        self.assertEqual(self.validate(), self.proof)
+        self.assertNotEqual(self.report['migration_source_sha'],self.report['sha'])
+
+    def test_failed_unfinished_or_uncertain_cleanup_never_certifies(self):
+        for field,value in [('status','failed'),('cleanup_complete',False),('working_tree',True),
+                            ('deployment_eligible',False),('gate_eligible',False),('last_stage','editor_mobile'),
+                            ('supervisor_review_pending',True)]:
+            with self.subTest(field=field):
+                previous=self.report[field]; self.report[field]=value
+                with self.assertRaises(ValueError): self.validate()
+                self.report[field]=previous
+
+    def test_missing_or_duplicate_fresh_workflow_never_certifies(self):
+        original=self.report['passed_steps']
+        for value in [original[:-1],original+['editor_mobile']]:
+            self.report['passed_steps']=value
+            with self.assertRaises(ValueError):self.validate()
+
+    def test_changed_scope_or_frontend_manifest_rejects_certificate(self):
+        self.proof_path.write_text('{}')
+        with self.assertRaisesRegex(ValueError,'admission proof changed'):self.validate()
+        self.proof_path.write_text(json.dumps(self.proof))
+        self.files_path.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'artifact fingerprint changed'):self.validate()
+
+    def test_wrong_new_image_or_inherited_migration_is_rejected(self):
+        for field in ('image_id','migration_image_id','migration_source_sha'):
+            previous=self.report[field];self.report[field]='invalid'
+            with self.subTest(field=field),self.assertRaises(ValueError):self.validate()
+            self.report[field]=previous
+
+    def test_runtime_config_and_backend_layers_must_remain_identical(self):
+        self.module.compatible_images(self.base,self.candidate)
+        for field,value in [('User','root'),('Env',['TLS_DISABLED=true']),('Entrypoint',['sh'])]:
+            old=self.candidate['Config'][field]; self.candidate['Config'][field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.module.compatible_images(self.base,self.candidate)
+            self.candidate['Config'][field]=old
+        self.candidate['RootFS']['Layers'][0]='other-backend'
+        with self.assertRaisesRegex(ValueError,'runtime layers'):self.module.compatible_images(self.base,self.candidate)
+
+    def test_allowlist_rejects_backend_identity_dependencies_and_deleted_editor(self):
+        for row in ['M\tsrc/Acropolis.Api/Program.cs','M\tfrontend/package-lock.json',
+                    'M\tfrontend/src/features/identity/Accounts.tsx', 'D\t'+self.module.EDITOR]:
+            with self.subTest(row=row),self.patch.object(self.module,'command',side_effect=['',row]):
+                with self.assertRaises(ValueError):self.module.changed_paths(self.root,'c'*40,SHA)
+        with self.patch.object(self.module,'command',side_effect=['','M\t'+self.module.EDITOR]):
+            self.assertEqual(self.module.changed_paths(self.root,'c'*40,SHA),[self.module.EDITOR])
+
+    def test_private_artifacts_cannot_escape_or_use_symlinks(self):
+        outside=self.root/'external.json';outside.write_text('{}')
+        with self.assertRaises(ValueError):self.module.private_path(self.root,outside)
+        link=self.folder/'linked.json';link.symlink_to(self.proof_path)
+        with self.assertRaises(ValueError):self.module.private_path(self.root,link)
+
+    def test_scoped_runner_has_fresh_editor_and_full_frontend_but_no_unrelated_volume_work(self):
+        source=(SOURCE_ROOT/'scripts/verify-frontend.sh').read_text()
+        for expected in ('npm run format:check','npm run typecheck','npm run lint','npm audit --audit-level=high',
+                         'npm run test:coverage','npm run build','qa-seed --count 200',
+                         'desktop-chromium','mobile-chromium','--trace=off','backend_equivalence'):
+            self.assertIn(expected,source)
+        for forbidden in ('qa-seed --count 100000','qa-seed-catalog','k6 run','dotnet test','restore-db-test.sh','build_migrations'):
+            self.assertNotIn(forbidden,source)
+        self.assertIn('docker commit --change "LABEL org.opencontainers.image.revision=$sha"',source)
+        self.assertNotIn('--entrypoint',source[source.index('build_frontend_candidate()'):source.index('run_step build_candidate')])
 
 if __name__ == "__main__":
     unittest.main()

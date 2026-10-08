@@ -23,7 +23,7 @@ bash scripts/verify.sh --working-tree
 
 Ese modo recorre la verificación integrada, usa etiquetas diferentes y produce `working_tree: true` y `deployment_eligible: false`, incluso si todos los pasos pasan. No certifica el contenido de un commit ni habilita su despliegue.
 
-Para código nuevo de aplicación, cambios de comportamiento o contratos de runtime, migraciones, dependencias o configuración de construcción/ejecución, congelar el candidato revisado en el commit definitivo y ejecutar el gate completo con `main` limpio:
+Para cambios delicados o cambios que no admita el procedimiento acotado siguiente, congelar el candidato revisado en el commit definitivo y ejecutar el gate completo con `main` limpio:
 
 ```bash
 bash scripts/verify.sh
@@ -35,13 +35,37 @@ La ejecución fija el SHA inicial, construye una vez `acropolis-channel:<SHA>` y
 
 El gate completo ejecuta también el preflight antes de construir las imágenes de aplicación y migraciones. Antes de los tests frontend y al cerrar revalida las huellas de sus archivos/políticas, la identidad de Node y el hash de la auditoría; sólo así evita repetir formato/tipos/lint/auditoría dentro de la misma ejecución. Mantiene `npm ci`, tests, cobertura, builds, pruebas reales de navegador, carga y restauración.
 
-No existe reuso automático de resultados o certificados entre commits o ejecuciones. La reanudación privada SAME7c autorizada por el operador es una excepción acotada: fija el mismo SHA limpio, imágenes y evidencia inmutable de bloques realmente completados, mantiene el fallo original y exige auditorías frescas y todos los recorridos frescos de runtime, navegador, carga y restauración. No es un modo público de `verify.sh`, una rutina de desarrollo ni una autorización para trasladar un PASS entre versiones.
+El gate completo no reutiliza automáticamente resultados entre commits o ejecuciones. El procedimiento frontend acotado siguiente hereda sólo la evidencia del backend inmutable publicado, con procedencia explícita. La reanudación privada SAME7c autorizada por el operador es una excepción acotada: fija el mismo SHA limpio, imágenes y evidencia inmutable de bloques realmente completados, mantiene el fallo original y exige auditorías frescas y todos los recorridos frescos de runtime, navegador, carga y restauración. No es un modo público de `verify.sh`, una rutina de desarrollo ni una autorización para trasladar un PASS entre versiones.
 
-Si el cambio afecta exclusivamente a documentación/skills o a la orquestación de QA, sin modificar código de aplicación, dependencias, imágenes ni configuración/migraciones de runtime, validar las referencias y el contenido, las pruebas CLI y contratos administrativos afectados, el preflight y la revisión del flujo. No reconstruir ni volver a desplegar la aplicación sólo por ese cambio. Registrar por separado el HEAD de las instrucciones/herramientas y el SHA/IDs reales del runtime publicado; estas comprobaciones no certifican una nueva imagen de aplicación. El próximo cambio de aplicación sigue necesitando su gate completo definitivo. No prometer un ahorro de tiempo sin medirlo.
+Si el cambio afecta exclusivamente a documentación/skills o a la orquestación de QA, sin modificar código de aplicación, dependencias, imágenes ni configuración/migraciones de runtime, validar las referencias y el contenido, las pruebas CLI y contratos administrativos afectados, el preflight y la revisión del flujo. No reconstruir ni volver a desplegar la aplicación sólo por ese cambio. Registrar por separado el HEAD de las instrucciones/herramientas y el SHA/IDs reales del runtime publicado; estas comprobaciones no certifican una nueva imagen de aplicación. El próximo cambio de aplicación necesita el certificador definitivo correspondiente a su alcance. No prometer un ahorro de tiempo sin medirlo.
 
 Cada ejecución guarda logs redactados, coberturas, auditorías, resultados Playwright, resumen k6 y un `report.json` en `.local/qa/<SHA>/<RUN>/`. El JSON incluye `sha`, `image_id`, `migration_image_id`, `status`, `deployment_eligible`, `passed_steps` y `path`. Un fallo produce un informe con `status: failed`; la suite nunca convierte una comprobación fallida en un éxito. `.local/` está ignorado y no es contenido público.
 
 El despliegue puede reutilizar una imagen únicamente cuando existe un informe `passed`, apto para despliegue, cuyo SHA e identificadores coinciden con las imágenes presentes. La etiqueta por sí sola no demuestra que pasó QA. Consultar el informe real para conocer resultados; esta documentación describe el procedimiento y no afirma que una ejecución específica haya pasado.
+
+## Validación proporcional al riesgo
+
+La clasificación depende de los procesos afectados; una línea que cambie permisos es delicada. No reducir umbrales, esconder fallos ni producir certificados manuales para acortar la duración.
+
+| Nivel | Alcance | Validación de publicación |
+| --- | --- | --- |
+| Simple | Texto, estilo o ergonomía frontend local sin cambiar contratos, reglas, autorización, persistencia, dependencias ni configuración runtime | `--frontend-low-risk` si satisface sus guardas; en otro caso gate completo |
+| Medio | Comportamiento de un módulo o navegación amplia | Pruebas focales, contratos, integración y recorridos afectados durante desarrollo. Por ahora gate completo para certificar; no existe aún un certificador medio |
+| Delicado | Identidad/MFA, permisos/acceso, suscripciones/pagos, datos/migraciones/concurrencia, secretos, dependencias, runtime o infraestructura | Gate completo |
+
+Para el caso simple soportado:
+
+```bash
+bash scripts/verify.sh --frontend-low-risk
+```
+
+Requiere `main` limpio y una versión publicada con certificado válido e imágenes presentes. El helper limita el diff a los archivos editoriales frontend y pruebas permitidos explícitamente, documentación y herramientas QA revisadas; no acepta `scripts/**` o `frontend/**` indiscriminadamente. Un nuevo tipo de cambio exige revisar y probar el alcance permitido o usar el gate completo.
+
+Ejecuta sintaxis/contratos administrativos, formato/tipos/lint/auditoría npm, toda la suite de componentes con cobertura, build frontend y recorridos editoriales Playwright reales de escritorio y móvil con PostgreSQL sintético, MFA y TLS aislados. No arranca datos de producción ni genera 100.000 cuentas. La imagen candidata parte de la imagen web publicada exacta y reemplaza exclusivamente `wwwroot`; comprueba configuración, capas heredadas y archivos backend idénticos. El runner de migraciones se reutiliza por su ID inmutable y conserva su revisión original.
+
+El informe declara `scope: frontend-low-risk`, comprobaciones nuevas y `inherited_backend` con fuente, certificado/hash e IDs de base. No presenta como ejecutadas de nuevo las pruebas backend/carga/restauración heredadas. La procedencia y equivalencia se revalidan antes de desplegar; un preflight o una edición manual del informe no sustituye este certificado. Los respaldos, comprobaciones SMTP/proxy/DNS/TLS/readiness, recuperación y publicación con imágenes exactas siguen obligatorios. Si cambia backend, migraciones, dependencias o runtime, este modo rechaza el candidato y se requiere la validación completa.
+
+Registrar duración observada de preparación, QA y despliegue. No prometer una duración fija: la CPU y red del VPS compartido pueden variar. Ejecutar una sola carga pesada y conservar el builder limitado; no ampliar el paralelismo para ganar tiempo a costa de saturar el servidor.
 
 ## Aislamiento y límites
 

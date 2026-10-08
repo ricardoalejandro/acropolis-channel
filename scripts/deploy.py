@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,12 @@ def command(args, capture=False, env=None, check=True, timeout=None):
 
 def compose(*args, env=None, capture=False, check=True):
     return command(['docker', 'compose', '-p', PROJECT, *args], capture=capture, env=env, check=check)
+
+def validate_frontend_certificate(report, sha, web_id, migration_id):
+    spec = importlib.util.spec_from_file_location('acropolis_frontend_release', ROOT / 'scripts/frontend-release.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_certificate(ROOT, report, sha, web_id, migration_id)
 
 def validate_compose_smtp_network(settings):
     # Compose attaches this network even when email flows are disabled.
@@ -277,14 +284,26 @@ def main():
         migration_ref = 'acropolis-channel-migrations:' + sha
         reports = sorted((local / 'qa' / sha).glob('*/report.json'), key=lambda p: p.stat().st_mtime, reverse=True)
         valid = None
+        certificate = None
+        scoped_proof = None
         for report_path in reports:
             report = json.loads(report_path.read_text())
             try:
-                matches = report.get('sha') == sha and report.get('status') == 'passed' and report.get('deployment_eligible') is True and report.get('image_id') == image_id(web_ref) and report.get('migration_image_id') == image_id(migration_ref)
+                scoped = report.get('scope') == 'frontend-low-risk'
+                runner_ref = report.get('migration_image_id') if scoped else migration_ref
+                matches = (report.get('scope') in (None, 'full', 'same-sha-tail', 'frontend-low-risk')
+                           and report.get('sha') == sha and report.get('status') == 'passed'
+                           and report.get('deployment_eligible') is True
+                           and report.get('image_id') == image_id(web_ref)
+                           and report.get('migration_image_id') == image_id(runner_ref))
             except subprocess.CalledProcessError:
                 matches = False
             if matches:
+                if scoped:
+                    scoped_proof = validate_frontend_certificate(report, sha, image_id(web_ref), image_id(runner_ref))
+                    migration_ref = runner_ref
                 valid = report_path
+                certificate = report
                 break
         if valid is None:
             raise RuntimeError('No matching passed QA report; run scripts/verify.sh first')
@@ -327,6 +346,11 @@ def main():
         if previous_image:
             command(['docker', 'tag', previous_image, 'acropolis-channel:recovery-' + timestamp.lower()])
         manifest = {'database_backup': str(local / 'backups' / ('deploy-' + timestamp + '.dump')), 'sha': sha, 'image_id': image_id(web_ref), 'migration_image_id': image_id(migration_ref), 'qa_report': str(valid.relative_to(ROOT)), 'previous_image': previous_image, 'previous_routing': previous_route, 'previous_active': previous_active, 'migration_attempted': False, 'status': 'starting'}
+        if scoped_proof is not None:
+            manifest.update(qa_scope='frontend-low-risk',
+                            backend_base_sha=certificate['inherited_backend']['sha'],
+                            migration_source_sha=certificate['migration_source_sha'],
+                            scope_proof_sha256=certificate['scope_proof_sha256'])
         write_manifest(backup, manifest)
         env = os.environ.copy()
         env.update(APP_IMAGE=web_ref, MIGRATION_IMAGE=migration_ref, IDENTITY_EMAIL_ENABLED=email_mode)

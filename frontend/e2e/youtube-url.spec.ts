@@ -48,8 +48,25 @@ test('@modernization pasted YouTube URL persists only its identifier and reload 
   const suffix = testInfo.project.name + '-' + Date.now();
   const slug = 'qa-youtube-url-' + suffix;
   await page.goto('/admin/content/new');
-  await page.getByLabel('Título', { exact: true }).fill('Vídeo autorizado de QA ' + suffix);
-  await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
+  await page.getByLabel('Título', { exact: true }).fill('QA YouTube URL ' + suffix);
+  const pageLink = page.getByLabel('Enlace de la página en Acrópolis', { exact: true });
+  await expect(pageLink).toHaveValue(slug);
+  await expect(pageLink).toHaveAccessibleDescription(/no el enlace de YouTube/);
+  await expect(pageLink).toHaveAttribute('autocapitalize', 'none');
+  const titleField = page.getByLabel('Título', { exact: true });
+  await titleField.fill('Vídeo de filosofía ' + suffix);
+  await expect(pageLink).toHaveValue('video-de-filosofia-' + suffix);
+  await titleField.fill('QA YouTube URL ' + suffix);
+  await expect(pageLink).toHaveValue(slug);
+  await pageLink.fill('Mi Dirección Elegida ' + suffix);
+  await expect(pageLink).toHaveValue('Mi Dirección Elegida ' + suffix);
+  await titleField.focus();
+  await expect(pageLink).toHaveValue('mi-direccion-elegida-' + suffix);
+  await titleField.fill('Título revisado sin cambiar mi enlace');
+  await expect(pageLink).toHaveValue('mi-direccion-elegida-' + suffix);
+  await pageLink.fill(slug);
+  await titleField.focus();
+  await expect(pageLink).toHaveValue(slug);
   await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('videos');
   await page.getByLabel('Resumen', { exact: true }).fill('Resumen público sintético de QA.');
   await page
@@ -62,6 +79,21 @@ test('@modernization pasted YouTube URL persists only its identifier and reload 
   await expect(page.locator('iframe')).toHaveCount(0);
   expect(writes).toEqual([]);
   expect(externalRequests).toBe(0);
+
+  await pageLink.scrollIntoViewIfNeeded();
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  const pageLinkScreenshot = testInfo.outputPath(
+    'editor-page-link-' + testInfo.project.name + '.png',
+  );
+  await page.screenshot({
+    path: pageLinkScreenshot,
+    fullPage: true,
+    animations: 'disabled',
+    caret: 'hide',
+  });
+  fs.chmodSync(pageLinkScreenshot, 0o600);
 
   const createResponse = page.waitForResponse(
     (value) => new URL(value.url()).pathname === adminBase && value.request().method() === 'POST',
@@ -111,10 +143,9 @@ test('@modernization pasted YouTube URL persists only its identifier and reload 
   const published = (await actualPublished.json()) as Content;
   expect(published).toMatchObject({ id: draft.id, slug, status: 'published', youTubeId: videoId });
   await expect(page.getByRole('status')).toContainText('Contenido publicado.');
-  await expect(page.getByLabel('Dirección del contenido', { exact: true })).toHaveAttribute(
-    'readonly',
-    '',
-  );
+  await expect(
+    page.getByLabel('Enlace de la página en Acrópolis', { exact: true }),
+  ).toHaveAttribute('readonly', '');
   const publicResponse = await request.get('/api/v1/catalog/content/' + slug);
   expect(publicResponse.status()).toBe(200);
   expect(publicResponse.headers()['cache-control']).toContain('no-store');

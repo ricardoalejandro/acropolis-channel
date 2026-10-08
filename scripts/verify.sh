@@ -3,13 +3,17 @@ set -Eeuo pipefail
 umask 077
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$project_dir"
+if [[ "${1:-}" == --frontend-low-risk ]]; then
+  shift
+  exec bash scripts/verify-frontend.sh "$@"
+fi
 working_tree=false
 preflight=false
 case "${1:-}" in
   '') ;;
   --working-tree) working_tree=true; shift ;;
   --preflight) preflight=true; working_tree=true; shift ;;
-  --help) echo 'Usage: verify.sh [--working-tree|--preflight]. Preflight is always ineligible; only a complete clean SHA can produce a deployment certificate.'; exit 0 ;;
+  --help) echo 'Usage: verify.sh [--working-tree|--preflight|--frontend-low-risk]. Preflight is always ineligible; only a complete clean SHA can produce a deployment certificate.'; exit 0 ;;
   *) echo 'Unknown verification argument.' >&2; exit 2 ;;
 esac
 (($# == 0)) || { echo 'Unexpected verification arguments.' >&2; exit 2; }

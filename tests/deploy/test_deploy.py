@@ -183,7 +183,7 @@ class DeploymentTests(unittest.TestCase):
         if args == ("up", "-d", "--no-build", "--wait", "--wait-timeout", "90", "db"):
             return 0
         if args == ("--profile", "migration", "run", "--rm", "migrations"):
-            self.assertEqual(env["MIGRATION_IMAGE"], MIGRATION_REF)
+            self.assertEqual(env["MIGRATION_IMAGE"], MIGRATION_ID if self.report.get("scope") == "frontend-low-risk" else MIGRATION_REF)
             return 0
         if args == ("up", "-d", "--no-build", "web"):
             self.assertEqual(env["APP_IMAGE"], WEB_REF)
@@ -226,6 +226,57 @@ class DeploymentTests(unittest.TestCase):
         directories = [p for p in (self.local / "deployments").iterdir() if p.name != "previous"]
         newest = max(directories, key=lambda p: p.name)
         return newest, json.loads((newest / "manifest.json").read_text())
+
+    def test_scoped_certificate_is_validated_before_mutation_and_uses_original_runner(self):
+        self.report.update(scope="frontend-low-risk", inherited_backend={"sha": "b" * 40},
+                           migration_source_sha="b" * 40, scope_proof_sha256="c" * 64)
+        self.write_report()
+        self.images.pop(MIGRATION_REF)
+        self.images[MIGRATION_ID] = MIGRATION_ID
+        def validate(report, sha, web, migration):
+            self.assertEqual((report, sha, web, migration), (self.report, SHA, WEB_ID, MIGRATION_ID))
+            self.assert_not_activated()
+            self.assertFalse(any(args == ("python3", "scripts/identity-runtime.py", "--check")
+                                 for kind, args in self.operations if kind == "command"))
+            self.assertFalse((self.local / "deployments").exists())
+            return {"validated": True}
+        with patch.object(DEPLOY, "validate_frontend_certificate", side_effect=validate) as guard:
+            self.assertEqual(self.execute(), 0)
+        guard.assert_called_once()
+        _, manifest = self.deployment_manifest()
+        self.assertEqual(manifest["qa_scope"], "frontend-low-risk")
+        self.assertEqual(manifest["backend_base_sha"], "b" * 40)
+        self.assertEqual(manifest["migration_source_sha"], "b" * 40)
+        self.assertEqual(DEPLOY.env_values()["MIGRATION_IMAGE"], MIGRATION_ID)
+
+    def test_invalid_scoped_certificate_blocks_all_runtime_changes(self):
+        self.report.update(scope="frontend-low-risk")
+        self.write_report()
+        self.images[MIGRATION_ID] = MIGRATION_ID
+        with patch.object(DEPLOY, "validate_frontend_certificate", side_effect=ValueError("Invalid scope proof")):
+            with self.assertRaisesRegex(ValueError, "Invalid scope proof"):
+                self.execute()
+        self.assert_not_activated()
+        self.assertFalse((self.local / "deployments").exists())
+        self.assertEqual((self.root / ".env").read_text(), self.environment)
+
+    def test_unknown_or_preflight_scope_cannot_certify_a_release(self):
+        for scope in ("preflight", "module-unimplemented", "editor-only"):
+            with self.subTest(scope=scope):
+                self.report["scope"] = scope
+                self.write_report()
+                with self.assertRaisesRegex(RuntimeError, "No matching passed QA"):
+                    self.execute()
+                self.assert_not_activated()
+
+    def test_full_gate_and_legacy_same_sha_certificates_keep_existing_deployment(self):
+        for scope in ("full", "same-sha-tail"):
+            with self.subTest(scope=scope):
+                self.report["scope"] = scope
+                self.write_report()
+                with patch.object(DEPLOY, "validate_frontend_certificate") as guard:
+                    self.assertEqual(self.execute(), 0)
+                guard.assert_not_called()
 
     def test_identity_configuration_failure_prevents_database_or_application_change(self):
         original = self.command.side_effect

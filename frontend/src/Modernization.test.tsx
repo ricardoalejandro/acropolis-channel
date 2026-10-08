@@ -1062,7 +1062,7 @@ describe('Navigation preserves unsaved work', () => {
       await screen.findByRole('link', { name: 'Crear contenido' }, { timeout: 3000 }),
     );
     fill('Título', 'Borrador pendiente');
-    fill('Dirección del contenido', 'borrador-pendiente');
+    fill('Enlace de la página en Acrópolis', 'borrador-pendiente');
     fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
     await waitFor(() => expect(writes(fetch, '/admin/content')).toHaveLength(1));
     fireEvent.click(screen.getByRole('link', { name: 'Gestionar contenidos' }));
@@ -1227,7 +1227,7 @@ describe('YouTube URL entry preserves the editorial API contract', () => {
     const fetch = mount('/admin/content/new', owner);
     await screen.findByLabelText('Título', {}, { timeout: 3000 });
     fill('Título', 'Vídeo autorizado');
-    fill('Dirección del contenido', 'video-autorizado');
+    fill('Enlace de la página en Acrópolis', 'video-autorizado');
     fireEvent.change(screen.getByLabelText('Categoría del contenido'), {
       target: { value: 'videos' },
     });
@@ -1314,7 +1314,7 @@ describe('Explicit free works and effective plan access', () => {
     const free = await screen.findByRole('checkbox', { name: 'Disponible con el plan Gratuito' });
     expect(free).not.toBeChecked();
     fill('Título', 'Obra de acceso completo');
-    fill('Dirección del contenido', 'obra-de-acceso-completo');
+    fill('Enlace de la página en Acrópolis', 'obra-de-acceso-completo');
     await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
     await waitFor(() => expect(writes(fetch, '/admin/content')).toHaveLength(1));
     expect(JSON.parse(String(writes(fetch, '/admin/content')[0]?.[1]?.body)).isFree).toBe(false);

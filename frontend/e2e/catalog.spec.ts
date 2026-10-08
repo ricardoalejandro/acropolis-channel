@@ -74,7 +74,7 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
       page.getByLabel('Disponible con el plan Gratuito', { exact: true }),
     ).not.toBeChecked();
     await page.getByLabel('Título', { exact: true }).fill(title);
-    await page.getByLabel('Dirección del contenido', { exact: true }).fill(slug);
+    await page.getByLabel('Enlace de la página en Acrópolis', { exact: true }).fill(slug);
     await page.getByLabel('Categoría del contenido', { exact: true }).selectOption('podcast');
     await page.getByLabel('Imagen editorial', { exact: true }).selectOption('editorial-podcast');
     await page
@@ -97,10 +97,9 @@ test('@catalog editorial lifecycle requires its own permission, preserves confli
     await page.getByRole('button', { name: 'Publicar contenido', exact: true }).click();
     await page.getByRole('button', { name: 'Confirmar publicación', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Contenido publicado.');
-    await expect(page.getByLabel('Dirección del contenido', { exact: true })).toHaveAttribute(
-      'readonly',
-      '',
-    );
+    await expect(
+      page.getByLabel('Enlace de la página en Acrópolis', { exact: true }),
+    ).toHaveAttribute('readonly', '');
     const published = await publicContext.request.get('/api/v1/catalog/content/' + slug);
     expect(published.status()).toBe(200);
     expect(published.headers()['cache-control']).toContain('no-store');
