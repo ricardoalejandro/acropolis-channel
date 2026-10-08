@@ -192,8 +192,14 @@ test('@modernization visible authorized reading records real pulses and reports 
     memberPage.on('response', capturePulseResponse);
     await memberPage.goto('/content/' + slug);
     await expect(
-      memberPage.getByRole('heading', { name: 'Activa tu acceso gratuito.', exact: true }),
+      memberPage.getByRole('heading', { name: 'Revisa tu suscripción.', exact: true }),
     ).toBeVisible();
+    await expect(
+      memberPage.getByRole('link', { name: 'Ver mi suscripción', exact: true }),
+    ).toHaveAttribute('href', '/profile/subscription?content=' + slug);
+    await expect(
+      memberPage.getByRole('article', { name: 'Lectura completa', exact: true }),
+    ).toHaveCount(0);
     expect(starts).toEqual([]);
     expect(pulseBodies).toEqual([]);
     await memberPage.goto('/profile/subscription');
