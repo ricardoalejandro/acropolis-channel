@@ -142,11 +142,15 @@ describe('intentional recorded-consumption reports', () => {
     );
     expect(within(summary).getByText('50%')).toBeVisible();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Consumo de esta cuenta' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Consumo de esta cuenta' }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(admin.email)).not.toBeInTheDocument();
     expect(screen.queryByText(admin.displayName)).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole('link').some((link) => link.getAttribute('href')?.includes('/admin/users/')),
+      screen
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href')?.includes('/admin/users/')),
     ).toBe(false);
     const requests = fetch.mock.calls;
     expect(requests).toHaveLength(2);
