@@ -204,7 +204,7 @@ def frontend_files(image, project, root, folder):
         raise ValueError('Compiled frontend artifacts are missing')
     manifest = folder / 'frontend-files.sha256'
     manifest.write_text('\n'.join(rows) + '\n')
-    command(['docker', 'run', '--rm', '--name', project + '_frontend_probe',
+    command(['docker', 'run', '--rm', '--user', '0', '--name', project + '_frontend_probe',
              '--label', 'acropolis.qa.run=' + project, '--network', 'none', '--read-only',
              '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
              '--cpus', '0.5', '--memory', '256m', '--pids-limit', '64',

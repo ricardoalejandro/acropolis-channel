@@ -404,6 +404,23 @@ class FrontendScopedCertificateTests(unittest.TestCase):
         link=self.folder/'linked.json';link.symlink_to(self.proof_path)
         with self.assertRaises(ValueError):self.module.private_path(self.root,link)
 
+    def test_frontend_fingerprint_probe_reads_private_manifest_as_root_without_changing_its_mode(self):
+        source=self.folder/'frontend-dist';source.mkdir()
+        (source/'index.html').write_text('<html>synthetic QA</html>')
+        self.files_path.chmod(0o600)
+        with self.patch.object(self.module,'command',return_value='') as run:
+            result=self.module.frontend_files(self.web_id,'acropolis_test_synthetic',self.root,self.folder)
+        arguments=run.call_args.args[0]
+        self.assertEqual(arguments[arguments.index('--user')+1],'0')
+        self.assertEqual(arguments[arguments.index('--network')+1],'none')
+        self.assertIn('--read-only',arguments)
+        self.assertEqual(arguments[arguments.index('--cap-drop')+1],'ALL')
+        self.assertIn('readonly',arguments[arguments.index('--mount')+1])
+        manifest=self.folder/'frontend-files.sha256'
+        self.assertEqual(result,self.module.digest(manifest))
+        self.assertEqual(manifest.stat().st_mode & 0o777,0o600)
+        self.assertNotIn('chmod',arguments[-1])
+
     def test_scoped_runner_has_fresh_editor_and_full_frontend_but_no_unrelated_volume_work(self):
         source=(SOURCE_ROOT/'scripts/verify-frontend.sh').read_text()
         for expected in ('npm run format:check','npm run typecheck','npm run lint','npm audit --audit-level=high',
