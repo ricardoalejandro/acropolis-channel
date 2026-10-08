@@ -2,24 +2,42 @@
 
 La puerta de calidad es `bash scripts/verify.sh`, ejecutada en el checkout canónico del VPS. No usa GitHub Actions ni instala .NET o Node.js en el host. No despliega producción y no modifica DNS o Traefik.
 
-## Ejecución y artefacto
+## Iteración y candidato definitivo
 
-Con `main` limpio y el cambio revisado:
+Durante el desarrollo, empezar por las pruebas focales del módulo y los contratos afectados: reglas/casos de uso, persistencia o HTTP cuando corresponda, componentes y el recorrido de navegador necesario. Reutilizar casos útiles existentes y añadir sólo los que comprueben una decisión o regresión real. Ejecutar una sola carga pesada a la vez, con el aislamiento, las guardas y los límites vigentes del VPS.
+
+Antes de construir la aplicación o ejecutar el backend integrado, detectar los errores rápidos:
 
 ```bash
 cd /root/proyect/acropolis-channel
-bash scripts/verify.sh
+bash scripts/verify.sh --preflight
 ```
 
-La ejecución fija el SHA inicial, construye una vez `acropolis-channel:<SHA>` y conserva su identificador. También construye `acropolis-channel-migrations:<SHA>`. Los argumentos y labels de construcción identifican el mismo SHA. Al terminar comprueba que el checkout y ambas referencias de imagen no cambiaron durante la verificación.
+Este modo ejecuta sintaxis y pruebas administrativas de scripts, validación Compose y una imagen Node del código actual con `npm ci`, formato, tipos, lint y auditoría npm. No arranca aplicación, PostgreSQL o SMTP ni ejecuta suites de negocio. Guarda un informe de alcance `preflight` y siempre es inelegible para despliegue, incluso con un checkout limpio. No sustituye las pruebas focales ni el gate definitivo.
 
-Para iterar antes de hacer commit:
+Resolver formato, tipos, lint y textos durante esta iteración, antes de congelar el candidato. No utilizar el gate completo como formateador ni repetirlo después de cada ajuste menor. Usar `--working-tree` sólo cuando el cambio necesite comprobar un recorrido integrado que las pruebas focales y el preflight no resuelven:
 
 ```bash
 bash scripts/verify.sh --working-tree
 ```
 
-Ese modo usa etiquetas diferentes, produce `working_tree: true` y `deployment_eligible: false`, incluso si todos los pasos pasan. No certifica el contenido de un commit ni habilita su despliegue.
+Ese modo recorre la verificación integrada, usa etiquetas diferentes y produce `working_tree: true` y `deployment_eligible: false`, incluso si todos los pasos pasan. No certifica el contenido de un commit ni habilita su despliegue.
+
+Para código nuevo de aplicación, cambios de comportamiento o contratos de runtime, migraciones, dependencias o configuración de construcción/ejecución, congelar el candidato revisado en el commit definitivo y ejecutar el gate completo con `main` limpio:
+
+```bash
+bash scripts/verify.sh
+```
+
+Planificar una pasada final sobre ese candidato, después de las comprobaciones rápidas. Si falla o el candidato cambia, resolver la causa y justificar la siguiente pasada según el cambio; no rebajar controles ni atribuir al nuevo candidato el resultado de uno anterior. Un ajuste posterior del código de aplicación exige su propia validación definitiva.
+
+La ejecución fija el SHA inicial, construye una vez `acropolis-channel:<SHA>` y conserva su identificador. También construye `acropolis-channel-migrations:<SHA>`. Los argumentos y labels de construcción identifican el mismo SHA. Al terminar comprueba que el checkout y ambas referencias de imagen no cambiaron durante la verificación.
+
+El gate completo ejecuta también el preflight antes de construir las imágenes de aplicación y migraciones. Antes de los tests frontend y al cerrar revalida las huellas de sus archivos/políticas, la identidad de Node y el hash de la auditoría; sólo así evita repetir formato/tipos/lint/auditoría dentro de la misma ejecución. Mantiene `npm ci`, tests, cobertura, builds, pruebas reales de navegador, carga y restauración.
+
+No existe reuso automático de resultados o certificados entre commits o ejecuciones. La reanudación privada SAME7c autorizada por el operador es una excepción acotada: fija el mismo SHA limpio, imágenes y evidencia inmutable de bloques realmente completados, mantiene el fallo original y exige auditorías frescas y todos los recorridos frescos de runtime, navegador, carga y restauración. No es un modo público de `verify.sh`, una rutina de desarrollo ni una autorización para trasladar un PASS entre versiones.
+
+Si el cambio afecta exclusivamente a documentación/skills o a la orquestación de QA, sin modificar código de aplicación, dependencias, imágenes ni configuración/migraciones de runtime, validar las referencias y el contenido, las pruebas CLI y contratos administrativos afectados, el preflight y la revisión del flujo. No reconstruir ni volver a desplegar la aplicación sólo por ese cambio. Registrar por separado el HEAD de las instrucciones/herramientas y el SHA/IDs reales del runtime publicado; estas comprobaciones no certifican una nueva imagen de aplicación. El próximo cambio de aplicación sigue necesitando su gate completo definitivo. No prometer un ahorro de tiempo sin medirlo.
 
 Cada ejecución guarda logs redactados, coberturas, auditorías, resultados Playwright, resumen k6 y un `report.json` en `.local/qa/<SHA>/<RUN>/`. El JSON incluye `sha`, `image_id`, `migration_image_id`, `status`, `deployment_eligible`, `passed_steps` y `path`. Un fallo produce un informe con `status: failed`; la suite nunca convierte una comprobación fallida en un éxito. `.local/` está ignorado y no es contenido público.
 

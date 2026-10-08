@@ -22,7 +22,11 @@ Backend modular .NET 10/EF 10/Npgsql, React 19/TypeScript/Vite, PostgreSQL 18. U
 
 ## Gate y evidencias
 
-Iterar con `bash scripts/verify.sh --working-tree`; su resultado no habilita despliegue. Para código/scripts/migraciones/configuración de build o runtime, crear el commit definitivo y ejecutar `bash scripts/verify.sh` limpio antes de publicar.
+Durante el desarrollo, ejecutar primero las pruebas focales del módulo y los contratos afectados; después usar `bash scripts/verify.sh --preflight` para scripts, Compose y Node actual con formato/tipos/lint/auditoría, sin aplicación ni base. Ese alcance siempre es inelegible. Resolver ahí los fallos rápidos y los ajustes de texto antes de congelar el candidato; no repetir el gate completo tras cada formato o corrección menor ni usarlo como formateador.
+
+Usar `bash scripts/verify.sh --working-tree` sólo cuando haga falta verificar un recorrido integrado que las pruebas focales y el preflight no cubren. Recorre la verificación integrada y su resultado nunca habilita despliegue. Para nuevo código de aplicación, cambios de comportamiento o contratos de runtime, migraciones, dependencias o configuración de construcción/ejecución, congelar el candidato revisado en el commit definitivo y ejecutar `bash scripts/verify.sh` limpio. Planificar una pasada final tras las comprobaciones rápidas; si falla o cambia el candidato, corregir la causa y justificar la siguiente pasada sin reducir controles. Un cambio posterior de aplicación exige su propia validación definitiva.
+
+El gate revalida las huellas e identidad del preflight dentro de su misma ejecución antes de omitir su repetición tardía. No hay reuso automático entre commits o ejecuciones. La reanudación privada SAME7c es una excepción autorizada por el operador con el mismo SHA limpio, imágenes y evidencia inmutable de bloques completos, auditorías frescas y todos los recorridos frescos de runtime/navegador/carga/restauración. Mantiene el fallo anterior; no es un modo público ni una rutina que esta skill autorice a replicar.
 
 El gate cubre formato/análisis/tipos/lint, auditorías de dependencias, unitarias/cobertura, integración y arquitectura, migraciones, API/componentes/navegador, TLS/configuración Production, resiliencia/reinicio, respaldo/restauración y carga limitada. Fallos bloquean la entrega: corregir su causa sin bajar umbrales ni relajar controles.
 
@@ -32,7 +36,7 @@ Guardar logs privados con secretos redactados y `report.json` en `.local/qa/<sha
 
 Para restauración, seguir el comparador de `docs/quality.md`: referencia de sólo esquema del mismo dump y comparación completa antes/después del runner. PostgreSQL puede reescribir CHECK equivalentes; no eliminarlos del digest ni normalizar con reglas que escondan cambios. Mantener historia EF, propietarios/ACL y digest de fichas/auditoría independientes.
 
-Cambios únicamente documentales/de skills requieren validación de contenido, referencias y frontmatter, no una reconstrucción ni cargas de runtime. No presentar su nuevo SHA como certificado si no tiene un informe propio. Una certificación vigente de la versión publicada sigue siendo evidencia de esa versión, no del HEAD documental posterior.
+Cambios exclusivamente documentales/de skills o de orquestación de QA, sin modificar aplicación, dependencias, imágenes ni configuración/migraciones de runtime, requieren revisión del contenido/referencias/frontmatter y del flujo, pruebas CLI y contratos administrativos afectados y preflight. No reconstruir ni volver a desplegar la aplicación sólo por esas modificaciones. Registrar HEAD de instrucciones/herramientas y SHA/IDs del runtime por separado: esas comprobaciones no certifican una nueva imagen, y la evidencia vigente de la versión publicada sigue referida a esa versión. El siguiente cambio de aplicación conserva la obligación del gate completo. No prometer ahorros de duración sin mediciones.
 
 ## Identity, Catalog y decisiones vigentes
 

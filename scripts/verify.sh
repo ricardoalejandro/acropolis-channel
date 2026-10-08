@@ -4,10 +4,12 @@ umask 077
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$project_dir"
 working_tree=false
+preflight=false
 case "${1:-}" in
   '') ;;
   --working-tree) working_tree=true; shift ;;
-  --help) echo 'Usage: verify.sh [--working-tree]. Only a clean SHA can produce a deployment certificate.'; exit 0 ;;
+  --preflight) preflight=true; working_tree=true; shift ;;
+  --help) echo 'Usage: verify.sh [--working-tree|--preflight]. Preflight is always ineligible; only a complete clean SHA can produce a deployment certificate.'; exit 0 ;;
   *) echo 'Unknown verification argument.' >&2; exit 2 ;;
 esac
 (($# == 0)) || { echo 'Unexpected verification arguments.' >&2; exit 2; }
@@ -54,7 +56,8 @@ mkdir -p -- "$QA_ARTIFACTS" "$QA_TLS/trust" "$QA_TLS/smtp" "$QA_TLS/protection"
 printf '{"schemaVersion":1,"project":"%s","sha":"%s","supervisor_nonce":"%s","processId":%s}\n' "$QA_PROJECT" "$sha" "$supervisor_nonce" "$$" > "$QA_ARTIFACTS/execution-contract.json"
 started_at="$(date -u +%FT%TZ)"
 stage=initialization
-image_id= migration_image_id=
+image_id= migration_image_id= node_image_id=
+frontend_preflight_fingerprint= frontend_preflight_audit_digest=
 steps_json='[]'
 compose() { docker compose --env-file /dev/null -f "$project_dir/compose.qa.yml" -p "$QA_PROJECT" "$@"; }
 redact_log() {
@@ -109,15 +112,23 @@ cleanup() {
   if ! safe_cleanup_project "$integration_project" "$integration_database" >> "$QA_ARTIFACTS/cleanup.log" 2>&1; then cleanup_failed=true; fi
   redact_log "$QA_ARTIFACTS/cleanup.log"
   if [[ "$cleanup_failed" == true ]]; then exit_code=1; stage=cleanup; cleanup_complete=false; fi
-  if [[ "$exit_code" == 0 && ( "$stage" != complete || -z "$image_id" || -z "$migration_image_id" ) ]]; then exit_code=1; stage=incomplete; fi
+  if [[ "$exit_code" == 0 ]]; then
+    if [[ "$preflight" == true ]]; then
+      [[ "$stage" == preflight_complete && -n "$node_image_id" && -n "$frontend_preflight_fingerprint" && -n "$frontend_preflight_audit_digest" ]] || { exit_code=1; stage=incomplete; }
+    elif [[ "$stage" != complete || -z "$image_id" || -z "$migration_image_id" ]]; then
+      exit_code=1; stage=incomplete
+    fi
+  fi
   if [[ "$exit_code" == 0 ]]; then
     status=passed
-    [[ "$working_tree" == true ]] || eligible=true
+    [[ "$working_tree" == true || "$preflight" == true ]] || eligible=true
   fi
   local gate_eligible="$eligible" supervisor_review_pending=false
   if [[ -n "$supervisor_nonce" ]]; then supervisor_review_pending=true; eligible=false; fi
+  local report_scope=''
+  [[ "$preflight" == false ]] || report_scope="\"scope\":\"preflight\",\"preflight\":true,\"node_image_id\":\"$node_image_id\",\"frontend_source_fingerprint\":\"$frontend_preflight_fingerprint\",\"npm_audit_sha256\":\"$frontend_preflight_audit_digest\","
   cat > "$QA_ARTIFACTS/report.json.tmp" <<JSON
-{"sha":"$sha","image":"$QA_IMAGE","image_id":"$image_id","migration_image":"$QA_MIGRATION_IMAGE","migration_image_id":"$migration_image_id","status":"$status","deployment_eligible":$eligible,"gate_eligible":$gate_eligible,"supervisor_review_pending":$supervisor_review_pending,"working_tree":$working_tree,"cleanup_complete":$cleanup_complete,"run_id":"$run_id","path":"$QA_ARTIFACTS/report.json","started_at":"$started_at","completed_at":"$(date -u +%FT%TZ)","last_stage":"$stage","passed_steps":$steps_json}
+{${report_scope}"sha":"$sha","image":"$QA_IMAGE","image_id":"$image_id","migration_image":"$QA_MIGRATION_IMAGE","migration_image_id":"$migration_image_id","status":"$status","deployment_eligible":$eligible,"gate_eligible":$gate_eligible,"supervisor_review_pending":$supervisor_review_pending,"working_tree":$working_tree,"cleanup_complete":$cleanup_complete,"run_id":"$run_id","path":"$QA_ARTIFACTS/report.json","started_at":"$started_at","completed_at":"$(date -u +%FT%TZ)","last_stage":"$stage","passed_steps":$steps_json}
 JSON
   mv -- "$QA_ARTIFACTS/report.json.tmp" "$QA_ARTIFACTS/report.json"
   echo "QA $status: $QA_ARTIFACTS/report.json"
@@ -137,12 +148,64 @@ for source in Path('scripts').glob('*.py'):
     ast.parse(source.read_text(), filename=str(source))
 PY_STATIC
 }
+artifact_digest() {
+  [[ -s "$1" ]] || { echo 'Missing or empty comparison artifact.' >&2; return 1; }
+  local digest
+  digest="$(sha256sum -- "$1" | cut -d ' ' -f 1)" || return 1
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid artifact digest.' >&2; return 1; }
+  printf '%s\n' "$digest"
+}
+frontend_source_fingerprint() {
+  python3 - <<'PY_FRONTEND_FINGERPRINT'
+import hashlib,json,stat,subprocess
+from pathlib import Path
+scope=['frontend','Dockerfile','.dockerignore','compose.qa.yml','scripts/verify.sh','tests/load/assert-quality.mjs','docs/quality.md','.agents/skills/acropolis-quality/SKILL.md']
+raw=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z','--',*scope])
+rows=[]
+for name in sorted(set(raw.decode().split('\0'))-set([''])):
+    path=Path(name)
+    try:
+        mode=path.lstat().st_mode
+    except FileNotFoundError:
+        rows.append({'path':name,'deleted':True})
+        continue
+    if not stat.S_ISREG(mode): raise SystemExit('Frontend input must be a regular file: '+name)
+    rows.append({'path':name,'mode':stat.S_IMODE(mode),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+if not rows: raise SystemExit('Missing frontend fingerprint inputs')
+print(hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest())
+PY_FRONTEND_FINGERPRINT
+}
+frontend_preflight_consistency() {
+  [[ "$(frontend_source_fingerprint)" == "$frontend_preflight_fingerprint" ]] || { echo 'Frontend source or quality policy changed after preflight.' >&2; return 1; }
+  [[ "$(docker image inspect --format '{{.Id}}' "$QA_NODE_IMAGE")" == "$node_image_id" ]] || { echo 'Node runner identity changed after preflight.' >&2; return 1; }
+  [[ "$(artifact_digest "$QA_ARTIFACTS/npm-audit.json")" == "$frontend_preflight_audit_digest" ]] || { echo 'Frontend audit evidence changed after preflight.' >&2; return 1; }
+}
 run_step static_checks static_checks
 [[ -s tests/deploy/test_deploy.py ]] || { echo 'Missing deployment orchestration test suite.' >&2; exit 1; }
 run_step deployment_orchestration env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s tests/deploy -v
 run_step smtp_network_contract env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s scripts/tests -p 'test_smtp_network.py' -v
 run_step identity_runtime_preflight env PYTHONDONTWRITEBYTECODE=1 nice -n 10 python3 -m unittest discover -s scripts/tests -p 'test_identity_runtime.py' -v
 run_step compose_validation compose config --quiet
+stage=frontend_source_fingerprint
+frontend_preflight_fingerprint="$(frontend_source_fingerprint)"
+run_step build_node_runner docker build --target node --label "org.opencontainers.image.revision=$sha" --tag "$QA_NODE_IMAGE" .
+node_image_id="$(docker image inspect --format '{{.Id}}' "$QA_NODE_IMAGE")"
+# No QA PKI exists yet. npm retains the image's normal trusted public CA roots.
+run_step frontend_preflight compose run --rm --no-deps -e NODE_EXTRA_CA_CERTS= node '
+  mkdir -p /workspace && cp -a /source/frontend/. /workspace/ && cd /workspace
+  node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"
+  npm ci --no-audit --no-fund
+  npm run format:check
+  npm run typecheck
+  npm run lint
+  npm audit --audit-level=high --json > /artifacts/npm-audit.json
+'
+frontend_preflight_audit_digest="$(artifact_digest "$QA_ARTIFACTS/npm-audit.json")"
+run_step frontend_preflight_consistency frontend_preflight_consistency
+if [[ "$preflight" == true ]]; then
+  stage=preflight_complete
+  exit 0
+fi
 run_step build_candidate docker build --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_IMAGE" .
 image_id="$(docker image inspect --format '{{.Id}}' "$QA_IMAGE")"
 runtime_image_check() {
@@ -163,7 +226,6 @@ run_step runtime_image_security runtime_image_check
 run_step build_migrations docker build --target migrations --label "org.opencontainers.image.revision=$sha" --build-arg "REVISION=$sha" --tag "$QA_MIGRATION_IMAGE" .
 migration_image_id="$(docker image inspect --format '{{.Id}}' "$QA_MIGRATION_IMAGE")"
 run_step build_sdk_runner docker build --target sdk --label "org.opencontainers.image.revision=$sha" --tag "$QA_SDK_IMAGE" .
-run_step build_node_runner docker build --target node --label "org.opencontainers.image.revision=$sha" --tag "$QA_NODE_IMAGE" .
 run_step build_playwright_runner docker build --target playwright --label "org.opencontainers.image.revision=$sha" --tag "$QA_PLAYWRIGHT_IMAGE" .
 run_step build_pki_runner docker build --target qa-pki --tag "$QA_PKI_IMAGE" .
 run_step build_preview docker build --target preview --label "org.opencontainers.image.revision=$sha" --tag "$QA_PREVIEW_IMAGE" .
@@ -202,17 +264,14 @@ run_step catalog_integration_coverage compose run --rm --no-deps node 'node /qa-
 run_step subscriptions_unit_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/subscriptions-unit 80 Acropolis.Subscriptions.Application'
 run_step subscriptions_integration_coverage compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs coverage /artifacts/backend/subscriptions-integration 80 Acropolis.Subscriptions.Infrastructure'
 run_step integration_database_cleanup safe_cleanup_project "$integration_project" "$integration_database"
+run_step frontend_preflight_recheck frontend_preflight_consistency
 run_step frontend_quality compose run --rm --no-deps node '
   mkdir -p /workspace && cp -a /source/frontend/. /workspace/ && cd /workspace
   node -e "if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)"
   npm ci --no-audit --no-fund
-  npm run typecheck
-  npm run lint
-  npm run format:check
   FRONTEND_COVERAGE_DIR=/artifacts/frontend-coverage npm run test:coverage
   npm run build
   npm run build:preview
-  npm audit --audit-level=high --json > /artifacts/npm-audit.json
 '
 run_step private_mail_start compose up -d --wait --wait-timeout 60 mailpit mailpit-starttls
 run_step smtp_strict_tls compose run --rm --no-deps migrations smtp-check
@@ -254,13 +313,6 @@ run_step browser_untrusted_tls compose run --rm --no-deps --entrypoint /bin/bash
 run_step browser_trusted_tls compose run --rm --no-deps playwright 'cp /qa-infra/browser-tls-check.mjs /source/frontend/browser-tls-check.mjs; cd /source/frontend; node browser-tls-check.mjs trusted'
 run_step liveness_before_migrations compose run --rm --no-deps node 'node /qa-tools/assert-quality.mjs http "$BASE_URL/health" 200 ok'
 run_step migrations_first compose run --rm --no-deps migrations
-artifact_digest() {
-  [[ -s "$1" ]] || { echo 'Missing or empty comparison artifact.' >&2; return 1; }
-  local digest
-  digest="$(sha256sum -- "$1" | cut -d ' ' -f 1)" || return 1
-  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid artifact digest.' >&2; return 1; }
-  printf '%s\n' "$digest"
-}
 schema_dump() {
   compose exec -T db sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$1" --schema-only --no-owner --no-privileges' sh "${1:-$QA_DATABASE}" |
     sed '/^\\restrict /d; /^\\unrestrict /d'
@@ -891,5 +943,6 @@ stage=checkout_consistency
 if [[ "$working_tree" == false ]]; then
   [[ "$(git rev-parse HEAD)" == "$sha" && -z "$(git status --porcelain)" ]] || { echo 'Checkout changed during verification; cannot certify candidate.' >&2; exit 1; }
 fi
+frontend_preflight_consistency
 [[ "$(docker image inspect --format '{{.Id}}' "$QA_IMAGE")" == "$image_id" && "$(docker image inspect --format '{{.Id}}' "$QA_MIGRATION_IMAGE")" == "$migration_image_id" ]] || { echo 'Candidate image tag changed during verification.' >&2; exit 1; }
 stage=complete
