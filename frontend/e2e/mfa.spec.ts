@@ -107,6 +107,8 @@ test('authenticator enrollment, second factor, recovery rotation and revocation 
   if (testInfo.project.name === 'mobile-chromium')
     await page.getByRole('button', { name: 'Menú', exact: true }).click();
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect((await page.request.get('/api/v1/identity/me')).status()).toBe(401);
   await loginForm();
   await expect(
     page.getByRole('heading', { name: 'Confirma que eres tú.', exact: true }),
