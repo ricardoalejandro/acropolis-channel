@@ -1,0 +1,274 @@
+# Persistent WSL development only. Invoke via scripts/local-runtime.py, never with .env.
+name: acropolis-channel-local
+
+x-logging: &local-logging
+  driver: json-file
+  options:
+    max-size: 5m
+    max-file: '3'
+
+x-identity: &local-identity
+  Identity__EmailEnabled: 'true'
+  Identity__PublicOrigin: https://localhost:17443
+  Identity__KnownProxies: ${LOCAL_PROXY_IP:?Local proxy IP required}
+  Identity__DataProtection__KeyRingPath: /var/acropolis/keys
+  Identity__DataProtection__ApplicationName: AcropolisChannel
+  Identity__DataProtection__CertificatePath: /local-pki/protection/protector.pfx
+  Identity__DataProtection__CertificatePassword: ${LOCAL_DP_PASSWORD:?Local protector password required}
+  Identity__Smtp__Host: mailpit
+  Identity__Smtp__Port: '465'
+  Identity__Smtp__Username: local
+  Identity__Smtp__Password: ${LOCAL_SMTP_PASSWORD:?Local SMTP password required}
+  Identity__Smtp__FromEmail: dev@acropolis.test
+  Identity__Smtp__FromName: Acrópolis local
+  Identity__Smtp__Security: ssl
+  Catalog__Consumption__RecordingEnabled: 'false'
+  Subscriptions__Notifications__Enabled: 'false'
+  SSL_CERT_FILE: /local-pki/trust/ca-bundle.crt
+  SSL_CERT_DIR: /etc/ssl/certs
+
+x-app-volumes: &local-app-volumes
+  - keyring:/var/acropolis/keys
+  - type: volume
+    source: pki
+    target: /local-pki/trust
+    read_only: true
+    volume:
+      subpath: trust
+  - type: volume
+    source: pki
+    target: /local-pki/protection
+    read_only: true
+    volume:
+      subpath: protection
+
+services:
+  db:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: acropolis_local
+      POSTGRES_USER: acropolis_admin
+      POSTGRES_PASSWORD: ${LOCAL_DB_ADMIN_PASSWORD:?Local admin password required}
+      DB_APP_PASSWORD: ${LOCAL_DB_APP_PASSWORD:?Local app password required}
+      DB_MIGRATION_PASSWORD: ${LOCAL_DB_MIGRATION_PASSWORD:?Local migrator password required}
+    volumes:
+      - database:/var/lib/postgresql
+      - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    labels:
+      acropolis.environment: local
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 0.5
+    pids_limit: 128
+    logging: *local-logging
+
+  pki:
+    image: ${LOCAL_PKI_IMAGE:?Local PKI image required}
+    profiles: [tools]
+    entrypoint: [/bin/bash, /local-infra/prepare-pki.sh]
+    environment:
+      LOCAL_RUNTIME: acropolis-channel-local
+      LOCAL_APP_UID: ${LOCAL_APP_UID:-1654}
+      LOCAL_DP_PASSWORD: ${LOCAL_DP_PASSWORD:?Local protector password required}
+    volumes:
+      - ./infra/local:/local-infra:ro
+      - pki:/local-pki
+      - keyring:/keyring
+      - type: bind
+        source: ./.local/runtime/export
+        target: /export
+        bind:
+          create_host_path: false
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    labels:
+      acropolis.environment: local
+    mem_limit: 192m
+    cpus: 0.5
+    pids_limit: 64
+    logging: *local-logging
+
+  crl:
+    image: ${LOCAL_PKI_IMAGE:?Local PKI image required}
+    restart: unless-stopped
+    user: '1654:1654'
+    entrypoint: [node, /local-infra/crl-server.mjs]
+    environment:
+      LOCAL_RUNTIME: acropolis-channel-local
+    volumes:
+      - ./infra/local/crl-server.mjs:/local-infra/crl-server.mjs:ro
+      - type: volume
+        source: pki
+        target: /local-pki/crl
+        read_only: true
+        volume:
+          subpath: crl
+    networks: [private]
+    healthcheck:
+      test: [CMD, node, -e, "require('http').get('http://127.0.0.1:8082/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 10s
+      start_period: 15s
+      retries: 20
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      acropolis.environment: local
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 32
+    logging: *local-logging
+
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    restart: unless-stopped
+    environment:
+      MP_SMTP_TLS_CERT: /local-pki/smtp/cert.pem
+      MP_SMTP_TLS_KEY: /local-pki/smtp/key.pem
+      MP_SMTP_BIND_ADDR: '0.0.0.0:465'
+      MP_SMTP_REQUIRE_TLS: 'true'
+      MP_SMTP_AUTH: local:${LOCAL_SMTP_PASSWORD:?Local SMTP password required}
+      MP_MAX_MESSAGES: '200'
+    depends_on:
+      crl:
+        condition: service_healthy
+    volumes:
+      - type: volume
+        source: pki
+        target: /local-pki/smtp
+        read_only: true
+        volume:
+          subpath: smtp
+    ports:
+      - '127.0.0.1:17425:8025'
+    networks: [private, publication]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      acropolis.environment: local
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    logging: *local-logging
+
+  proxy:
+    image: caddy:2.11.6-alpine
+    restart: unless-stopped
+    volumes:
+      - ./infra/local/Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: volume
+        source: pki
+        target: /local-pki/web
+        read_only: true
+        volume:
+          subpath: web
+    ports:
+      - '127.0.0.1:17480:8080'
+      - '127.0.0.1:17443:8443'
+    networks: [private, publication]
+    read_only: true
+    tmpfs: ["/config:size=16m,mode=1777", "/data:size=16m,mode=1777", "/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    # The upstream Caddy binary carries this file capability.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    labels:
+      acropolis.environment: local
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    logging: *local-logging
+
+  migrations:
+    image: ${LOCAL_MIGRATION_IMAGE:?Local migration image required}
+    profiles: [tools]
+    environment:
+      <<: *local-identity
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Database: Host=db;Port=5432;Database=acropolis_local;Username=acropolis_migrator;Password=${LOCAL_DB_MIGRATION_PASSWORD:?Local migrator password required};Timeout=5;Command Timeout=30
+    volumes: *local-app-volumes
+    networks: [private]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      acropolis.environment: local
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+    logging: *local-logging
+
+  web:
+    image: ${LOCAL_WEB_IMAGE:?Local web image required}
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *local-identity
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      AllowedHosts: localhost;127.0.0.1;web
+      ConnectionStrings__Database: Host=db;Port=5432;Database=acropolis_local;Username=acropolis_app;Password=${LOCAL_DB_APP_PASSWORD:?Local app password required};Timeout=3;Command Timeout=3;Pooling=true
+    volumes: *local-app-volumes
+    networks: [private]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 15s
+    labels:
+      acropolis.environment: local
+    mem_limit: 640m
+    cpus: 0.75
+    pids_limit: 128
+    logging: *local-logging
+
+networks:
+  private:
+    name: acropolis_channel_local_private
+    internal: true
+    labels:
+      acropolis.environment: local
+  publication:
+    name: acropolis_channel_local_publication
+    driver: bridge
+    labels:
+      acropolis.environment: local
+
+volumes:
+  database:
+    name: acropolis_channel_local_database
+    labels:
+      acropolis.environment: local
+  keyring:
+    name: acropolis_channel_local_keyring
+    labels:
+      acropolis.environment: local
+  pki:
+    name: acropolis_channel_local_pki
+    labels:
+      acropolis.environment: local

@@ -1,11 +1,11 @@
 ---
 name: acropolis-design
-description: Diseñar, rediseñar y revisar la interfaz pública y el backoffice de Acrópolis Channel con identidad propia, accesibilidad y validación visual en el VPS. Usar para cualquier cambio de frontend, tipografía, paleta, navegación, formularios o reproducción.
+description: Diseñar, rediseñar y revisar la interfaz pública y el backoffice de Acrópolis Channel desde WSL con identidad propia, accesibilidad y validación visual aislada. Usar para cualquier cambio de frontend, tipografía, paleta, navegación, formularios o reproducción.
 ---
 
 # Diseño de Acrópolis Channel
 
-Leer AGENTS.md y docs/design.md del checkout canónico. Desde Windows cargar por SSH estricto; mantener código y reglas en el VPS. El encargo actual del propietario prevalece sobre una captura o regla archivada.
+Leer `AGENTS.md`, `docs/wsl-development.md` y `docs/design.md` del checkout de trabajo. Desarrollar en `/home/rrojacam/projects/acropolis-channel` de WSL Ubuntu 24.04; desde Codex Windows ejecutar Linux con `wsl.exe -d Ubuntu-24.04 --cd /home/rrojacam/projects/acropolis-channel -- bash -lc 'COMANDO'`. Mantener reglas y código versionados, sincronizados por Git. La certificación de publicación y producción permanecen en `/root/proyect/acropolis-channel` del VPS, accesible con `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps`. `.local/` conserva evidencias del entorno en uso; no copiar materiales productivos a WSL. El encargo actual del propietario prevalece sobre una captura o regla archivada.
 
 ## Antes de editar
 

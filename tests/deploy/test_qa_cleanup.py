@@ -127,6 +127,95 @@ class QaCleanupTests(unittest.TestCase):
                 self.assertTrue(result["cleanupUnknown"])
                 self.assertFalse(result["cleanupComplete"])
 
+    def test_docker29_get_volume_absence_is_verified(self):
+        docker = FakeDocker()
+        def missing_volume(arguments, options):
+            if arguments[1] == "inspect" and arguments[arguments.index("--type") + 1] == "volume":
+                return subprocess.CompletedProcess(arguments, 1, "", "Error response from daemon: get " + arguments[-1] + ": no such volume\n")
+            return None
+        docker.fault = missing_volume
+        result, code = self.execute(docker)
+        self.assertEqual(0, code)
+        self.assertTrue(result["ownershipVerified"])
+        self.assertTrue(result["cleanupComplete"])
+        self.assertFalse(result["cleanupUnknown"])
+
+    def test_get_volume_absence_requires_exact_name_and_error(self):
+        errors = {
+            "different_name": lambda name: "Error response from daemon: get " + name + "_other: no such volume",
+            "partial_name": lambda name: "Error response from daemon: get " + name[:-1] + ": no such volume",
+            "name_case": lambda name: "Error response from daemon: get " + name.upper() + ": no such volume",
+            "wrong_type": lambda name: "Error response from daemon: get " + name + ": no such network",
+            "error_case": lambda name: "ERROR RESPONSE FROM DAEMON: GET " + name + ": NO SUCH VOLUME",
+        }
+        for label, error in errors.items():
+            with self.subTest(error=label):
+                docker = FakeDocker(populated=True)
+                def invalid_absence(arguments, options):
+                    if arguments[1] == "inspect" and arguments[arguments.index("--type") + 1] == "volume":
+                        return subprocess.CompletedProcess(arguments, 1, "", error(arguments[-1]))
+                    return None
+                docker.fault = invalid_absence
+                result, code = self.execute(docker, "remove-owned")
+                self.assertEqual(1, code)
+                self.assertEqual("inspection_failed", result["errors"][0]["type"])
+                self.assertTrue(result["cleanupUnknown"])
+                self.assertFalse(result["cleanupComplete"])
+                self.assertFalse(docker.removals)
+
+    def test_get_volume_absence_is_rejected_for_other_resource_kinds(self):
+        for kind in ("container", "network"):
+            with self.subTest(kind=kind):
+                docker = FakeDocker(populated=True)
+                def wrong_inspection_kind(arguments, options):
+                    if arguments[1] == "inspect" and arguments[arguments.index("--type") + 1] == kind:
+                        return subprocess.CompletedProcess(arguments, 1, "", "Error response from daemon: get " + arguments[-1] + ": no such volume")
+                    return None
+                docker.fault = wrong_inspection_kind
+                result, code = self.execute(docker, "remove-owned")
+                self.assertEqual(1, code)
+                self.assertTrue(result["cleanupUnknown"])
+                self.assertFalse(result["cleanupComplete"])
+                self.assertFalse(docker.removals)
+
+    def test_get_volume_absence_requires_exit_code_one(self):
+        for code in (2, 125, -15):
+            with self.subTest(code=code):
+                docker = FakeDocker(populated=True)
+                def wrong_exit(arguments, options):
+                    if arguments[1] == "inspect" and arguments[arguments.index("--type") + 1] == "volume":
+                        return subprocess.CompletedProcess(arguments, code, "", "Error response from daemon: get " + arguments[-1] + ": no such volume")
+                    return None
+                docker.fault = wrong_exit
+                result, status = self.execute(docker, "remove-owned")
+                self.assertEqual(1, status)
+                self.assertTrue(result["cleanupUnknown"])
+                self.assertFalse(result["cleanupComplete"])
+                self.assertFalse(docker.removals)
+
+    def test_get_volume_absence_does_not_hide_daemon_or_multiple_errors(self):
+        errors = {
+            "daemon_prefix": lambda message: "Cannot connect to the Docker daemon: " + message,
+            "daemon_suffix": lambda message: message + ": Docker daemon unavailable",
+            "multiline_prefix": lambda message: message.replace(": get ", ":\nget "),
+            "multiple_lines": lambda message: message + "\nCannot connect to the Docker daemon",
+            "repeated_error": lambda message: message + "\n" + message,
+        }
+        for label, error in errors.items():
+            with self.subTest(error=label):
+                docker = FakeDocker(populated=True)
+                def misleading_error(arguments, options):
+                    if arguments[1] == "inspect" and arguments[arguments.index("--type") + 1] == "volume":
+                        message = "Error response from daemon: get " + arguments[-1] + ": no such volume"
+                        return subprocess.CompletedProcess(arguments, 1, "", error(message))
+                    return None
+                docker.fault = misleading_error
+                result, code = self.execute(docker, "remove-owned")
+                self.assertEqual(1, code)
+                self.assertTrue(result["cleanupUnknown"])
+                self.assertFalse(result["cleanupComplete"])
+                self.assertFalse(docker.removals)
+
     def test_absence_requires_exit_code_one(self):
         for code in (2, 125, -15):
             for typed in (False, True):

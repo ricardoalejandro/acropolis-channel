@@ -7,11 +7,13 @@ description: "Preparar, desplegar o diagnosticar Acropolis Channel directamente 
 
 ## Inicio y autorización
 
-Trabajar en `/root/proyect/acropolis-channel`, main de `https://github.com/ricardoalejandro/acropolis-channel`. Desde Windows conectar con `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps`; en el VPS operar directamente. Leer `AGENTS.md`, `.local/continuation-current.md` y `.local/vps-deployment.md`. Las rutas siguientes son del checkout canónico.
+El desarrollo se realiza en WSL conforme a `docs/wsl-development.md`; esta skill opera producción y certificación de publicación en `/root/proyect/acropolis-channel` del VPS, main de `https://github.com/ricardoalejandro/acropolis-channel`. Desde Windows conectar con `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes vps`; en el VPS operar directamente. Leer `AGENTS.md`, `.local/continuation-current.md` y `.local/vps-deployment.md` de ese checkout. Las rutas operativas siguientes corresponden al VPS.
 
-Desplegar cuando la solicitud lo requiera; una autorización vigente basta. Código, QA, push o actualización de instrucciones no autorizan por sí solos despliegue. No crear/modificar DNS, recursos AWS u otros proyectos sin solicitud. Conservar ausencia de Actions y runtimes compartidos.
+Los cambios se revisan primero en el runtime local persistente de WSL: `compose.local.yml`, proyecto `acropolis-channel-local`, localhost HTTPS en 17443, redirección HTTP en 17480, Mailpit en 17425 y variables privadas `LOCAL_*` en `.local/runtime/.env`. PostgreSQL/SMTP son internos y todos sus datos/PKI son locales. Cuando el propietario solicite subirlos a producción, sincronizar código mediante Git y realizar certificación y despliegue por la conexión VPS usando exclusivamente las variables productivas del servidor. No reutilizar el Compose, los puertos, las variables, el certificado o los volúmenes locales en producción ni trasladar su comprobación `check` como certificado de publicación.
 
-Consultar `.local/last-active-deployment` y su manifiesto para el runtime real; `.local/last-deployment` para publicación verificada. HEAD puede ser posterior por documentación: no asumir que Git y la imagen pública son el mismo SHA ni repetir una operación sin revisar proceso/log/manifest.
+Desplegar cuando la solicitud lo requiera; una autorización vigente basta. La autorización del incremento ya publicado no solicita otra publicación por trasladar desarrollo a WSL. Código, QA, push o actualización de instrucciones no autorizan por sí solos despliegue. No crear/modificar DNS, recursos AWS u otros proyectos sin solicitud. Conservar ausencia de Actions y runtimes compartidos.
+
+Consultar `.local/last-active-deployment` y su manifiesto del VPS para el runtime real; `.local/last-deployment` para publicación verificada. `.local/` de WSL tiene continuidad y evidencias propias y no sustituye estos registros. No copiar secretos, backups o manifiestos productivos a WSL. Sincronizar código mediante Git conservando trabajo en ambos entornos. HEAD puede ser posterior por documentación: no asumir que Git y la imagen pública son el mismo SHA ni repetir una operación sin revisar proceso/log/manifest.
 
 ## Preparación y certificación
 

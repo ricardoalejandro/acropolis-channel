@@ -64,6 +64,8 @@ class Cleanup:
                 patterns.append(r"(?i:(?:error(?: response from daemon)?:\s*)?no such container:\s*)" + re.escape(name))
             if resource_kind in ("volume", "network"):
                 patterns.append(r"(?i:error response from daemon:\s*" + resource_kind + " )" + re.escape(name) + r"(?i: not found)")
+            if resource_kind == "volume":
+                patterns.append(r"Error response from daemon: get " + re.escape(name) + r": no such volume")
             absence = result.returncode == 1 and any(re.fullmatch(pattern, result.stderr.strip()) for pattern in patterns)
             if allow_absent and absence:
                 return None
