@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderApp } from './test/renderApp';
 import { clearCsrf, type User } from './api/identity';
 import { user, admin, json } from './test/fixtures';
+vi.mock('./validation/passwordStrength', () => ({
+  estimatePasswordStrength: vi.fn().mockResolvedValue({ score: 2, warning: '', suggestions: [] }),
+}));
 type Override = (path: string, init?: RequestInit) => Response | Promise<Response> | undefined;
 function mount(
   path: string,
