@@ -377,7 +377,9 @@ test('@modernization free subscription, protected works, ordered collections, ow
         name: new RegExp('Ver suscripciones de .*' + viewerEmail.replaceAll('.', '\\.')),
       })
       .click();
-    await expect(page.locator('main tbody')).toContainText(viewerEmail);
+    await expect(
+      page.getByRole('region', { name: 'Listado de suscripciones', exact: true }).locator('tbody'),
+    ).toContainText(viewerEmail);
     await page.getByLabel('Estado', { exact: true }).selectOption('suspended');
     await page.getByRole('button', { name: 'Buscar', exact: true }).click();
     await expect(page).toHaveURL(/status=suspended/);
