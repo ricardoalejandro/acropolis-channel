@@ -9,6 +9,8 @@ Leer `AGENTS.md`, `docs/wsl-development.md` y `docs/design.md` del checkout de t
 
 ## Antes de editar
 
+Para revisar en localhost, comprobar primero el runtime existente y HTTPS desde Windows conforme a `docs/wsl-development.md` y acropolis-quality. Si los servicios están saludables, reutilizarlos; una confianza TLS ausente se resuelve con `./scripts/local-runtime.ps1 trust` y `check`, sin reiniciar ni cambiar la aplicación por ese motivo. La comprobación técnica no sustituye la inspección de pantalla; si la herramienta de navegador está bloqueada por política, declarar la revisión visual pendiente y no eludirla.
+
 Determinar la tarea concreta del visitante y revisar la pantalla y el comportamiento existentes. Para nuevas superficies, fijar jerarquía, recorrido y datos reales antes de elegir componentes. Leer references/review.md. No ejecutar instaladores, binarios o hooks de referencias externas: esta skill es una adaptación específica, no el launcher Impeccable.
 
 ## Construir

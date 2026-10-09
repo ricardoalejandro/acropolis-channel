@@ -20,7 +20,7 @@ wsl -d Ubuntu-24.04 --cd /home/rrojacam/projects/acropolis-channel --exec /bin/b
 wsl -d Ubuntu-24.04 --cd /home/rrojacam/projects/acropolis-channel --exec /bin/bash -lc 'bash scripts/verify.sh --preflight'
 ```
 
-Git de Windows confía únicamente en esta ruta UNC mediante una entrada `safe.directory` específica. El repositorio usa `core.autocrlf=false` para conservar finales de línea Linux y `core.filemode=false` para evitar diferencias ficticias de permisos al leerlo desde Windows. Los permisos existentes y los bits ejecutables del índice se conservan. Al añadir un script ejecutable nuevo, declarar ese permiso con `git update-index --chmod=+x RUTA` y comprobar el archivo en Linux. Ejecutar las operaciones Git de trabajo dentro de WSL.
+Git de Windows confía únicamente en esta ruta UNC mediante una entrada `safe.directory` específica. El repositorio usa `core.autocrlf=false` para conservar finales de línea Linux y `core.filemode=false` para evitar diferencias ficticias de permisos al leerlo desde Windows. Los permisos existentes y los bits ejecutables del índice se conservan. Al añadir un script ejecutable nuevo, declarar ese permiso con `git update-index --chmod=+x RUTA` y comprobar el archivo en Linux. Ejecutar las operaciones Git de trabajo dentro de WSL. Si Git Windows sobre UNC devuelve errores como `Function not implemented` al consultar `.git/sequencer/todo`, comprobar el estado con Git Linux antes de interpretar una operación pendiente; no borrar metadatos para corregir una diferencia de lectura. Cuando haga falta la autenticación GitHub ya existente de Windows para fetch/push, usarla sin copiar credenciales a WSL ni al repositorio.
 
 Si el entorno aislado de Windows devuelve `Wsl/E_ACCESSDENIED`, solicitar la ejecución autorizada fuera de ese aislamiento para la operación concreta. Esto es distinto de instalar o iniciar sesión en Codex dentro de Linux. No copiar la sesión de Codex, credenciales SSH/Git ni autenticaciones del VPS a WSL.
 
@@ -53,10 +53,12 @@ El propietario solicita poder pedir cambios y revisarlos con servicios locales l
 
 PostgreSQL (`acropolis_local`) y SMTP TLS/autenticado (`mailpit:465`) sólo existen en la red privada; no publican puertos del host. El correo local se captura en Mailpit y no se entrega por el SMTP productivo. Los recorridos de registro y confirmación se realizan con la interfaz y sus correos normales, sin confirmaciones automáticas ni semillas QA. Seguimiento de consumo y avisos de suscripción permanecen deshabilitados por defecto.
 
-Desde PowerShell en la raíz del checkout:
+Desde `pwsh` (PowerShell 7 disponible en este entorno), en la raíz del checkout; el wrapper usa sus API .NET de certificados y no debe ejecutarse con Windows PowerShell 5.1:
 
 ```powershell
 ./scripts/local-runtime.ps1 up
+# Reutilizar imágenes sólo cuando la fuente de aplicación no cambió:
+./scripts/local-runtime.ps1 up -NoBuild
 ./scripts/local-runtime.ps1 status
 # Instalar/verificar el certificado ya generado, sin reiniciar servicios:
 ./scripts/local-runtime.ps1 trust
@@ -65,7 +67,7 @@ Desde PowerShell en la raíz del checkout:
 ./scripts/local-runtime.ps1 stop
 ```
 
-El wrapper usa WSL para el runtime y comprueba también los listeners de Windows antes de ocupar los puertos fijos. Cada `up` detiene únicamente este proyecto local antes de comprobarlos y conserva sus volúmenes; también recupera un arranque anterior incompleto. Dentro de WSL, la misma interfaz es:
+El wrapper usa WSL para el runtime y comprueba también los listeners de Windows antes de ocupar los puertos fijos. Cada `up` detiene únicamente este proyecto local antes de comprobarlos y conserva sus volúmenes; también recupera un arranque anterior incompleto. El comando `trust` es exclusivo del wrapper Windows; Python no modifica almacenes de certificados Windows. Dentro de WSL:
 
 ```bash
 python3 scripts/local-runtime.py up
@@ -80,6 +82,8 @@ Las credenciales `LOCAL_*` se generan y conservan en `.local/runtime/.env`, con 
 
 El certificado web es una hoja autofirmada `CA:FALSE`, limitada a localhost y direcciones de loopback. Se exporta únicamente su parte pública a `.local/runtime/export/localhost.crt`. El wrapper Windows valida su identidad y gestiona la confianza de ese certificado exacto en el almacén `Cert:\CurrentUser\Root`. La primera instalación puede mostrar una confirmación de Windows: aceptar únicamente `Acropolis Localhost Development`. `trust` instala o verifica el certificado ya generado sin detener ni recrear los servicios; `up` reutiliza ese mismo procedimiento. El importador tiene una espera máxima de 45 segundos y el recibo privado sólo se guarda después de comprobar la huella exacta en el almacén. Si la confirmación no se completa, seguir el comando `Import-Certificate` que muestra el error desde una ventana interactiva de PowerShell y volver a ejecutar `check`. La CA SMTP separada y sus claves permanecen dentro del volumen privado de PKI y no se importan en Windows. No usar excepciones TLS del navegador ni trasladar certificados productivos para abrir localhost.
 
+Un error `NET::ERR_CERT_AUTHORITY_INVALID` en localhost requiere revisar la confianza antes de modificar o regenerar certificados: ejecutar `trust` y luego el `check` Windows. El `check` Python valida HTTPS con la hoja local explícita y no comprueba `CurrentUser/Root`. Un recibo `windows-trust.json` registra una observación, no garantiza que la hoja siga instalada. No repetir importadores bloqueados sin comprobar su proceso; el helper acotado termina su propio hijo y explica cómo completar la confirmación interactiva.
+
 `check` indica explícitamente si Windows todavía no confía en el certificado local y verifica HTTPS con la validación TLS normal. Tras instalarlo, volver a cargar la pestaña de `https://localhost:17443`; la confianza debe estar comprobada antes de considerar el sitio local accesible sin advertencias.
 
 `check` comprueba el runtime local y sus recorridos técnicos reales; pasar esa comprobación no constituye un gate completo ni un certificado elegible para publicación. La disponibilidad actual y cualquier revisión visual deben registrarse como resultados observados, separados de la preparación de estos helpers.
@@ -88,8 +92,10 @@ El certificado web es una hoja autofirmada `CA:FALSE`, limitada a localhost y di
 
 1. Leer AGENTS y `.local/continuation-current.md`, revisar `git status` y cargar la skill correspondiente.
 2. Sincronizar con `git fetch origin` y fast-forward cuando el estado lo permita. Conservar los cambios existentes y evitar reset, clean o push forzado.
-3. Levantar los servicios persistentes con el helper local para revisar cambios en localhost y desarrollar/probar según el riesgo. El preflight verifica sintaxis, pruebas administrativas, Compose, formato, tipos, lint y auditoría frontend con Node en Docker; ese procedimiento no levanta aplicación, PostgreSQL ni SMTP y su informe siempre es inelegible para despliegue.
+3. Consultar `status` y `check` del runtime existente; desde Windows usar también el `check` del wrapper para comprobar confianza TLS, redirección y buzón. Si está saludable, reutilizarlo. Si hay que iniciarlo o incorporar cambios de aplicación, ejecutar `up`; no reutilizar imágenes anteriores a esos cambios mediante `-NoBuild`/`--no-build`. Resolver una confianza TLS pendiente con `trust` sin reiniciar servicios. Desarrollar/probar según el riesgo. El preflight verifica sintaxis, pruebas administrativas, Compose, formato, tipos, lint y auditoría frontend con Node en Docker; ese procedimiento no levanta aplicación, PostgreSQL ni SMTP y su informe siempre es inelegible para despliegue.
 4. Leer el `report.json` nuevo y comprobar `status`, `scope`, `deployment_eligible` y `cleanup_complete`. Los informes están en `.local/qa/<sha>/<run>/`.
+
+La fuente de aplicación y el Dockerfile son comunes a local y producción; las recetas separadas aplican las variables de cada entorno. Versionar y sincronizar los cambios necesarios de aplicación, receta e instrucciones mediante GitHub, con su validación correspondiente. Guardar en la continuidad privada los SHA, huellas instaladas, resultados y procesos observados; no convertir el estado de una sesión en una regla permanente.
 
 El runtime persistente permite comprobar cambios locales con aplicación, PostgreSQL y buzón propios. La receta completa de QA con navegador, carga y restauración conserva el procedimiento documentado del VPS; no atribuirle una ejecución local por haber pasado `check` o preflight. La compatibilidad completa del gate con rootless requiere su propia validación cuando el trabajo lo necesite.
 
