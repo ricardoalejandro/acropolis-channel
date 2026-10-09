@@ -29,22 +29,22 @@ public sealed class PlatformTests
     [Fact]
     public async Task SlowProbeIsBoundedAndCancelled()
     {
-        var probeCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? probe = null;
         var service = new ReadinessService(new Reader(async token =>
         {
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
-                return true;
-            }
-            finally
-            {
-                probeCancelled.TrySetResult();
-            }
+            probe = Task.Delay(Timeout.InfiniteTimeSpan, token);
+            await probe;
+            return true;
         }), TimeSpan.FromMilliseconds(50));
 
-        Assert.False((await service.CheckAsync(TestContext.Current.CancellationToken)).IsReady);
-        await probeCancelled.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        var result = await service.CheckAsync(TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        Assert.False(result.IsReady);
+        Assert.NotNull(probe);
+        // Observe the operation itself, independently of when its async continuation runs.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            probe.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken));
+        Assert.True(probe.IsCanceled);
     }
 
     [Fact]
