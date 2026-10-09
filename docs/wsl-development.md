@@ -58,6 +58,8 @@ Desde PowerShell en la raíz del checkout:
 ```powershell
 ./scripts/local-runtime.ps1 up
 ./scripts/local-runtime.ps1 status
+# Instalar/verificar el certificado ya generado, sin reiniciar servicios:
+./scripts/local-runtime.ps1 trust
 ./scripts/local-runtime.ps1 check
 ./scripts/local-runtime.ps1 logs
 ./scripts/local-runtime.ps1 stop
@@ -76,7 +78,9 @@ python3 scripts/local-runtime.py up --no-build
 
 Las credenciales `LOCAL_*` se generan y conservan en `.local/runtime/.env`, con permisos privados y fuera de Git. Los volúmenes `acropolis_channel_local_database`, `acropolis_channel_local_keyring` y `acropolis_channel_local_pki` mantienen datos, claves y certificados entre reinicios. Las redes locales, también etiquetadas `acropolis.environment=local`, son `acropolis_channel_local_private` y `acropolis_channel_local_publication`; no se conectan a Traefik ni a SMTP productivo. No borrar o regenerar el protector/keyring de una base persistente como forma rutinaria de resolver un fallo.
 
-El certificado web es una hoja autofirmada `CA:FALSE`, limitada a localhost y direcciones de loopback. Se exporta únicamente su parte pública a `.local/runtime/export/localhost.crt`. El wrapper Windows gestiona la confianza de ese certificado exacto en el almacén `Cert:\CurrentUser\Root`; verificarla antes de considerar HTTPS local confiable. La CA SMTP separada y sus claves permanecen dentro del volumen privado de PKI y no se importan en Windows. No usar excepciones TLS del navegador ni trasladar certificados productivos para abrir localhost.
+El certificado web es una hoja autofirmada `CA:FALSE`, limitada a localhost y direcciones de loopback. Se exporta únicamente su parte pública a `.local/runtime/export/localhost.crt`. El wrapper Windows valida su identidad y gestiona la confianza de ese certificado exacto en el almacén `Cert:\CurrentUser\Root`. La primera instalación puede mostrar una confirmación de Windows: aceptar únicamente `Acropolis Localhost Development`. `trust` instala o verifica el certificado ya generado sin detener ni recrear los servicios; `up` reutiliza ese mismo procedimiento. El importador tiene una espera máxima de 45 segundos y el recibo privado sólo se guarda después de comprobar la huella exacta en el almacén. Si la confirmación no se completa, seguir el comando `Import-Certificate` que muestra el error desde una ventana interactiva de PowerShell y volver a ejecutar `check`. La CA SMTP separada y sus claves permanecen dentro del volumen privado de PKI y no se importan en Windows. No usar excepciones TLS del navegador ni trasladar certificados productivos para abrir localhost.
+
+`check` indica explícitamente si Windows todavía no confía en el certificado local y verifica HTTPS con la validación TLS normal. Tras instalarlo, volver a cargar la pestaña de `https://localhost:17443`; la confianza debe estar comprobada antes de considerar el sitio local accesible sin advertencias.
 
 `check` comprueba el runtime local y sus recorridos técnicos reales; pasar esa comprobación no constituye un gate completo ni un certificado elegible para publicación. La disponibilidad actual y cualquier revisión visual deben registrarse como resultados observados, separados de la preparación de estos helpers.
 
