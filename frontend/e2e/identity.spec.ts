@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 import { loginQa } from './helpers/mfa';
 
@@ -73,7 +73,49 @@ async function mailMessage(
   return result;
 }
 
-test.use({ trace: 'off' });
+async function verifyPasswordVisibility(page: Page, label: string) {
+  const field = page.getByLabel(label, { exact: true });
+  const value = await field.inputValue();
+  await expect(field).toHaveAttribute('type', 'password');
+  const selection = [1, Math.min(5, value.length), 'backward'];
+  await field.evaluate(
+    (input, end) => (input as HTMLInputElement).setSelectionRange(1, end, 'backward'),
+    Math.min(5, value.length),
+  );
+  await page.getByRole('button', { name: `Mostrar contraseña: ${label}`, exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(field).toHaveAttribute('type', 'text');
+  expect((await field.inputValue()) === value).toBe(true);
+  await expect
+    .poll(() =>
+      field.evaluate((input) => {
+        const passwordInput = input as HTMLInputElement;
+        return [
+          passwordInput.selectionStart,
+          passwordInput.selectionEnd,
+          passwordInput.selectionDirection,
+        ];
+      }),
+    )
+    .toEqual(selection);
+  await page.getByRole('button', { name: `Ocultar contraseña: ${label}`, exact: true }).click();
+  await expect(field).toHaveAttribute('type', 'password');
+  expect((await field.inputValue()) === value).toBe(true);
+  await expect
+    .poll(() =>
+      field.evaluate((input) => {
+        const passwordInput = input as HTMLInputElement;
+        return [
+          passwordInput.selectionStart,
+          passwordInput.selectionEnd,
+          passwordInput.selectionDirection,
+        ];
+      }),
+    )
+    .toEqual(selection);
+}
+
+test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 
 test.describe('Identity on the real Production candidate', () => {
   test('registration, confirmation, secure login, own profile, reset and logout', async ({
@@ -132,8 +174,64 @@ test.describe('Identity on the real Production candidate', () => {
     await page.goto('/register');
     await page.getByLabel('Nombre visible', { exact: true }).fill('Persona QA');
     await page.getByLabel('Correo electrónico', { exact: true }).fill(email);
-    await page.getByLabel('Contraseña', { exact: true }).fill(password);
-    await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password);
+    const registrationPassword = page.getByLabel('Contraseña', { exact: true });
+    const registrationConfirmation = page.getByLabel('Confirmar contraseña', { exact: true });
+    const strength = page.getByRole('meter', { name: 'Fortaleza estimada', exact: true });
+    await registrationPassword.fill('a'.repeat(15));
+    await expect(strength).toBeVisible();
+    await expect(strength).toHaveAttribute('aria-valuemin', '0');
+    await expect(strength).toHaveAttribute('aria-valuemax', '4');
+    const weakStrength = Number(await strength.getAttribute('aria-valuenow'));
+    expect(Number.isInteger(weakStrength) && weakStrength >= 0 && weakStrength <= 4).toBe(true);
+    await page.getByRole('button', { name: 'Generar contraseña', exact: true }).click();
+    const firstGenerated = await registrationPassword.inputValue();
+    expect(firstGenerated.length).toBe(20);
+    expect((await registrationConfirmation.inputValue()) === firstGenerated).toBe(true);
+    expect(Number(await strength.getAttribute('aria-valuenow'))).toBeGreaterThan(weakStrength);
+    await page.getByRole('button', { name: 'Generar contraseña', exact: true }).click();
+    const generated = await registrationPassword.inputValue();
+    expect(generated !== firstGenerated).toBe(true);
+    expect((await registrationConfirmation.inputValue()) === generated).toBe(true);
+    await verifyPasswordVisibility(page, 'Contraseña');
+    await expect(registrationConfirmation).toHaveAttribute('type', 'password');
+    await verifyPasswordVisibility(page, 'Confirmar contraseña');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(page.url()).origin,
+    });
+    await page.getByRole('button', { name: 'Copiar contraseña', exact: true }).click();
+    await expect(page.getByText('Contraseña copiada.', { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(
+        async (secret) => (await navigator.clipboard.readText()) === secret,
+        generated,
+      ),
+    ).toBe(true);
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await context.clearPermissions();
+    expect(
+      await page.evaluate(
+        (secret) =>
+          JSON.stringify({
+            history: window.history.state,
+            url: window.location.href,
+            localStorage: { ...window.localStorage },
+            sessionStorage: { ...window.sessionStorage },
+          }).includes(secret),
+        generated,
+      ),
+    ).toBe(false);
+    expect(identityPosts).toEqual([]);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath('password-tools-' + testInfo.project.name + '.png'),
+      fullPage: true,
+    });
+    // Preserve the shared fixture used by subsequent session and restore checks.
+    await registrationPassword.fill(password);
+    await registrationConfirmation.fill(password);
     const registrationResponse = page.waitForResponse(
       (response) =>
         response.url().endsWith('/identity/register') && response.request().method() === 'POST',
@@ -199,6 +297,13 @@ test.describe('Identity on the real Production candidate', () => {
     await page.goto('/login');
     await page.getByLabel('Correo electrónico', { exact: true }).fill(email);
     await page.getByLabel('Contraseña', { exact: true }).fill(password);
+    const postsBeforeLoginVisibility = identityPosts.length;
+    await verifyPasswordVisibility(page, 'Contraseña');
+    expect(identityPosts).toHaveLength(postsBeforeLoginVisibility);
+    await expect(page.getByRole('meter')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Generar contraseña', exact: true })).toHaveCount(
+      0,
+    );
     await page.getByRole('button', { name: 'Ingresar', exact: true }).click();
     await expect(page).toHaveURL(/\/profile/);
     const me = await page.request.get(`${api}/me`);
@@ -266,6 +371,11 @@ test.describe('Identity on the real Production candidate', () => {
     await expect.poll(() => new URL(page.url()).hash).toBe('');
     await page.getByLabel('Nueva contraseña', { exact: true }).fill(password + 'N');
     await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password + 'N');
+    await expect(
+      page.getByRole('meter', { name: 'Fortaleza estimada', exact: true }),
+    ).toBeVisible();
+    await verifyPasswordVisibility(page, 'Nueva contraseña');
+    await verifyPasswordVisibility(page, 'Confirmar contraseña');
     await page.getByRole('button', { name: /Restablecer contraseña/ }).click();
     await expect(
       page.getByRole('heading', { name: 'Contraseña actualizada', exact: true }),
@@ -280,6 +390,14 @@ test.describe('Identity on the real Production candidate', () => {
     await currentPassword.fill(password + 'incorrect');
     await page.getByLabel('Nueva contraseña', { exact: true }).fill(password + 'NN');
     await page.getByLabel('Confirmar contraseña', { exact: true }).fill(password + 'NN');
+    const postsBeforePasswordVisibility = identityPosts.length;
+    await verifyPasswordVisibility(page, 'Contraseña actual');
+    await verifyPasswordVisibility(page, 'Nueva contraseña');
+    await verifyPasswordVisibility(page, 'Confirmar contraseña');
+    expect(identityPosts).toHaveLength(postsBeforePasswordVisibility);
+    await expect(page.getByRole('meter', { name: 'Fortaleza estimada', exact: true })).toHaveCount(
+      1,
+    );
     const rejectedPasswordChange = page.waitForResponse(
       (response) =>
         response.url().endsWith('/identity/change-password') &&

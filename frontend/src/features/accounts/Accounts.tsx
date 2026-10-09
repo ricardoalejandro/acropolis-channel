@@ -18,17 +18,21 @@ const password: Field = {
   label: 'Contraseña',
   type: 'password',
   autoComplete: 'current-password',
+  passwordPurpose: 'current',
 };
 const newPassword: Field = {
   name: 'newPassword',
   label: 'Nueva contraseña',
   type: 'password',
   autoComplete: 'new-password',
+  passwordPurpose: 'new',
+  confirmationField: 'confirmPassword',
   help: 'Entre 15 y 128 caracteres. Una frase larga es una buena opción.',
 };
 const confirmation: Field = {
   name: 'confirmPassword',
   label: 'Confirmar contraseña',
+  passwordPurpose: 'confirmation',
   type: 'password',
   autoComplete: 'new-password',
 };
@@ -141,7 +145,13 @@ export function Register() {
           fields={[
             displayName,
             email,
-            { ...password, autoComplete: 'new-password', help: 'Entre 15 y 128 caracteres.' },
+            {
+              ...password,
+              autoComplete: 'new-password',
+              passwordPurpose: 'new',
+              confirmationField: 'confirmPassword',
+              help: 'Entre 15 y 128 caracteres. Una frase larga es una buena opción.',
+            },
             confirmation,
           ]}
           submit="Crear cuenta"

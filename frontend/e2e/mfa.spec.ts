@@ -13,15 +13,72 @@ test('authenticator enrollment, second factor, recovery rotation and revocation 
   if (!password || !process.env['QA_PROJECT']?.startsWith('acropolis_test_'))
     throw new Error('MFA requires guarded QA credentials.');
   const email = `qa-load-${testInfo.project.name === 'desktop-chromium' ? '000120' : '000121'}@example.test`;
+  let identityPosts = 0;
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.startsWith('/api/v1/identity/')
+    )
+      identityPosts++;
+  });
+  const verifyPasswordVisibility = async (label: string) => {
+    const postsBefore = identityPosts;
+    const field = page.getByLabel(label, { exact: true });
+    const value = await field.inputValue();
+    await expect(field).toHaveAttribute('type', 'password');
+    const selection = [1, Math.min(5, value.length), 'backward'];
+    await field.evaluate(
+      (input, end) => (input as HTMLInputElement).setSelectionRange(1, end, 'backward'),
+      Math.min(5, value.length),
+    );
+    await page.getByRole('button', { name: `Mostrar contraseña: ${label}`, exact: true }).focus();
+    await page.keyboard.press('Space');
+    await expect(field).toHaveAttribute('type', 'text');
+    expect((await field.inputValue()) === value).toBe(true);
+    await expect
+      .poll(() =>
+        field.evaluate((input) => {
+          const passwordInput = input as HTMLInputElement;
+          return [
+            passwordInput.selectionStart,
+            passwordInput.selectionEnd,
+            passwordInput.selectionDirection,
+          ];
+        }),
+      )
+      .toEqual(selection);
+    await page.getByRole('button', { name: `Ocultar contraseña: ${label}`, exact: true }).click();
+    await expect(field).toHaveAttribute('type', 'password');
+    expect((await field.inputValue()) === value).toBe(true);
+    await expect
+      .poll(() =>
+        field.evaluate((input) => {
+          const passwordInput = input as HTMLInputElement;
+          return [
+            passwordInput.selectionStart,
+            passwordInput.selectionEnd,
+            passwordInput.selectionDirection,
+          ];
+        }),
+      )
+      .toEqual(selection);
+    expect(identityPosts).toBe(postsBefore);
+    await expect(page.getByRole('meter')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Generar contraseña', exact: true })).toHaveCount(
+      0,
+    );
+  };
   const loginForm = async () => {
     await page.goto('/login');
     await page.getByLabel('Correo electrónico', { exact: true }).fill(email);
     await page.getByLabel('Contraseña', { exact: true }).fill(password);
+    await verifyPasswordVisibility('Contraseña');
     await page.getByRole('button', { name: 'Ingresar', exact: true }).click();
   };
   const configure = async () => {
     await page.goto('/profile/security');
     await page.getByLabel('Contraseña actual', { exact: true }).fill(password);
+    await verifyPasswordVisibility('Contraseña actual');
     await page.getByRole('button', { name: 'Configurar autenticador', exact: true }).click();
     const key = (
       await page.getByLabel('Clave del autenticador', { exact: true }).inputValue()
@@ -73,6 +130,7 @@ test('authenticator enrollment, second factor, recovery rotation and revocation 
   await page.getByRole('button', { name: 'Renovar códigos de recuperación', exact: true }).click();
   await page.getByRole('button', { name: 'Usar un código de recuperación', exact: true }).click();
   await page.getByLabel('Contraseña actual', { exact: true }).fill(password);
+  await verifyPasswordVisibility('Contraseña actual');
   await page.getByLabel('Código de recuperación', { exact: true }).fill(codes[0]!);
   await page.getByRole('button', { name: 'Confirmar renovación', exact: true }).click();
   await expect(
@@ -98,6 +156,7 @@ test('authenticator enrollment, second factor, recovery rotation and revocation 
     .click();
   await page.getByRole('button', { name: 'Usar un código de recuperación', exact: true }).click();
   await page.getByLabel('Contraseña actual', { exact: true }).fill(password);
+  await verifyPasswordVisibility('Contraseña actual');
   await page.getByLabel('Código de recuperación', { exact: true }).fill(newCodes[1]!);
   await page.getByRole('button', { name: 'Confirmar desactivación', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);

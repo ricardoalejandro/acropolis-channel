@@ -1,5 +1,8 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError } from '../api/identity';
+import { generatePassword } from '../validation/passwordGeneration';
+import { Icon } from './Icon';
+import { PasswordStrengthMeter } from './PasswordStrengthMeter';
 export type Field = {
   name: string;
   label: string;
@@ -7,6 +10,8 @@ export type Field = {
   autoComplete?: string;
   help?: string;
   initial?: string;
+  passwordPurpose?: 'current' | 'new' | 'confirmation';
+  confirmationField?: string;
 };
 export function AccountForm({
   fields,
@@ -28,9 +33,85 @@ export function AccountForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [visible, setVisible] = useState<Record<string, boolean>>({});
+  const [notices, setNotices] = useState<Record<string, string>>({});
+  const [copyingField, setCopyingField] = useState<string | null>(null);
+  const copyRevision = useRef(0);
+  useEffect(
+    () => () => {
+      copyRevision.current += 1;
+    },
+    [],
+  );
+  function change(name: string, value: string) {
+    copyRevision.current += 1;
+    setCopyingField(null);
+    setNotices({});
+    setValues((previous) => ({ ...previous, [name]: value }));
+  }
+  function toggle(field: Field) {
+    const input = document.getElementById(id + '-' + field.name) as HTMLInputElement | null;
+    const selection =
+      input && ([input.selectionStart, input.selectionEnd, input.selectionDirection] as const);
+    setVisible((previous) => ({ ...previous, [field.name]: !previous[field.name] }));
+    requestAnimationFrame(() => {
+      if (input?.isConnected && selection && selection[0] !== null && selection[1] !== null)
+        input.setSelectionRange(selection[0], selection[1], selection[2] ?? undefined);
+    });
+  }
+  function generate(field: Field) {
+    try {
+      const value = generatePassword();
+      const confirmation = fields.find(
+        (item) => item.name === field.confirmationField && item.passwordPurpose === 'confirmation',
+      );
+      copyRevision.current += 1;
+      setCopyingField(null);
+      setValues((previous) => ({
+        ...previous,
+        [field.name]: value,
+        ...(confirmation ? { [confirmation.name]: value } : {}),
+      }));
+      setVisible((previous) => ({
+        ...previous,
+        [field.name]: false,
+        ...(confirmation ? { [confirmation.name]: false } : {}),
+      }));
+      setErrors((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(
+            ([name]) => name !== field.name && name !== confirmation?.name,
+          ),
+        ),
+      );
+      setNotices({ [field.name]: 'Contraseña generada. Puedes copiarla y guardarla.' });
+    } catch {
+      setNotices({ [field.name]: 'No pudimos generar una contraseña. Inténtalo de nuevo.' });
+    }
+  }
+  async function copy(field: Field) {
+    const revision = ++copyRevision.current;
+    setCopyingField(field.name);
+    setNotices({});
+    try {
+      await navigator.clipboard.writeText(values[field.name] ?? '');
+      if (revision === copyRevision.current) setNotices({ [field.name]: 'Contraseña copiada.' });
+    } catch {
+      if (revision === copyRevision.current)
+        setNotices({
+          [field.name]: 'No pudimos copiarla. Puedes mostrarla y copiarla desde el campo.',
+        });
+    } finally {
+      if (revision === copyRevision.current) setCopyingField(null);
+    }
+  }
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    copyRevision.current += 1;
+    setCopyingField(null);
+    setNotices({});
+    setVisible({});
     const next: Record<string, string> = {};
     for (const field of fields) {
       const value = values[field.name] ?? '';
@@ -111,19 +192,44 @@ export function AccountForm({
       {fields.map((field) => (
         <div className="field" key={field.name}>
           <label htmlFor={id + '-' + field.name}>{field.label}</label>
-          <input
-            id={id + '-' + field.name}
-            name={field.name}
-            type={field.type ?? 'text'}
-            autoComplete={field.autoComplete}
-            value={values[field.name] ?? ''}
-            onChange={(event) => setValues({ ...values, [field.name]: event.target.value })}
-            aria-invalid={Boolean(errors[field.name])}
-            aria-describedby={
-              field.help || errors[field.name] ? id + '-' + field.name + '-help' : undefined
-            }
-            disabled={busy}
-          />
+          <div className={field.type === 'password' ? 'password-control' : undefined}>
+            <input
+              id={id + '-' + field.name}
+              name={field.name}
+              type={
+                field.type === 'password' && visible[field.name] ? 'text' : (field.type ?? 'text')
+              }
+              autoComplete={field.autoComplete}
+              value={values[field.name] ?? ''}
+              onChange={(event) => change(field.name, event.target.value)}
+              aria-invalid={Boolean(errors[field.name])}
+              aria-describedby={
+                [
+                  field.help || errors[field.name] ? id + '-' + field.name + '-help' : '',
+                  field.passwordPurpose === 'new' ? id + '-' + field.name + '-strength' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+              disabled={busy}
+            />
+            {field.type === 'password' && (
+              <button
+                type="button"
+                className="password-toggle"
+                aria-label={
+                  (visible[field.name] ? 'Ocultar contraseña: ' : 'Mostrar contraseña: ') +
+                  field.label
+                }
+                aria-controls={id + '-' + field.name}
+                disabled={busy}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => toggle(field)}
+              >
+                <Icon name={visible[field.name] ? 'eye-off' : 'eye'} />
+              </button>
+            )}
+          </div>
           {(field.help || errors[field.name]) && (
             <p
               id={id + '-' + field.name + '-help'}
@@ -131,6 +237,38 @@ export function AccountForm({
             >
               {errors[field.name] ?? field.help}
             </p>
+          )}
+          {field.type === 'password' && field.passwordPurpose === 'new' && (
+            <>
+              <PasswordStrengthMeter
+                id={id + '-' + field.name + '-strength'}
+                value={values[field.name] ?? ''}
+                userInputs={[values['displayName'] ?? '', values['email'] ?? '']}
+              />
+              <div className="password-actions">
+                <button
+                  type="button"
+                  className="password-action"
+                  disabled={busy}
+                  onClick={() => generate(field)}
+                >
+                  Generar contraseña
+                </button>
+                <button
+                  type="button"
+                  className="password-action"
+                  disabled={busy || !values[field.name] || copyingField === field.name}
+                  onClick={() => void copy(field)}
+                >
+                  {copyingField === field.name ? 'Copiando…' : 'Copiar contraseña'}
+                </button>
+              </div>
+              {notices[field.name] && (
+                <p className="field-help password-notice" role="status">
+                  {notices[field.name]}
+                </p>
+              )}
+            </>
           )}
         </div>
       ))}

@@ -24,6 +24,7 @@ const currentPassword: Field = {
   label: 'Contraseña actual',
   type: 'password',
   autoComplete: 'current-password',
+  passwordPurpose: 'current',
 };
 function message(error: unknown) {
   return error instanceof ApiError

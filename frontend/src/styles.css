@@ -504,6 +504,86 @@ fieldset legend {
   width: 100%;
   margin-top: 4px;
 }
+.password-control {
+  position: relative;
+  min-width: 0;
+}
+.password-control input {
+  padding-right: 57px;
+}
+.password-toggle {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 46px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.password-toggle:hover,
+.password-action:hover {
+  background: #edf4f1;
+}
+.password-toggle:disabled,
+.password-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.password-strength {
+  min-width: 0;
+}
+.password-strength-label {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.password-meter {
+  display: flex;
+  gap: 5px;
+  margin: 6px 0;
+}
+.password-meter span {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #dce5e0;
+}
+.password-meter-0 .filled,
+.password-meter-1 .filled {
+  background: #a83528;
+}
+.password-meter-2 .filled {
+  background: #866013;
+}
+.password-meter-3 .filled,
+.password-meter-4 .filled {
+  background: #4f725c;
+}
+.password-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.password-action {
+  min-height: 44px;
+  padding: 7px 10px;
+  border: 1px solid #6d827c;
+  border-radius: 5px;
+  background: white;
+  color: var(--blue);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.password-notice {
+  overflow-wrap: anywhere;
+}
 .form-secondary {
   align-self: flex-end;
   font-size: 15px;
